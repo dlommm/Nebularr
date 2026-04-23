@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-arranalytics}
+      POSTGRES_USER: ${POSTGRES_USER:-arradmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arradmin} -d ${POSTGRES_DB:-arranalytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-1.0.0}
+        GIT_SHA: ${APP_GIT_SHA:-release}
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8080
+      APP_TIMEZONE: ${APP_TIMEZONE:-UTC}
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-UTC}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://arrapp:arrapp@postgres:5432/arranalytics}
+      ENABLE_BOOTSTRAP_MIGRATIONS: ${ENABLE_BOOTSTRAP_MIGRATIONS:-true}
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-15}
+      HTTP_RETRY_ATTEMPTS: ${HTTP_RETRY_ATTEMPTS:-3}
+      HTTP_MAX_PARALLEL_REQUESTS: ${HTTP_MAX_PARALLEL_REQUESTS:-4}
+      SQLALCHEMY_POOL_SIZE: ${SQLALCHEMY_POOL_SIZE:-10}
+      SQLALCHEMY_MAX_OVERFLOW: ${SQLALCHEMY_MAX_OVERFLOW:-20}
+      SQLALCHEMY_POOL_RECYCLE: ${SQLALCHEMY_POOL_RECYCLE:-1800}
+      SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-120000}
+      WEBHOOK_MAX_BODY_BYTES: ${WEBHOOK_MAX_BODY_BYTES:-262144}
+      ALERT_SYNC_LAG_WARNING_SECONDS: ${ALERT_SYNC_LAG_WARNING_SECONDS:-3600}
+      ALERT_SYNC_LAG_CRITICAL_SECONDS: ${ALERT_SYNC_LAG_CRITICAL_SECONDS:-7200}
+      ALERT_WEBHOOK_QUEUE_WARNING: ${ALERT_WEBHOOK_QUEUE_WARNING:-100}
+      ALERT_WEBHOOK_QUEUE_CRITICAL: ${ALERT_WEBHOOK_QUEUE_CRITICAL:-500}
+      ALERT_WEBHOOK_URLS: ${ALERT_WEBHOOK_URLS:-}
+      ALERT_WEBHOOK_TIMEOUT_SECONDS: ${ALERT_WEBHOOK_TIMEOUT_SECONDS:-10}
+      ALERT_WEBHOOK_MIN_STATE: ${ALERT_WEBHOOK_MIN_STATE:-warning}
+      ALERT_WEBHOOK_NOTIFY_RECOVERY: ${ALERT_WEBHOOK_NOTIFY_RECOVERY:-true}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,1424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nebularr Control Plane</title>
+  <style>
+    :root {
+      --bg: #0f141a;
+      --sidebar: #121a22;
+      --panel: #17212b;
+      --panel-2: #1d2a36;
+      --border: #314356;
+      --text: #e8f1fa;
+      --muted: #a6b8cb;
+      --ok: #39d98a;
+      --warn: #f4b03e;
+      --critical: #ff6b6b;
+      --primary: #3f96ff;
+      --primary-2: #36c48b;
+      --sidebar-w: 252px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #192548, var(--bg) 50%);
+      line-height: 1.45;
+    }
+    .app-shell { display: flex; min-height: 100vh; position: relative; }
+    .sidebar {
+      width: var(--sidebar-w);
+      background: linear-gradient(180deg, var(--sidebar), #0b132a);
+      border-right: 1px solid var(--border);
+      padding: 18px 14px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .brand-wrap { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid rgba(84, 168, 255, 0.26);
+      background: rgba(8, 17, 38, 0.65);
+      padding: 5px;
+      object-fit: contain;
+      flex: 0 0 auto;
+    }
+    .brand { margin: 0; font-size: 18px; font-weight: 700; }
+    .hero-brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #0f1835, #0b1329);
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    }
+    .hero-logo {
+      width: 280px;
+      max-width: 100%;
+      height: auto;
+      border-radius: 10px;
+      border: 1px solid rgba(84, 168, 255, 0.16);
+      background: rgba(5, 11, 24, 0.35);
+      padding: 4px;
+    }
+    .hero-meta {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+      min-width: 180px;
+    }
+    .brand-sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+    .nav-btn {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .nav-btn.active {
+      background: linear-gradient(135deg, #2a3d7d, #2a235f);
+      border-color: var(--border);
+    }
+    .main { flex: 1; padding: 20px 24px 24px; min-width: 0; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .view-title { font-size: clamp(22px, 2.4vw, 30px); margin: 0; letter-spacing: -0.01em; }
+    .subtitle { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .mobile-nav-btn { display: none; }
+    .subtabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .subtab-btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #1b2747;
+      color: var(--text);
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+    }
+    .subtab-btn.active {
+      background: linear-gradient(135deg, var(--primary), var(--primary-2));
+      color: #fff;
+      border-color: transparent;
+    }
+    .subview { display: none; }
+    .subview.active { display: block; }
+    .metric-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .split-grid {
+      display: grid;
+      grid-template-columns: 380px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .table-wrap.compact {
+      max-height: 58vh;
+    }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+    .card {
+      background: linear-gradient(180deg, var(--panel), #0f1530);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+    .span-3 { grid-column: span 3; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .kpi-value { font-size: clamp(22px, 2.4vw, 31px); font-weight: 700; margin-top: 6px; }
+    .kpi-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .status-badge, .pill {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      background: var(--panel);
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      background: #0f1833;
+    }
+    .status-pill.running { color: var(--warn); border-color: rgba(243, 156, 18, 0.35); }
+    .status-pill.success { color: var(--ok); border-color: rgba(46, 204, 113, 0.35); }
+    .status-pill.failed { color: var(--critical); border-color: rgba(255, 77, 79, 0.35); }
+    .status-pill.skipped { color: #b6c3e9; border-color: rgba(159, 176, 217, 0.3); }
+    .ok { color: var(--ok); border-color: rgba(46, 204, 113, 0.35); }
+    .warning { color: var(--warn); border-color: rgba(243, 156, 18, 0.35); }
+    .critical { color: var(--critical); border-color: rgba(255, 77, 79, 0.35); }
+    input, select, button {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    input, select { width: 100%; }
+    button {
+      background: linear-gradient(135deg, var(--primary), var(--primary-2));
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: #263258;
+      border: 1px solid var(--border);
+    }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-width: 100%;
+      background: #0f1732;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #253156;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      font-weight: 600;
+      color: #c7d4ff;
+      background: #101935;
+      position: sticky;
+      top: 0;
+      white-space: nowrap;
+      z-index: 1;
+    }
+    tbody tr:nth-child(even) {
+      background: rgba(20, 30, 56, 0.42);
+    }
+    tbody tr:hover {
+      background: rgba(71, 111, 193, 0.16);
+    }
+    .muted { color: var(--muted); font-size: 12px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    .global-toast {
+      margin: 10px 0 0;
+      min-height: 18px;
+      font-size: 12px;
+      color: #b9c9ff;
+    }
+    .progress-block {
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(18, 28, 54, 0.6);
+    }
+    .progress-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 12px;
+      margin-top: 8px;
+    }
+    .progress-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .progress-row strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .progress-track {
+      margin-top: 10px;
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #0d1633;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--primary), #60b0ff);
+      transition: width 0.35s ease;
+    }
+    @media (max-width: 1200px) {
+      .span-3 { grid-column: span 6; }
+      .split-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 980px) {
+      .mobile-nav-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #1f2b50;
+        color: var(--text);
+        font-weight: 700;
+        font-size: 16px;
+      }
+      .sidebar {
+        position: fixed;
+        left: calc(-1 * var(--sidebar-w));
+        top: 0;
+        bottom: 0;
+        transition: left 0.24s ease;
+      }
+      .app-shell.sidebar-open .sidebar { left: 0; }
+      .main { padding: 16px; }
+      .hero-brand { flex-direction: column; align-items: flex-start; }
+      .hero-meta { min-width: 0; text-align: left; }
+      .span-3, .span-6, .span-8, .span-12 { grid-column: span 12; }
+      .topbar { align-items: flex-start; }
+      .topbar-title { width: 100%; }
+    }
+    @media (max-width: 640px) {
+      .hero-logo { width: 210px; }
+      th, td { padding: 8px 9px; font-size: 12px; }
+      .kpi-label { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-wrap">
+        <img class="brand-mark" src="/assets/nebularr-logo.svg" alt="Nebularr">
+        <div>
+          <div class="brand">Nebularr</div>
+          <div class="muted" style="margin-top:2px;">Media Analytics</div>
+        </div>
+      </div>
+      <div class="brand-sub">Version __APP_VERSION__ - Commit __APP_GIT_SHA__</div>
+      <button class="nav-btn active" data-view="overview" type="button">Overview</button>
+      <button class="nav-btn" data-view="integrations" type="button">Integrations</button>
+      <button class="nav-btn" data-view="schedules" type="button">Schedules</button>
+      <button class="nav-btn" data-view="runs" type="button">Sync Runs</button>
+      <button class="nav-btn" data-view="library" type="button">Library</button>
+      <button class="nav-btn" data-view="webhooks" type="button">Webhook Jobs</button>
+      <button class="nav-btn" data-view="actions" type="button">Manual Actions</button>
+    </aside>
+
+    <main class="main">
+      <div class="hero-brand">
+        <img class="hero-logo" src="/assets/nebularr-logo.svg" alt="Nebularr logo">
+        <div class="hero-meta">
+          <div style="font-weight:600; color:#d3e2ff; font-size:13px;">Nebularr Control Plane</div>
+          <div style="margin-top:4px;">Sonarr/Radarr telemetry, sync operations, and analytics workflow.</div>
+        </div>
+      </div>
+      <div class="topbar">
+        <div class="topbar-title">
+          <div class="row" style="gap:8px; align-items:center; margin-bottom:2px;">
+            <button id="mobileNavToggle" class="mobile-nav-btn" type="button" aria-label="Toggle menu">☰</button>
+            <h1 id="viewTitle" class="view-title">Overview</h1>
+          </div>
+          <div class="subtitle">Nebularr operations dashboard for Sonarr and Radarr sync services</div>
+        </div>
+        <div class="row">
+          <span id="healthBadge" class="status-badge ok">ok</span>
+          <span id="syncActivityBadge" class="status-badge">sync idle</span>
+          <label class="pill"><input id="autoRefreshToggle" type="checkbox" checked> auto refresh</label>
+          <button id="refreshAllBtn" class="secondary" type="button">Refresh</button>
+        </div>
+      </div>
+      <div id="globalToast" class="global-toast"></div>
+
+      <section id="view-overview" class="view active">
+        <div class="grid">
+          <div class="card span-3"><div class="kpi-label">Total Sync Runs</div><div id="jobsTotal" class="kpi-value">-</div></div>
+          <div class="card span-3"><div class="kpi-label">Webhook Queue Open</div><div id="queueOpen" class="kpi-value">-</div></div>
+          <div class="card span-3"><div class="kpi-label">Sonarr Lag (s)</div><div id="lagSonarr" class="kpi-value">-</div></div>
+          <div class="card span-3"><div class="kpi-label">Radarr Lag (s)</div><div id="lagRadarr" class="kpi-value">-</div></div>
+          <div class="card span-6"><div class="kpi-label">Sonarr Version</div><div id="sonarrVersion" class="kpi-value" style="font-size:22px;">-</div></div>
+          <div class="card span-6"><div class="kpi-label">Radarr Version</div><div id="radarrVersion" class="kpi-value" style="font-size:22px;">-</div></div>
+          <div class="card span-6">
+            <h3>Queue Breakdown</h3>
+            <div class="table-wrap">
+              <table><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody id="queueBody"></tbody></table>
+            </div>
+          </div>
+          <div class="card span-6">
+            <h3>Latest Runs (Top 8)</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Source</th><th>Mode</th><th>Status</th><th>Started</th><th>Rows</th></tr></thead>
+                <tbody id="runsCompactBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card span-12">
+            <h3>Live Sync Activity</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Source</th><th>Mode</th><th>Status</th><th>Trigger</th><th>Stage</th><th>Instance</th><th>Elapsed</th><th>Rows</th><th>Started</th></tr></thead>
+                <tbody id="syncActivityOverviewBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-integrations" class="view">
+        <div class="card">
+          <h3>Integrations</h3>
+          <div id="integrationsList" class="stack"></div>
+        </div>
+      </section>
+
+      <section id="view-schedules" class="view">
+        <div class="card">
+          <h3>Schedules</h3>
+          <div id="schedulesList" class="stack"></div>
+        </div>
+      </section>
+
+      <section id="view-runs" class="view">
+        <div class="card">
+          <h3>Sync Runs</h3>
+          <div class="subtabs">
+            <button class="subtab-btn active" data-runs-sub="active" type="button">Active Syncs</button>
+            <button class="subtab-btn" data-runs-sub="history" type="button">Run History</button>
+          </div>
+          <div id="runs-sub-active" class="subview active">
+            <div class="table-wrap" style="margin-bottom:10px;">
+              <table>
+                <thead><tr><th>Source</th><th>Mode</th><th>Status</th><th>Trigger</th><th>Stage</th><th>Instance</th><th>Elapsed</th><th>Rows</th><th>Started</th></tr></thead>
+                <tbody id="syncActivityRunsBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="runs-sub-history" class="subview">
+            <div class="row" style="margin-bottom:10px;">
+              <select id="runsSourceFilter">
+                <option value="all">all sources</option>
+                <option value="sonarr">sonarr</option>
+                <option value="radarr">radarr</option>
+              </select>
+              <select id="runsStatusFilter">
+                <option value="all">all statuses</option>
+                <option value="running">running</option>
+                <option value="success">success</option>
+                <option value="failed">failed</option>
+              </select>
+              <input id="runsSearch" placeholder="Search mode, instance, error...">
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Source</th><th>Mode</th><th>Instance</th><th>Status</th><th>Started</th><th>Finished</th><th>Rows</th><th>Error</th></tr>
+                </thead>
+                <tbody id="runsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-webhooks" class="view">
+        <div class="card">
+          <h3>Webhook Jobs</h3>
+          <div class="row" style="margin-bottom:10px;">
+            <select id="webhookStatusFilter">
+              <option value="all">all statuses</option>
+              <option value="queued">queued</option>
+              <option value="retrying">retrying</option>
+              <option value="dead_letter">dead_letter</option>
+              <option value="done">done</option>
+            </select>
+            <button id="loadWebhookJobsBtn" class="secondary" type="button">Load</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>Source</th><th>Type</th><th>Status</th><th>Attempts</th><th>Received</th><th>Next Attempt</th><th>Error</th><th>Action</th></tr>
+              </thead>
+              <tbody id="webhookJobsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-library" class="view">
+        <div class="card" style="margin-bottom:14px;">
+          <div class="subtabs">
+            <button class="subtab-btn active" data-library-sub="drilldown" type="button">Drilldown Library</button>
+            <button class="subtab-btn" data-library-sub="all-episodes" type="button">All Episodes</button>
+          </div>
+          <div class="metric-strip">
+            <span class="pill">Shows: <strong id="showsCountLabel">0</strong></span>
+            <span class="pill">Show Episodes Loaded: <strong id="showEpisodesCountLabel">0</strong></span>
+            <span class="pill">All Episodes: <strong id="allEpisodesCountLabel">0</strong></span>
+            <span class="pill">Movies: <strong id="moviesCountLabel">0</strong></span>
+          </div>
+        </div>
+        <div class="grid">
+          <div id="library-sub-drilldown" class="subview active span-12">
+          <div class="card">
+            <h3>Drilldown Library</h3>
+            <div class="row" style="margin-bottom:10px;">
+              <label class="muted" for="drilldownType">Browse</label>
+              <select id="drilldownType" style="max-width:220px;">
+                <option value="shows">Shows (Series -> Seasons -> Episodes)</option>
+                <option value="movies">Movies</option>
+              </select>
+            </div>
+            <div id="drilldownShowsPanel" class="split-grid">
+              <div class="card">
+                <h3>Shows</h3>
+                <div class="row" style="margin-bottom:10px;">
+                  <input id="showsSearch" placeholder="Search show title...">
+                  <button id="loadShowsBtn" class="secondary" type="button">Search</button>
+                </div>
+                <div class="table-wrap compact">
+                  <table>
+                    <thead>
+                      <tr><th>Title</th><th>Instance</th><th>Seasons</th><th>Episodes</th><th>Status</th><th>Action</th></tr>
+                    </thead>
+                    <tbody id="showsBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="card">
+                <h3>Selected Show Episodes</h3>
+                <div class="row" style="margin-bottom:10px;">
+                  <span class="pill" id="selectedShowLabel">No show selected</span>
+                  <select id="showSeasonFilter">
+                    <option value="all">all seasons</option>
+                  </select>
+                  <button id="loadSelectedShowEpisodesBtn" class="secondary" type="button">Load Episodes</button>
+                  <button id="exportSelectedShowEpisodesBtn" type="button">Export CSV</button>
+                </div>
+                <div class="table-wrap compact">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Monitored</th><th>#</th><th>Season</th><th>Episode</th><th>Title</th><th>Path</th><th>Relative Path</th><th>Air Date</th><th>Runtime</th>
+                        <th>Audio Info</th><th>Video Codec</th><th>Video Dynamic Range</th><th>Audio Languages</th><th>Subtitle Languages</th>
+                        <th>Size</th><th>Release Group</th><th>Formats</th><th>Custom Format Score</th><th>Indexer Flags</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="showEpisodesBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div id="drilldownMoviesPanel" style="display:none;">
+              <div class="card">
+                <h3>Movies (With Movie File Details)</h3>
+                <div class="row" style="margin-bottom:10px;">
+                  <input id="moviesSearch" placeholder="Search movie title...">
+                  <input id="moviesInstance" placeholder="Instance filter (optional)">
+                  <button id="loadMoviesBtn" class="secondary" type="button">Load Movies</button>
+                  <button id="exportMoviesBtn" type="button">Export CSV</button>
+                </div>
+                <div class="table-wrap compact">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Title</th><th>Year</th><th>Instance</th><th>Monitored</th><th>Status</th><th>Path</th><th>Relative Path</th><th>Runtime</th>
+                        <th>Audio Info</th><th>Video Codec</th><th>Video Dynamic Range</th><th>Audio Languages</th><th>Subtitle Languages</th>
+                        <th>Size</th><th>Release Group</th><th>Formats</th><th>Custom Format Score</th><th>Indexer Flags</th><th>File</th>
+                      </tr>
+                    </thead>
+                    <tbody id="moviesBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+
+          <div id="library-sub-all-episodes" class="subview span-12">
+          <div class="card">
+            <h3>All Episodes View</h3>
+            <div class="row" style="margin-bottom:10px;">
+              <input id="allEpisodesSearch" placeholder="Search series or episode title...">
+              <input id="allEpisodesInstance" placeholder="Instance filter (optional)">
+              <button id="loadAllEpisodesBtn" class="secondary" type="button">Load Episodes</button>
+              <button id="exportAllEpisodesBtn" type="button">Export CSV</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Series</th><th>Instance</th><th>Monitored</th><th>#</th><th>Season</th><th>Episode</th><th>Episode Title</th><th>Path</th><th>Relative Path</th>
+                    <th>Air Date</th><th>Runtime</th><th>Audio Info</th><th>Video Codec</th><th>Video Dynamic Range</th><th>Audio Languages</th>
+                    <th>Subtitle Languages</th><th>Size</th><th>Release Group</th><th>Formats</th><th>Custom Format Score</th><th>Indexer Flags</th><th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="allEpisodesBody"></tbody>
+              </table>
+            </div>
+          </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-actions" class="view">
+        <div class="grid">
+          <div class="card span-6">
+            <h3>Run Sync</h3>
+            <div class="row">
+              <select id="syncSource"><option value="sonarr">sonarr</option><option value="radarr">radarr</option></select>
+              <select id="syncMode"><option value="incremental">incremental</option><option value="reconcile">reconcile</option><option value="full">full</option></select>
+              <button id="runSyncBtn" type="button">Run Sync</button>
+            </div>
+            <div class="progress-block">
+              <div class="row" style="justify-content:space-between;">
+                <strong>Manual Sync Progress</strong>
+                <span id="manualSyncStateBadge" class="status-badge">idle</span>
+              </div>
+              <div id="manualSyncSummary" class="muted" style="margin-top:6px;">No manual sync currently running.</div>
+              <div class="progress-grid">
+                <div class="progress-row"><span>Elapsed</span><strong id="manualSyncElapsed">-</strong></div>
+                <div class="progress-row"><span>ETA</span><strong id="manualSyncEta">-</strong></div>
+                <div class="progress-row"><span>Estimated Total</span><strong id="manualSyncTotal">-</strong></div>
+                <div class="progress-row"><span>Records (so far)</span><strong id="manualSyncRecords">-</strong></div>
+              </div>
+              <div class="progress-track"><div id="manualSyncProgressBar" class="progress-bar"></div></div>
+            </div>
+          </div>
+          <div class="card span-6">
+            <h3>Replay Dead Letter</h3>
+            <div class="row">
+              <select id="replaySource"><option value="sonarr">sonarr</option><option value="radarr">radarr</option></select>
+              <button id="replayBtn" class="secondary" type="button">Replay Dead Letter</button>
+            </div>
+          </div>
+          <div class="card span-12">
+            <h3>Reset Database (Start Fresh)</h3>
+            <div class="muted">Deletes collected sync data (warehouse + operational run history/queue/watermarks). Integration and schedule config are kept.</div>
+            <div class="row" style="margin-top:8px;">
+              <button id="resetDataBtn" type="button">Reset Data</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    let runsCache = [];
+    let selectedShow = null;
+    let libraryLoaded = false;
+    let autoRefreshEnabled = true;
+    let autoRefreshTimer = null;
+    let manualSyncTimer = null;
+    let currentLibrarySub = "drilldown";
+    let currentRunsSub = "active";
+
+    function setToast(message, isError) {
+      const node = document.getElementById("globalToast");
+      node.textContent = message || "";
+      node.style.color = isError ? "#ff9b9b" : "#b9c9ff";
+    }
+
+    function healthClass(state) {
+      if (state === "critical") return "critical";
+      if (state === "warning") return "warning";
+      return "ok";
+    }
+
+    function fmtDate(value) {
+      if (!value) return "-";
+      try { return new Date(value).toLocaleString(); } catch (_err) { return String(value); }
+    }
+
+    function fmtList(value) {
+      if (!value) return "-";
+      if (Array.isArray(value)) return value.join(", ");
+      return String(value);
+    }
+
+    function fmtSize(value) {
+      if (!value && value !== 0) return "-";
+      const bytes = Number(value);
+      if (Number.isNaN(bytes)) return String(value);
+      const gib = bytes / (1024 * 1024 * 1024);
+      if (gib >= 1) return gib.toFixed(2) + " GiB";
+      const mib = bytes / (1024 * 1024);
+      return mib.toFixed(1) + " MiB";
+    }
+
+    function fmtMonitored(value) {
+      return value ? "yes" : "no";
+    }
+
+    function fmtRuntime(value) {
+      if (!value && value !== 0) return "-";
+      const minutes = Number(value);
+      if (Number.isNaN(minutes)) return String(value);
+      return `${minutes} min`;
+    }
+
+    function fmtFormats(value) {
+      if (!value) return "-";
+      if (!Array.isArray(value)) return String(value);
+      if (!value.length) return "-";
+      return value.map((item) => {
+        if (item && typeof item === "object" && item.name) return String(item.name);
+        return String(item);
+      }).join(", ");
+    }
+
+    function fmtDuration(seconds) {
+      if (seconds == null) return "-";
+      const total = Math.max(0, Math.round(Number(seconds)));
+      if (!Number.isFinite(total)) return "-";
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function fmtStatusPill(status) {
+      const normalized = String(status || "unknown").toLowerCase();
+      const allowed = ["running", "success", "failed", "skipped"];
+      const css = allowed.includes(normalized) ? normalized : "";
+      return `<span class="status-pill ${css}">${normalized}</span>`;
+    }
+
+    function setLibrarySubView(name) {
+      currentLibrarySub = name;
+      document.querySelectorAll("[data-library-sub]").forEach((node) => {
+        node.classList.toggle("active", node.getAttribute("data-library-sub") === name);
+      });
+      document.querySelectorAll("#view-library .subview").forEach((node) => {
+        node.classList.toggle("active", node.id === `library-sub-${name}`);
+      });
+    }
+
+    function setDrilldownType(name) {
+      const normalized = name === "movies" ? "movies" : "shows";
+      const typeNode = document.getElementById("drilldownType");
+      if (typeNode) typeNode.value = normalized;
+      document.getElementById("drilldownShowsPanel").style.display = normalized === "shows" ? "" : "none";
+      document.getElementById("drilldownMoviesPanel").style.display = normalized === "movies" ? "" : "none";
+    }
+
+    function setRunsSubView(name) {
+      currentRunsSub = name;
+      document.querySelectorAll("[data-runs-sub]").forEach((node) => {
+        node.classList.toggle("active", node.getAttribute("data-runs-sub") === name);
+      });
+      document.querySelectorAll("#view-runs .subview").forEach((node) => {
+        node.classList.toggle("active", node.id === `runs-sub-${name}`);
+      });
+    }
+
+    async function httpJson(url, options) {
+      const response = await fetch(url, options || {});
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || ("request failed: " + response.status));
+      }
+      return response.json();
+    }
+
+    function setView(viewName) {
+      const titleMap = {
+        overview: "Overview",
+        integrations: "Integrations",
+        schedules: "Schedules",
+        runs: "Sync Runs",
+        library: "Library",
+        webhooks: "Webhook Jobs",
+        actions: "Manual Actions"
+      };
+      document.getElementById("viewTitle").textContent = titleMap[viewName] || "Overview";
+      document.querySelectorAll(".view").forEach((node) => {
+        node.classList.toggle("active", node.id === ("view-" + viewName));
+      });
+      document.querySelectorAll(".nav-btn").forEach((node) => {
+        node.classList.toggle("active", node.getAttribute("data-view") === viewName);
+      });
+      if (viewName === "library") setLibrarySubView(currentLibrarySub);
+      if (viewName === "runs") setRunsSubView(currentRunsSub);
+    }
+
+    async function loadStatus() {
+      const status = await httpJson("/api/status");
+      document.getElementById("jobsTotal").textContent = String(status.jobs_total);
+      document.getElementById("queueOpen").textContent = String(status.webhook_queue_open);
+      document.getElementById("lagSonarr").textContent = String(Math.round((status.sync_lag_seconds.sonarr || 0) * 10) / 10);
+      document.getElementById("lagRadarr").textContent = String(Math.round((status.sync_lag_seconds.radarr || 0) * 10) / 10);
+      document.getElementById("sonarrVersion").textContent = status.arr_versions && status.arr_versions.sonarr ? String(status.arr_versions.sonarr) : "unknown";
+      document.getElementById("radarrVersion").textContent = status.arr_versions && status.arr_versions.radarr ? String(status.arr_versions.radarr) : "unknown";
+      const badge = document.getElementById("healthBadge");
+      badge.textContent = status.health_state + (status.health_reasons.length ? (" (" + status.health_reasons.join(", ") + ")") : "");
+      badge.className = "status-badge " + healthClass(status.health_state);
+      const syncBadge = document.getElementById("syncActivityBadge");
+      const activeSyncCount = Number(status.active_sync_count || 0);
+      if (activeSyncCount > 0) {
+        syncBadge.textContent = `sync running (${activeSyncCount})`;
+        syncBadge.className = "status-badge warning";
+      } else {
+        syncBadge.textContent = "sync idle";
+        syncBadge.className = "status-badge";
+      }
+    }
+
+    function formatStage(stage, note) {
+      const normalized = String(stage || "starting").replaceAll("_", " ");
+      const pretty = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+      if (!note) return pretty;
+      return `${pretty} (${note})`;
+    }
+
+    function renderSyncActivity(rows) {
+      const list = Array.isArray(rows) ? rows : [];
+      const html = list.map((row) => `
+        <tr>
+          <td>${row.source || ""}</td>
+          <td>${row.mode || ""}</td>
+          <td>${fmtStatusPill(row.status || "running")}</td>
+          <td>${row.trigger || ""}</td>
+          <td>${formatStage(row.stage, row.stage_note)}</td>
+          <td>${row.instance_name || ""}</td>
+          <td>${fmtDuration(row.elapsed_seconds)}</td>
+          <td>${row.records_processed == null ? "-" : row.records_processed}</td>
+          <td>${fmtDate(row.started_at)}</td>
+        </tr>
+      `).join("");
+      const empty = "<tr><td colspan='9' class='muted'>No active sync jobs.</td></tr>";
+      document.getElementById("syncActivityOverviewBody").innerHTML = html || empty;
+      document.getElementById("syncActivityRunsBody").innerHTML = html || empty;
+    }
+
+    async function loadSyncActivity() {
+      const rows = await httpJson("/api/ui/sync-activity");
+      renderSyncActivity(rows);
+      return rows;
+    }
+
+    function integrationCard(row) {
+      return `
+        <div class="card">
+          <div class="row">
+            <strong style="min-width:120px;">${row.source}/${row.name}</strong>
+            <span class="muted">Updated: ${fmtDate(row.updated_at)}</span>
+            <span class="pill">${row.api_key_set ? "API key set" : "API key missing"}</span>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <input data-field="base_url" data-source="${row.source}" data-name="${row.name}" value="${row.base_url || ""}" placeholder="Base URL">
+            <input data-field="api_key" data-source="${row.source}" data-name="${row.name}" value="" placeholder="API key (leave blank to keep existing)">
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <label class="muted"><input type="checkbox" data-field="enabled" data-source="${row.source}" data-name="${row.name}" ${row.enabled ? "checked" : ""}> enabled</label>
+            <label class="muted"><input type="checkbox" data-field="webhook_enabled" data-source="${row.source}" data-name="${row.name}" ${row.webhook_enabled ? "checked" : ""}> webhook enabled</label>
+            <button class="secondary" data-action="save-integration" data-source="${row.source}" data-name="${row.name}" type="button">Save</button>
+          </div>
+        </div>`;
+    }
+
+    async function loadIntegrations() {
+      const rows = await httpJson("/api/config/integrations");
+      document.getElementById("integrationsList").innerHTML = rows.map(integrationCard).join("") || "<div class='muted'>No integrations found.</div>";
+    }
+
+    function scheduleCard(row) {
+      return `
+        <div class="card">
+          <div class="row">
+            <strong style="min-width:120px;">${row.mode}</strong>
+            <span class="muted">Updated: ${fmtDate(row.updated_at)}</span>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <input data-schedule-field="cron" data-mode="${row.mode}" value="${row.cron || ""}" placeholder="Cron expression">
+            <input data-schedule-field="timezone" data-mode="${row.mode}" value="${row.timezone || "UTC"}" placeholder="Timezone">
+            <label class="muted"><input type="checkbox" data-schedule-field="enabled" data-mode="${row.mode}" ${row.enabled ? "checked" : ""}> enabled</label>
+            <button class="secondary" data-action="save-schedule" data-mode="${row.mode}" type="button">Save</button>
+          </div>
+        </div>`;
+    }
+
+    async function loadSchedules() {
+      const rows = await httpJson("/api/config/schedules");
+      document.getElementById("schedulesList").innerHTML = rows.map(scheduleCard).join("") || "<div class='muted'>No schedules configured.</div>";
+    }
+
+    function renderRuns(rows) {
+      const sourceFilter = document.getElementById("runsSourceFilter").value;
+      const statusFilter = document.getElementById("runsStatusFilter").value;
+      const search = document.getElementById("runsSearch").value.toLowerCase().trim();
+      const filtered = rows.filter((row) => {
+        if (sourceFilter !== "all" && row.source !== sourceFilter) return false;
+        if (statusFilter !== "all" && row.status !== statusFilter) return false;
+        if (!search) return true;
+        const blob = `${row.mode || ""} ${row.instance_name || ""} ${row.error_message || ""}`.toLowerCase();
+        return blob.includes(search);
+      });
+      const fullHtml = filtered.map((r) => `
+        <tr>
+          <td>${r.source || ""}</td>
+          <td>${r.mode || ""}</td>
+          <td>${r.instance_name || ""}</td>
+          <td>${fmtStatusPill(r.status)}</td>
+          <td>${fmtDate(r.started_at)}</td>
+          <td>${fmtDate(r.finished_at)}</td>
+          <td>${r.rows_written == null ? "-" : r.rows_written}</td>
+          <td class="muted">${r.error_message || ""}</td>
+        </tr>
+      `).join("");
+      document.getElementById("runsBody").innerHTML = fullHtml || "<tr><td colspan='8' class='muted'>No matching runs.</td></tr>";
+      const compactHtml = filtered.slice(0, 8).map((r) => `
+        <tr><td>${r.source || ""}</td><td>${r.mode || ""}</td><td>${fmtStatusPill(r.status)}</td><td>${fmtDate(r.started_at)}</td><td>${r.rows_written == null ? "-" : r.rows_written}</td></tr>
+      `).join("");
+      document.getElementById("runsCompactBody").innerHTML = compactHtml || "<tr><td colspan='5' class='muted'>No runs yet.</td></tr>";
+    }
+
+    async function loadRuns() {
+      runsCache = await httpJson("/api/ui/recent-runs");
+      renderRuns(runsCache);
+    }
+
+    function updateManualSyncState(data) {
+      const badge = document.getElementById("manualSyncStateBadge");
+      const summary = document.getElementById("manualSyncSummary");
+      const elapsed = document.getElementById("manualSyncElapsed");
+      const eta = document.getElementById("manualSyncEta");
+      const total = document.getElementById("manualSyncTotal");
+      const records = document.getElementById("manualSyncRecords");
+      const bar = document.getElementById("manualSyncProgressBar");
+      if (!data || !data.running) {
+        badge.textContent = "idle";
+        badge.className = "status-badge";
+        summary.textContent = "No manual sync currently running.";
+        elapsed.textContent = "-";
+        eta.textContent = "-";
+        total.textContent = "-";
+        records.textContent = "-";
+        bar.style.width = "0%";
+        return;
+      }
+      badge.textContent = "running";
+      badge.className = "status-badge warning";
+      summary.textContent = `${data.source}/${data.mode} on ${data.instance_name} (run #${data.run_id}) - ${formatStage(data.stage, data.stage_note)}`;
+      elapsed.textContent = fmtDuration(data.elapsed_seconds);
+      eta.textContent = data.eta_seconds == null ? "estimating..." : fmtDuration(data.eta_seconds);
+      total.textContent = data.estimated_total_seconds == null
+        ? "learning from history..."
+        : `${fmtDuration(data.estimated_total_seconds)} (${data.history_sample_size} prior runs)`;
+      records.textContent = String(data.records_processed || 0);
+      const percent = data.progress_pct == null ? Math.min((Number(data.elapsed_seconds || 0) % 60) + 10, 95) : data.progress_pct;
+      bar.style.width = `${Math.max(2, Math.min(percent, 99))}%`;
+    }
+
+    async function loadManualSyncProgress() {
+      const data = await httpJson("/api/ui/sync-progress");
+      updateManualSyncState(data);
+      return data;
+    }
+
+    function stopManualSyncMonitor() {
+      if (manualSyncTimer) {
+        clearInterval(manualSyncTimer);
+        manualSyncTimer = null;
+      }
+    }
+
+    function startManualSyncMonitor() {
+      stopManualSyncMonitor();
+      manualSyncTimer = setInterval(async () => {
+        try {
+          const [progress] = await Promise.all([loadManualSyncProgress(), loadSyncActivity(), loadStatus()]);
+          if (!progress.running) stopManualSyncMonitor();
+        } catch (_err) {
+          // keep timer alive; next poll will retry
+        }
+      }, 2000);
+    }
+
+    async function loadQueueSummary() {
+      const rows = await httpJson("/api/ui/webhook-queue");
+      const html = rows.map((r) => `<tr><td>${r.status}</td><td>${r.count}</td></tr>`).join("");
+      document.getElementById("queueBody").innerHTML = html || "<tr><td colspan='2' class='muted'>No webhook records yet.</td></tr>";
+    }
+
+    async function loadWebhookJobs() {
+      const status = document.getElementById("webhookStatusFilter").value;
+      const rows = await httpJson(`/api/ui/webhook-jobs?status=${encodeURIComponent(status)}&limit=150`);
+      const html = rows.map((r) => `
+        <tr>
+          <td>${r.id}</td>
+          <td>${r.source}</td>
+          <td>${r.event_type || ""}</td>
+          <td>${r.status}</td>
+          <td>${r.attempts}</td>
+          <td>${fmtDate(r.received_at)}</td>
+          <td>${fmtDate(r.next_attempt_at)}</td>
+          <td class="muted">${r.error_message || ""}</td>
+          <td>${(r.status === "dead_letter" || r.status === "retrying") ? `<button class="secondary" data-action="requeue-job" data-job-id="${r.id}" type="button">Requeue</button>` : "-"}</td>
+        </tr>
+      `).join("");
+      document.getElementById("webhookJobsBody").innerHTML = html || "<tr><td colspan='9' class='muted'>No webhook jobs found.</td></tr>";
+    }
+
+    function renderShows(rows) {
+      const html = rows.map((r) => `
+        <tr>
+          <td>${r.title || ""}</td>
+          <td>${r.instance_name || ""}</td>
+          <td>${r.season_count == null ? "-" : r.season_count}</td>
+          <td>${r.episode_count == null ? "-" : r.episode_count}</td>
+          <td>${r.status || ""}</td>
+          <td><button class="secondary" data-action="select-show" data-series-id="${r.series_id}" data-instance-name="${r.instance_name}" data-series-title="${r.title || ""}" type="button">Select</button></td>
+        </tr>
+      `).join("");
+      document.getElementById("showsBody").innerHTML = html || "<tr><td colspan='6' class='muted'>No shows found.</td></tr>";
+    }
+
+    async function loadShows() {
+      const search = document.getElementById("showsSearch").value.trim();
+      const rows = await httpJson(`/api/ui/shows?search=${encodeURIComponent(search)}&limit=250`);
+      renderShows(rows);
+      document.getElementById("showsCountLabel").textContent = String(rows.length);
+    }
+
+    function renderShowEpisodes(rows) {
+      const html = rows.map((r) => `
+        <tr>
+          <td>${fmtMonitored(r.monitored)}</td>
+          <td>${r.absolute_episode_number || "-"}</td>
+          <td>${r.season_number == null ? "-" : r.season_number}</td>
+          <td>${r.episode_number == null ? "-" : r.episode_number}</td>
+          <td>${r.episode_title || ""}</td>
+          <td class="muted">${r.file_path || "-"}</td>
+          <td class="muted">${r.relative_path || "-"}</td>
+          <td>${fmtDate(r.air_date)}</td>
+          <td>${fmtRuntime(r.runtime_minutes)}</td>
+          <td>${r.audio_codec || "-"} ${r.audio_channels ? "(" + r.audio_channels + ")" : ""}</td>
+          <td>${r.video_codec || "-"}</td>
+          <td>${r.video_dynamic_range || "-"}</td>
+          <td>${fmtList(r.audio_languages)}</td>
+          <td>${fmtList(r.subtitle_languages)}</td>
+          <td>${fmtSize(r.size_bytes)}</td>
+          <td>${r.release_group || "-"}</td>
+          <td>${fmtFormats(r.custom_formats)}</td>
+          <td>${r.custom_format_score || "-"}</td>
+          <td>${r.indexer_flags || "-"}</td>
+          <td>${r.has_file ? "downloaded" : (r.series_status || "-")}</td>
+        </tr>
+      `).join("");
+      document.getElementById("showEpisodesBody").innerHTML = html || "<tr><td colspan='20' class='muted'>No episodes found.</td></tr>";
+    }
+
+    async function loadShowSeasons() {
+      if (!selectedShow) return;
+      const rows = await httpJson(`/api/ui/shows/${selectedShow.series_id}/seasons?instance_name=${encodeURIComponent(selectedShow.instance_name)}`);
+      const options = ["<option value='all'>all seasons</option>"].concat(
+        rows.map((r) => `<option value="${r.season_number}">season ${r.season_number}</option>`)
+      );
+      document.getElementById("showSeasonFilter").innerHTML = options.join("");
+    }
+
+    async function loadSelectedShowEpisodes() {
+      if (!selectedShow) {
+        setToast("Select a show first", true);
+        return;
+      }
+      const seasonValue = document.getElementById("showSeasonFilter").value;
+      const seasonParam = seasonValue !== "all" ? `&season_number=${encodeURIComponent(seasonValue)}` : "";
+      const rows = await httpJson(
+        `/api/ui/shows/${selectedShow.series_id}/episodes?instance_name=${encodeURIComponent(selectedShow.instance_name)}${seasonParam}&limit=5000`
+      );
+      renderShowEpisodes(rows);
+      document.getElementById("showEpisodesCountLabel").textContent = String(rows.length);
+    }
+
+    async function loadAllEpisodes() {
+      const search = document.getElementById("allEpisodesSearch").value.trim();
+      const instance = document.getElementById("allEpisodesInstance").value.trim();
+      const rows = await httpJson(
+        `/api/ui/episodes?search=${encodeURIComponent(search)}&instance_name=${encodeURIComponent(instance)}&limit=1500`
+      );
+      const html = rows.map((r) => `
+        <tr>
+          <td>${r.series_title || ""}</td>
+          <td>${r.instance_name || ""}</td>
+          <td>${fmtMonitored(r.monitored)}</td>
+          <td>${r.absolute_episode_number || "-"}</td>
+          <td>${r.season_number == null ? "-" : r.season_number}</td>
+          <td>${r.episode_number == null ? "-" : r.episode_number}</td>
+          <td>${r.episode_title || ""}</td>
+          <td class="muted">${r.file_path || "-"}</td>
+          <td class="muted">${r.relative_path || "-"}</td>
+          <td>${fmtDate(r.air_date)}</td>
+          <td>${fmtRuntime(r.runtime_minutes)}</td>
+          <td>${r.audio_codec || "-"} ${r.audio_channels ? "(" + r.audio_channels + ")" : ""}</td>
+          <td>${r.video_codec || "-"}</td>
+          <td>${r.video_dynamic_range || "-"}</td>
+          <td>${fmtList(r.audio_languages)}</td>
+          <td>${fmtList(r.subtitle_languages)}</td>
+          <td>${fmtSize(r.size_bytes)}</td>
+          <td>${r.release_group || "-"}</td>
+          <td>${fmtFormats(r.custom_formats)}</td>
+          <td>${r.custom_format_score || "-"}</td>
+          <td>${r.indexer_flags || "-"}</td>
+          <td>${r.has_file ? "downloaded" : (r.series_status || "-")}</td>
+        </tr>
+      `).join("");
+      document.getElementById("allEpisodesBody").innerHTML = html || "<tr><td colspan='22' class='muted'>No episodes found.</td></tr>";
+      document.getElementById("allEpisodesCountLabel").textContent = String(rows.length);
+    }
+
+    async function loadMovies() {
+      const search = document.getElementById("moviesSearch").value.trim();
+      const instance = document.getElementById("moviesInstance").value.trim();
+      const rows = await httpJson(
+        `/api/ui/movies?search=${encodeURIComponent(search)}&instance_name=${encodeURIComponent(instance)}&limit=1500`
+      );
+      const html = rows.map((r) => `
+        <tr>
+          <td>${r.title || ""}</td>
+          <td>${r.year == null ? "-" : r.year}</td>
+          <td>${r.instance_name || ""}</td>
+          <td>${fmtMonitored(r.monitored)}</td>
+          <td>${r.status || ""}</td>
+          <td class="muted">${r.movie_path || "-"}</td>
+          <td class="muted">${r.relative_path || "-"}</td>
+          <td>${fmtRuntime(r.runtime_minutes)}</td>
+          <td>${r.audio_codec || "-"} ${r.audio_channels ? "(" + r.audio_channels + ")" : ""}</td>
+          <td>${r.video_codec || "-"}</td>
+          <td>${r.video_dynamic_range || "-"}</td>
+          <td>${fmtList(r.audio_languages)}</td>
+          <td>${fmtList(r.subtitle_languages)}</td>
+          <td>${fmtSize(r.size_bytes)}</td>
+          <td>${r.release_group || "-"}</td>
+          <td>${fmtFormats(r.custom_formats)}</td>
+          <td>${r.custom_format_score || "-"}</td>
+          <td>${r.indexer_flags || "-"}</td>
+          <td class="muted">${r.file_path || "-"}</td>
+        </tr>
+      `).join("");
+      document.getElementById("moviesBody").innerHTML = html || "<tr><td colspan='19' class='muted'>No movies found.</td></tr>";
+      document.getElementById("moviesCountLabel").textContent = String(rows.length);
+    }
+
+    async function ensureLibraryLoaded() {
+      if (libraryLoaded) return;
+      await Promise.all([loadShows(), loadAllEpisodes(), loadMovies()]);
+      libraryLoaded = true;
+    }
+
+    async function loadAll() {
+      await Promise.all([loadStatus(), loadSyncActivity(), loadIntegrations(), loadSchedules(), loadRuns(), loadQueueSummary(), loadWebhookJobs()]);
+    }
+
+    function ensureAutoRefresh() {
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      if (!autoRefreshEnabled) return;
+      autoRefreshTimer = setInterval(() => {
+        Promise.all([loadStatus(), loadSyncActivity(), loadRuns(), loadQueueSummary()]).catch(() => {});
+      }, 15000);
+    }
+
+    document.querySelectorAll(".nav-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const view = btn.getAttribute("data-view");
+        setView(view);
+        if (window.innerWidth <= 980) {
+          document.querySelector(".app-shell").classList.remove("sidebar-open");
+        }
+        if (view === "library") {
+          try {
+            await ensureLibraryLoaded();
+          } catch (err) {
+            setToast(String(err), true);
+          }
+        }
+        if (view === "actions") {
+          try {
+            const progress = await loadManualSyncProgress();
+            if (progress.running) startManualSyncMonitor();
+          } catch (err) {
+            setToast(String(err), true);
+          }
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-library-sub]").forEach((btn) => {
+      btn.addEventListener("click", () => setLibrarySubView(btn.getAttribute("data-library-sub") || "drilldown"));
+    });
+    document.querySelectorAll("[data-runs-sub]").forEach((btn) => {
+      btn.addEventListener("click", () => setRunsSubView(btn.getAttribute("data-runs-sub") || "active"));
+    });
+    document.getElementById("drilldownType").addEventListener("change", (event) => {
+      setDrilldownType(event.target.value);
+    });
+
+    document.getElementById("mobileNavToggle").addEventListener("click", () => {
+      document.querySelector(".app-shell").classList.toggle("sidebar-open");
+    });
+
+    document.getElementById("refreshAllBtn").addEventListener("click", async () => {
+      try {
+        await loadAll();
+        setToast("Refreshed data", false);
+      } catch (err) {
+        setToast(String(err), true);
+      }
+    });
+
+    document.getElementById("autoRefreshToggle").addEventListener("change", (event) => {
+      autoRefreshEnabled = event.target.checked;
+      ensureAutoRefresh();
+      setToast(autoRefreshEnabled ? "Auto refresh enabled" : "Auto refresh disabled", false);
+    });
+
+    document.getElementById("runsSourceFilter").addEventListener("change", () => renderRuns(runsCache));
+    document.getElementById("runsStatusFilter").addEventListener("change", () => renderRuns(runsCache));
+    document.getElementById("runsSearch").addEventListener("input", () => renderRuns(runsCache));
+    document.getElementById("loadWebhookJobsBtn").addEventListener("click", () => loadWebhookJobs().catch((err) => setToast(String(err), true)));
+    document.getElementById("loadShowsBtn").addEventListener("click", () => loadShows().catch((err) => setToast(String(err), true)));
+    document.getElementById("loadSelectedShowEpisodesBtn").addEventListener("click", () => loadSelectedShowEpisodes().catch((err) => setToast(String(err), true)));
+    document.getElementById("loadAllEpisodesBtn").addEventListener("click", () => loadAllEpisodes().catch((err) => setToast(String(err), true)));
+    document.getElementById("loadMoviesBtn").addEventListener("click", () => loadMovies().catch((err) => setToast(String(err), true)));
+    document.getElementById("exportSelectedShowEpisodesBtn").addEventListener("click", () => {
+      if (!selectedShow) {
+        setToast("Select a show first", true);
+        return;
+      }
+      const seasonValue = document.getElementById("showSeasonFilter").value;
+      const seasonPart = seasonValue !== "all" ? `&season_number=${encodeURIComponent(seasonValue)}` : "";
+      window.location.href = `/api/ui/shows/${selectedShow.series_id}/episodes/export.csv?instance_name=${encodeURIComponent(selectedShow.instance_name)}${seasonPart}&limit=5000`;
+    });
+    document.getElementById("exportAllEpisodesBtn").addEventListener("click", () => {
+      const search = document.getElementById("allEpisodesSearch").value.trim();
+      const instance = document.getElementById("allEpisodesInstance").value.trim();
+      window.location.href = `/api/ui/episodes/export.csv?search=${encodeURIComponent(search)}&instance_name=${encodeURIComponent(instance)}&limit=5000`;
+    });
+    document.getElementById("exportMoviesBtn").addEventListener("click", () => {
+      const search = document.getElementById("moviesSearch").value.trim();
+      const instance = document.getElementById("moviesInstance").value.trim();
+      window.location.href = `/api/ui/movies/export.csv?search=${encodeURIComponent(search)}&instance_name=${encodeURIComponent(instance)}&limit=5000`;
+    });
+
+    document.getElementById("runSyncBtn").addEventListener("click", async () => {
+      const runButton = document.getElementById("runSyncBtn");
+      const source = document.getElementById("syncSource").value;
+      const mode = document.getElementById("syncMode").value;
+      if (mode === "full" && !window.confirm(`Run full sync for ${source}?`)) return;
+      try {
+        runButton.disabled = true;
+        setToast(`Running ${source}/${mode}...`, false);
+        updateManualSyncState({
+          running: true,
+          run_id: "pending",
+          source: source,
+          mode: mode,
+          instance_name: "default",
+          elapsed_seconds: 0,
+          eta_seconds: null,
+          estimated_total_seconds: null,
+          history_sample_size: 0,
+          records_processed: 0,
+          progress_pct: null
+        });
+        startManualSyncMonitor();
+        await httpJson(`/api/sync/${source}/${mode}`, { method: "POST" });
+        await Promise.all([loadStatus(), loadSyncActivity(), loadRuns()]);
+        await loadManualSyncProgress();
+        setToast(`Run completed for ${source}/${mode}`, false);
+      } catch (err) {
+        setToast(String(err), true);
+      } finally {
+        runButton.disabled = false;
+        stopManualSyncMonitor();
+        Promise.all([loadManualSyncProgress(), loadSyncActivity(), loadStatus()]).catch(() => {});
+      }
+    });
+
+    document.getElementById("replayBtn").addEventListener("click", async () => {
+      const source = document.getElementById("replaySource").value;
+      try {
+        await httpJson(`/api/webhooks/replay-dead-letter/${source}`, { method: "POST" });
+        await Promise.all([loadStatus(), loadSyncActivity(), loadQueueSummary(), loadWebhookJobs()]);
+        setToast(`Queued dead-letter replay for ${source}`, false);
+      } catch (err) {
+        setToast(String(err), true);
+      }
+    });
+
+    document.getElementById("resetDataBtn").addEventListener("click", async () => {
+      const firstCheck = window.confirm("This will delete collected database data and run history. Continue?");
+      if (!firstCheck) return;
+      const typed = window.prompt("Type RESET to confirm database reset:");
+      if (!typed || typed.trim().toUpperCase() !== "RESET") {
+        setToast("Reset cancelled: confirmation did not match", true);
+        return;
+      }
+      try {
+        await httpJson("/api/admin/reset-data", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ confirmation: "RESET" })
+        });
+        selectedShow = null;
+        libraryLoaded = false;
+        document.getElementById("selectedShowLabel").textContent = "No show selected";
+        document.getElementById("showSeasonFilter").innerHTML = "<option value='all'>all seasons</option>";
+        document.getElementById("showEpisodesBody").innerHTML = "<tr><td colspan='20' class='muted'>No episodes found.</td></tr>";
+        document.getElementById("allEpisodesBody").innerHTML = "<tr><td colspan='22' class='muted'>No episodes found.</td></tr>";
+        document.getElementById("moviesBody").innerHTML = "<tr><td colspan='19' class='muted'>No movies found.</td></tr>";
+        document.getElementById("showsCountLabel").textContent = "0";
+        document.getElementById("showEpisodesCountLabel").textContent = "0";
+        document.getElementById("allEpisodesCountLabel").textContent = "0";
+        document.getElementById("moviesCountLabel").textContent = "0";
+        await Promise.all([loadStatus(), loadSyncActivity(), loadRuns(), loadQueueSummary(), loadWebhookJobs()]);
+        setToast("Database data reset complete. Run full sync to repopulate.", false);
+      } catch (err) {
+        setToast(String(err), true);
+      }
+    });
+
+    document.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const action = target.getAttribute("data-action");
+
+      if (action === "save-integration") {
+        const source = target.getAttribute("data-source");
+        const name = target.getAttribute("data-name") || "default";
+        if (!source) return;
+        try {
+          const baseUrlNode = document.querySelector(`input[data-field="base_url"][data-source="${source}"][data-name="${name}"]`);
+          const apiKeyNode = document.querySelector(`input[data-field="api_key"][data-source="${source}"][data-name="${name}"]`);
+          const enabledNode = document.querySelector(`input[data-field="enabled"][data-source="${source}"][data-name="${name}"]`);
+          const webhookNode = document.querySelector(`input[data-field="webhook_enabled"][data-source="${source}"][data-name="${name}"]`);
+          await httpJson(`/api/config/integrations/${source}`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              name: name,
+              base_url: baseUrlNode ? baseUrlNode.value : "",
+              api_key: apiKeyNode ? apiKeyNode.value : "",
+              enabled: enabledNode ? enabledNode.checked : true,
+              webhook_enabled: webhookNode ? webhookNode.checked : true
+            })
+          });
+          await loadIntegrations();
+          setToast(`Saved ${source}/${name}`, false);
+        } catch (err) {
+          setToast(String(err), true);
+        }
+      }
+
+      if (action === "save-schedule") {
+        const mode = target.getAttribute("data-mode");
+        if (!mode) return;
+        try {
+          const cronNode = document.querySelector(`input[data-schedule-field="cron"][data-mode="${mode}"]`);
+          const tzNode = document.querySelector(`input[data-schedule-field="timezone"][data-mode="${mode}"]`);
+          const enabledNode = document.querySelector(`input[data-schedule-field="enabled"][data-mode="${mode}"]`);
+          await httpJson(`/api/config/schedules/${mode}`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              cron: cronNode ? cronNode.value : "",
+              timezone: tzNode ? tzNode.value : "UTC",
+              enabled: enabledNode ? enabledNode.checked : true
+            })
+          });
+          await loadSchedules();
+          setToast(`Saved ${mode} schedule`, false);
+        } catch (err) {
+          setToast(String(err), true);
+        }
+      }
+
+      if (action === "requeue-job") {
+        const jobId = target.getAttribute("data-job-id");
+        if (!jobId) return;
+        try {
+          await httpJson(`/api/webhooks/requeue/${jobId}`, { method: "POST" });
+          await Promise.all([loadQueueSummary(), loadWebhookJobs(), loadStatus(), loadSyncActivity()]);
+          setToast(`Webhook job ${jobId} requeued`, false);
+        } catch (err) {
+          setToast(String(err), true);
+        }
+      }
+
+      if (action === "select-show") {
+        const seriesId = target.getAttribute("data-series-id");
+        const instanceName = target.getAttribute("data-instance-name");
+        const seriesTitle = target.getAttribute("data-series-title");
+        if (!seriesId || !instanceName) return;
+        selectedShow = {
+          series_id: Number(seriesId),
+          instance_name: instanceName,
+          title: seriesTitle || "unknown"
+        };
+        document.getElementById("selectedShowLabel").textContent = `Selected: ${selectedShow.title} (${selectedShow.instance_name})`;
+        try {
+          await loadShowSeasons();
+          await loadSelectedShowEpisodes();
+          setToast(`Loaded show ${selectedShow.title}`, false);
+        } catch (err) {
+          setToast(String(err), true);
+        }
+      }
+    });
+
+    setLibrarySubView(currentLibrarySub);
+    setRunsSubView(currentRunsSub);
+    setDrilldownType("shows");
+
+    loadAll().then(() => {
+      loadManualSyncProgress().catch(() => {});
+      ensureAutoRefresh();
+    }).catch((err) => {
+      setToast(String(err), true);
+    });
+  </script>
+</body>
+</html>

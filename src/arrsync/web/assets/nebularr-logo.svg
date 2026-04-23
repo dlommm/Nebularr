@@ -1,0 +1,34 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="nebularrGradient" x1="18" y1="14" x2="170" y2="166" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#54A8FF"/>
+      <stop offset="0.52" stop-color="#6C7CFF"/>
+      <stop offset="1" stop-color="#9D5CFF"/>
+    </linearGradient>
+    <filter id="softGlow" x="0" y="0" width="220" height="180" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="640" height="180" rx="22" fill="#0E1630"/>
+
+  <g filter="url(#softGlow)">
+    <path d="M86 30C118 30 145 57 145 89C145 121 118 148 86 148C54 148 27 121 27 89C27 57 54 30 86 30Z"
+          fill="#111D3D" stroke="url(#nebularrGradient)" stroke-width="5"/>
+    <path d="M54 114V64H70L105 104V64H121V114H105L70 74V114H54Z" fill="url(#nebularrGradient)"/>
+    <circle cx="86" cy="89" r="55" stroke="url(#nebularrGradient)" stroke-opacity="0.35" stroke-width="2"/>
+    <path d="M127 55L157 70L127 85V55Z" fill="#8D67FF"/>
+  </g>
+
+  <!-- Solid fill on wordmark: gradient-on-text is omitted by some README / SVG-as-image renderers -->
+  <text x="198" y="110" fill="#DCE9FF" font-family="Inter, Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="0.5">
+    Nebularr
+  </text>
+  <text x="202" y="136" fill="#8EA4D6" font-family="Inter, Segoe UI, Roboto, Arial, sans-serif" font-size="16" font-weight="500" letter-spacing="2">
+    MEDIA ANALYTICS CONTROL PLANE
+  </text>
+</svg>
