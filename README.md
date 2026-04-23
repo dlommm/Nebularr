@@ -2,6 +2,8 @@
 
 ![Nebularr banner](docs/readme/nebularr-banner.png)
 
+> **AI-assisted development** — The code, docs, and tooling in this repository were written primarily with AI coding assistants, with human direction and review.
+
 Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into PostgreSQL for analytics and the built-in Web UI.
 
 ## What it does
