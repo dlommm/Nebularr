@@ -20,7 +20,7 @@ services:
     build:
       context: .
       args:
-        APP_VERSION: ${APP_VERSION:-1.2.4}
+        APP_VERSION: ${APP_VERSION:-1.3.0}
         GIT_SHA: ${APP_GIT_SHA:-release}
     environment:
       APP_HOST: 0.0.0.0
