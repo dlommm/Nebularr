@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nebularr"
-version = "1.2.3"
+version = "1.2.4"
 description = "Nebularr metadata sync service for PostgreSQL analytics"
 readme = "README.md"
 requires-python = ">=3.11"

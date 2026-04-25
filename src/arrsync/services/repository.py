@@ -140,6 +140,41 @@ def finish_sync_run(
             "instance_name": instance_name,
         },
     )
+    if status == "success":
+        _record_sync_state_last_success(
+            session,
+            source=source,
+            instance_name=instance_name,
+            mode=mode,
+        )
+
+
+def _record_sync_state_last_success(session: Session, source: str, instance_name: str, mode: str) -> None:
+    """Pushes last successful full or incremental (incl. webhook) sync; used for health lag vs. history watermark."""
+    if mode in ("full", "reconcile"):
+        session.execute(
+            text(
+                """
+                insert into app.sync_state (source, instance_name, last_successful_full_sync, updated_at)
+                values (:source, :instance_name, now(), now())
+                on conflict (source, instance_name) do update
+                set last_successful_full_sync = now(), updated_at = now()
+                """
+            ),
+            {"source": source, "instance_name": instance_name},
+        )
+    elif mode in ("incremental", "webhook"):
+        session.execute(
+            text(
+                """
+                insert into app.sync_state (source, instance_name, last_successful_incremental, updated_at)
+                values (:source, :instance_name, now(), now())
+                on conflict (source, instance_name) do update
+                set last_successful_incremental = now(), updated_at = now()
+                """
+            ),
+            {"source": source, "instance_name": instance_name},
+        )
 
 
 def update_sync_run_progress(

@@ -94,7 +94,21 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
     lag_rows = session.execute(
         text(
             """
-            select source, extract(epoch from (now() - coalesce(last_history_time, now()))) as lag_seconds
+            select
+                source,
+                extract(
+                    epoch
+                    from (
+                        now() - coalesce(
+                            greatest(
+                                last_history_time,
+                                last_successful_incremental,
+                                last_successful_full_sync
+                            ),
+                            now()
+                        )
+                    )
+                ) as lag_seconds
             from app.sync_state
             """
         )
