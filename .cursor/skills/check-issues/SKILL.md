@@ -28,11 +28,16 @@ Treat as this workflow when the user says things like: **"check issues"**, **"ru
 Configurable if the user names different thresholds; otherwise use:
 
 - **Docker Scout** on the **candidate image** built from the sandbox: **0 Critical, 0 High** (per the `Overview` / summary line in `docker scout cves` or `docker scout quickview`). **Medium and Low** may remain; note them in the final summary.
-- **Build:** `docker build -f Dockerfile -t <candidate-tag> .` succeeds from the sandbox repo root.
+- **Build:** from the sandbox repo root, prefer **`./scripts/docker-release-build.sh --load`** (or `docker buildx build --provenance=false --sbom=false … --load`) so the scan matches the **Hub**-recommended **no-attestation** build. A plain `docker build` is OK for a quick smoke test but can disagree with **Docker Hub** Scout totals (see [Hub vs local Scout](#docker-hub-vs-local-scout)).
 - **Frontend:** from `frontend/`: `npm run lint` and `npm test` (or project-standard scripts) succeed; `npm run build` succeeds.
 - **Backend:** if the repo defines them (e.g. `pytest`, `ruff check`), run the same commands as in CI / README. If no tests, state that and require at least **lint + build** green.
 
-If remediations **cannot** reach 0C/0H after **reasonable** attempts (e.g. base image digest bump, safe `npm` patch/minor, Dockerfile `apt` refresh), **stop without merging** and explain the remaining findings (e.g. Vite major upgrade needed).
+If remediations **cannot** reach 0C/0H after **reasonable** attempts (e.g. base image digest bump, safe `npm` updates, Dockerfile `apt` refresh), **stop without merging** and explain the remaining findings.
+
+## Docker Hub vs local Scout
+
+- **hub.docker.com** (Docker Scout UI) can show **more** total CVEs than a minimal runtime (e.g. **layer breakdown**, **base image**, **and** attestation / SBOM metadata on tagged images). **Pushes** from this repo should use **`./scripts/docker-release-build.sh --push`** so images are **not** decorated with SLSA provenance / full SBOM by default; that **reduces** spurious package rows. Trade-off: less supply-chain attestation on the image.
+- A **`golang` / `stdlib`** row on a **Python-only** `Dockerfile` is often **attribution noise** in Scout, not a Go runtime inside the container. Reconcile with `docker scout cves --only-severity high` on an image built with **`--provenance=false`**, and treat remaining rows against **debian** / **PyPI** as the actionable set.
 
 ## Procedure
 
@@ -60,9 +65,9 @@ If `git worktree` is impossible (rare), fallback: `git clone` the repo to `$SAND
 
 In `$SANDBOX`, iteratively:
 
-- Prefer **low-risk** fixes: newer **`python:3.12-slim` / `node:22-slim` image digests** (same major tags), `apt-get upgrade` in the Dockerfile when appropriate, **npm/pip** patch/minor updates that fix Scout findings **without** breaking the app.
-- Avoid **high-risk** jumps (e.g. **Vite 5 → 6**, **Alpine** base switch) unless the user explicitly allows them in the same request; if required for 0C/0H, **stop** and do not merge (report instead).
-- After each material change: `docker build` a unique tag, e.g. `nebularr:scout-candidate`, then `docker scout cves nebularr:scout-candidate` (or `quickview`).
+- Prefer **low-risk** fixes: newer **`python:3.13-slim` image digest** (as in the current `Dockerfile`), `apt-get upgrade` in the Dockerfile when appropriate, **npm/pip** updates that fix Scout **without** breaking the Web UI (run **lint, test, `npm run build`** after `package.json` changes).
+- Avoid **high-risk** jumps (e.g. **Alpine** base switch) unless the user explicitly allows them; if required for 0C/0H, **stop** and do not merge (report instead).
+- After each material change: **`./scripts/docker-release-build.sh --load`** with a unique tag, or `docker buildx build --provenance=false --sbom=false … -t nebularr:scout-candidate --load .`, then `docker scout cves nebularr:scout-candidate` (or `quickview`).
 
 **Stop condition for fixes:** 0 Critical, 0 High **or** user-defined threshold met.
 

@@ -98,6 +98,7 @@ flowchart LR
 - `v2-test-003` (`proposed`): Add load tests for webhook throughput and incremental sync latency.
 - `v2-test-004` (`proposed`): Add UI test suite for config forms, filtering behavior, and manual actions.
 - `v2-test-005` (`proposed`): Add chaos tests for DB disconnects, Arr timeouts, and worker crashes.
+- `v2-sec-001` (`proposed`): If Docker Hub Scout still shows **golang/stdlib** (or other non-runtime) rows after no-attestation builds, investigate **VEX** / **in-toto** / Scout filters or a **slimmer** final stage (e.g. distroless) for operators who need a minimal CVE surface.
 
 ## Release Buckets (Draft)
 

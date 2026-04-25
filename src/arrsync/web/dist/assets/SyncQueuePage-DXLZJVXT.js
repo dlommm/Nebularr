@@ -1,4 +1,4 @@
-import{k as L,j as e,M as D,l as K,u as W,O,Q as B,o as J,t as z,a as j,G as l,C as c,c as i,Z as U,d,h as G,s as S,p as r,i as t,S as A,r as k}from"./index-C3bK5FwL.js";import{T as H,a as V,b as f,c as y}from"./tabs-pOM7uxFu.js";import{I as E}from"./inbox-B4oZ9L_1.js";/**
+import{k as L,j as e,O as D,l as K,u as W,Q as O,T as B,o as J,t as z,a as j,G as l,C as c,c as i,Z as U,d,h as G,s as S,p as r,i as t,S as A,r as k}from"./index-BoasNp7O.js";import{T as H,a as V,b as f,c as y}from"./tabs-Dj5c34_i.js";import{I as E}from"./inbox-Z1C1gcYT.js";/**
  * @license lucide-react v1.11.0 - ISC
  *
  * This source code is licensed under the ISC license.

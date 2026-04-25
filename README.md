@@ -216,6 +216,8 @@ npm run build
 
 The frontend build is emitted to `src/arrsync/web/dist` and served by FastAPI. The **root `Dockerfile`** copies that tree into the image (it does not run `npm` in Docker), so run `npm run build` in `frontend/` after WebUI changes before `docker build` / `docker compose build`, or use CI that does the same.
 
+For **Docker Hub** releases, prefer **`./scripts/docker-release-build.sh --push`** (Buildx, **no** SLSA provenance or SBOM attestations) so **Docker Scout** on the registry is less likely to show extra packages from attestation metadata. Plain `docker build` still works for local smoke tests; see the script header for trade-offs.
+
 ## WebUI docs
 
 - `docs/WEBUI_FRAMEWORK.md`: frontend architecture, contracts, and local workflows.

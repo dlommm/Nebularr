@@ -104,22 +104,27 @@ description: >-
 2. From the **repository root** (where the root `Dockerfile` lives), **build** the app image with two tags: **`latest`** and **`$APP_VERSION`** (semver).
 3. **Push** both tags to Docker Hub.
 
-Example (replace `dendlomm/nebularr` if needed; run from repo root):
+**Preferred (Nebularr):** from the repository root, use the release script so the image is built **without** SLSA provenance / SBOM attestations, which **reduces inflated Docker Hub Scout** counts (see `scripts/docker-release-build.sh` header). Ensure `cd frontend && npm run build` has been run if the WebUI changed.
 
 ```bash
-export APP_VERSION="$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_bytes())['project']['version'])")"
-export GIT_SHA="$(git rev-parse --short HEAD)"
-export IMAGE="dendlomm/nebularr"   # or: export IMAGE="youruser/nebularr"
+./scripts/docker-release-build.sh --push
+# Optional: IMAGE=youruser/nebularr ./scripts/docker-release-build.sh --push
+```
 
-docker build -f Dockerfile \
+**Alternative (plain `docker build`)** for local testing only: same args, but Hub Scout may show more notional packages. Use `read_text()` (not `read_bytes()`) for `tomllib` on Python 3.14+.
+
+```bash
+export APP_VERSION="$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")"
+export GIT_SHA="$(git rev-parse --short HEAD)"
+export IMAGE="dendlomm/nebularr"
+
+docker buildx build --provenance=false --sbom=false -f Dockerfile \
   --build-arg "APP_VERSION=${APP_VERSION}" \
   --build-arg "GIT_SHA=${GIT_SHA}" \
   -t "${IMAGE}:latest" \
   -t "${IMAGE}:${APP_VERSION}" \
+  --push \
   .
-
-docker push "${IMAGE}:latest"
-docker push "${IMAGE}:${APP_VERSION}"
 ```
 
 - **Multi-arch** (e.g. `linux/amd64` and `linux/arm64`): only if the user asked or their CI usually builds multi-platform; use `docker buildx build --platform ... --push` and ensure a buildx builder exists. If unsure, the single-arch **build + push** above is enough for many operators.
