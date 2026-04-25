@@ -67,13 +67,22 @@ export const api = {
   saveIntegration: (source: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/integrations/${source}`, "PUT", payload),
   malConfig: () => requestJson<MalConfigResponse>("/api/config/mal"),
-  saveMalConfig: (payload: { client_id?: string; clear_client_id?: boolean }) =>
+  saveMalConfig: (payload: {
+    client_id?: string;
+    clear_client_id?: boolean;
+    ingest_enabled?: boolean;
+    matcher_enabled?: boolean;
+    tagging_enabled?: boolean;
+    allow_title_year_match?: boolean;
+  }) =>
     requestJson<{ status: string }>("/api/config/mal", "PUT", payload),
   loggingConfig: () => requestJson<LoggingConfigResponse>("/api/config/logging"),
   saveLoggingConfig: (payload: { level?: string; use_environment_default?: boolean }) =>
     requestJson<{ status: string; effective_level: string }>("/api/config/logging", "PUT", payload),
   uiLogs: (limit = 500) => requestJson<UiLogsResponse>(withParams("/api/ui/logs", { limit })),
   triggerMalIngest: () => requestJson<{ status: string; details: unknown }>("/api/mal/ingest", "POST"),
+  triggerMalIngestBacklog: (payload?: { max_cycles?: number; cycle_delay_seconds?: number }) =>
+    requestJson<{ status: string; details: unknown }>("/api/mal/ingest-backlog", "POST", payload ?? {}),
   triggerMalMatchRefresh: () => requestJson<{ status: string; details: unknown }>("/api/mal/match-refresh", "POST"),
   triggerMalTagSync: () => requestJson<{ status: string; details: unknown }>("/api/mal/tag-sync", "POST"),
   saveSchedule: (mode: string, payload: unknown) =>

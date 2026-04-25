@@ -51,7 +51,20 @@ def get_mal_sync_ui_snapshot(session: Session) -> dict[str, Any]:
         )
     ).mappings():
         last_finished[str(r["job_type"])] = _jsonify_row(r)
-    return {"running": running, "last_finished": last_finished}
+    pending_fetch_count = count_anime_needing_mal_fetch(session)
+    fetched_success_count = count_anime_fetched_success(session)
+    dubbed_total = int(
+        session.execute(
+            text("select count(*) from mal.anime where is_english_dubbed = true")
+        ).scalar_one()
+    )
+    return {
+        "running": running,
+        "last_finished": last_finished,
+        "pending_fetch_count": pending_fetch_count,
+        "fetched_success_count": fetched_success_count,
+        "dubbed_total": dubbed_total,
+    }
 
 
 def insert_mal_job_run(session: Session, job_type: str) -> int:
@@ -310,6 +323,89 @@ def insert_imdb_radarr_links(session: Session) -> int:
     return result.rowcount or 0
 
 
+def backfill_external_ids_from_links(session: Session) -> dict[str, int]:
+    tvdb_result = session.execute(
+        text(
+            """
+            insert into mal.anime_external_id (mal_id, site, external_id, source, updated_at)
+            select distinct
+                l.mal_id,
+                'tvdb',
+                trim(s.payload->>'tvdbId'),
+                'manual',
+                now()
+            from mal.warehouse_link l
+            join mal.anime a on a.mal_id = l.mal_id and a.is_english_dubbed = true
+            join warehouse.series s
+              on l.arr_entity = 'sonarr_series'
+             and s.instance_name = l.instance_name
+             and s.source_id = l.warehouse_source_id
+             and s.deleted = false
+            where nullif(trim(s.payload->>'tvdbId'), '') is not null
+            on conflict (mal_id, site) do update
+            set external_id = excluded.external_id,
+                source = excluded.source,
+                updated_at = now()
+            """
+        )
+    )
+    tmdb_result = session.execute(
+        text(
+            """
+            insert into mal.anime_external_id (mal_id, site, external_id, source, updated_at)
+            select distinct
+                l.mal_id,
+                'tmdb',
+                trim(m.payload->>'tmdbId'),
+                'manual',
+                now()
+            from mal.warehouse_link l
+            join mal.anime a on a.mal_id = l.mal_id and a.is_english_dubbed = true
+            join warehouse.movie m
+              on l.arr_entity = 'radarr_movie'
+             and m.instance_name = l.instance_name
+             and m.source_id = l.warehouse_source_id
+             and m.deleted = false
+            where nullif(trim(m.payload->>'tmdbId'), '') is not null
+            on conflict (mal_id, site) do update
+            set external_id = excluded.external_id,
+                source = excluded.source,
+                updated_at = now()
+            """
+        )
+    )
+    imdb_result = session.execute(
+        text(
+            """
+            insert into mal.anime_external_id (mal_id, site, external_id, source, updated_at)
+            select distinct
+                l.mal_id,
+                'imdb',
+                trim(m.payload->>'imdbId'),
+                'manual',
+                now()
+            from mal.warehouse_link l
+            join mal.anime a on a.mal_id = l.mal_id and a.is_english_dubbed = true
+            join warehouse.movie m
+              on l.arr_entity = 'radarr_movie'
+             and m.instance_name = l.instance_name
+             and m.source_id = l.warehouse_source_id
+             and m.deleted = false
+            where nullif(trim(m.payload->>'imdbId'), '') is not null
+            on conflict (mal_id, site) do update
+            set external_id = excluded.external_id,
+                source = excluded.source,
+                updated_at = now()
+            """
+        )
+    )
+    return {
+        "tvdb": tvdb_result.rowcount or 0,
+        "tmdb": tmdb_result.rowcount or 0,
+        "imdb": imdb_result.rowcount or 0,
+    }
+
+
 def count_dubbed_without_link(session: Session) -> int:
     row = session.execute(
         text(
@@ -559,6 +655,36 @@ def list_anime_needing_mal_fetch(session: Session, limit: int) -> list[int]:
         {"lim": limit},
     ).scalars()
     return [int(x) for x in rows]
+
+
+def count_anime_needing_mal_fetch(session: Session) -> int:
+    row = session.execute(
+        text(
+            """
+            select count(*) from mal.anime
+            where is_english_dubbed = true
+              and (
+                    mal_fetch_status in ('pending', 'error')
+                 or mal_fetched_at is null
+                 or mal_fetched_at < now() - interval '14 days'
+              )
+            """
+        )
+    ).scalar_one()
+    return int(row or 0)
+
+
+def count_anime_fetched_success(session: Session) -> int:
+    row = session.execute(
+        text(
+            """
+            select count(*) from mal.anime
+            where is_english_dubbed = true
+              and mal_fetch_status = 'success'
+            """
+        )
+    ).scalar_one()
+    return int(row or 0)
 
 
 def sample_unmatched_mal_ids(session: Session, limit: int = 50) -> list[int]:

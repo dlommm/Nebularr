@@ -33,6 +33,8 @@ export function SyncQueuePage(): JSX.Element {
   const queryClient = useQueryClient();
   const { setError, runAction } = useActionError();
   const [malPipelineResult, setMalPipelineResult] = useState<string | null>(null);
+  const [malBacklogCycles, setMalBacklogCycles] = useState(10);
+  const [malCycleDelaySeconds, setMalCycleDelaySeconds] = useState(2);
 
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.recentRuns, refetchInterval: 15_000 });
   const webhookQueue = useQuery({ queryKey: ["webhook-queue"], queryFn: api.webhookQueue, refetchInterval: 15_000 });
@@ -60,6 +62,31 @@ export function SyncQueuePage(): JSX.Element {
       await queryClient.invalidateQueries({ queryKey: ["status"] });
     } catch (err) {
       setError(err, label);
+    }
+  };
+
+  const runAllMalPipelines = async (): Promise<void> => {
+    try {
+      const ingestBacklog = await api.triggerMalIngestBacklog({
+        max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
+        cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
+      });
+      const matcher = await api.triggerMalMatchRefresh();
+      const tagSync = await api.triggerMalTagSync();
+      setMalPipelineResult(
+        `MAL run all\n${JSON.stringify(
+          {
+            ingest_backlog: ingestBacklog.details ?? {},
+            match_refresh: matcher.details ?? {},
+            tag_sync: tagSync.details ?? {},
+          },
+          null,
+          2,
+        )}`,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["status"] });
+    } catch (err) {
+      setError(err, "MAL run all");
     }
   };
 
@@ -116,6 +143,18 @@ export function SyncQueuePage(): JSX.Element {
             </p>
           </CardContent>
         </GlassCard>
+        <GlassCard glow="violet" className="min-w-0 border-violet-500/20" size="sm">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-sm font-medium text-muted-foreground">MAL processing</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-heading text-2xl font-semibold tabular-nums">
+              {status.data?.mal_sync?.fetched_success_count ?? 0}/{status.data?.mal_sync?.dubbed_total ?? 0}
+            </p>
+            <p className="text-xs text-muted-foreground">completed / total dubbed</p>
+            <p className="mt-1 text-xs text-muted-foreground">pending: {status.data?.mal_sync?.pending_fetch_count ?? 0}</p>
+          </CardContent>
+        </GlassCard>
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
@@ -165,6 +204,11 @@ export function SyncQueuePage(): JSX.Element {
                 ) : (
                   <p className="text-sm text-muted-foreground">No active sync job reported by /api/ui/sync-progress.</p>
                 )}
+                <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-xs text-muted-foreground">
+                  MAL fetched: <strong>{status.data?.mal_sync?.fetched_success_count ?? 0}</strong> /{" "}
+                  <strong>{status.data?.mal_sync?.dubbed_total ?? 0}</strong> · pending{" "}
+                  <strong>{status.data?.mal_sync?.pending_fetch_count ?? 0}</strong>
+                </div>
                 <div className="space-y-2 pt-1">
                   <p className="text-[11px] font-medium text-muted-foreground">Incremental</p>
                   <div className="flex flex-wrap gap-2">
@@ -377,15 +421,58 @@ export function SyncQueuePage(): JSX.Element {
               <p className="text-sm text-muted-foreground">
                 Large ingests can take several minutes. Requires MAL client id in Integrations or <code className="rounded bg-white/5 px-1">MAL_CLIENT_ID</code>.
               </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <label className="pill">
+                  backlog cycles
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={malBacklogCycles}
+                    onChange={(event) => setMalBacklogCycles(Number(event.target.value || 10))}
+                    style={{ width: 80, marginLeft: 8 }}
+                  />
+                </label>
+                <label className="pill">
+                  delay between cycles (sec)
+                  <input
+                    type="number"
+                    min={0}
+                    max={30}
+                    step={0.5}
+                    value={malCycleDelaySeconds}
+                    onChange={(event) => setMalCycleDelaySeconds(Number(event.target.value || 0))}
+                    style={{ width: 80, marginLeft: 8 }}
+                  />
+                </label>
+              </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalIngest(), "MAL ingest")}>
                   Run MAL ingest
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    void runMalPipeline(
+                      () =>
+                        api.triggerMalIngestBacklog({
+                          max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
+                          cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
+                        }),
+                      "MAL ingest backlog",
+                    )
+                  }
+                >
+                  Process pending backlog
                 </Button>
                 <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalMatchRefresh(), "MAL match refresh")}>
                   Run match refresh
                 </Button>
                 <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalTagSync(), "MAL tag sync")}>
                   Run tag sync
+                </Button>
+                <Button variant="outline" onClick={() => void runAllMalPipelines()}>
+                  Run all MAL pipelines
                 </Button>
               </div>
               {malPipelineResult ? (

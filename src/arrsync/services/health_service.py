@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from arrsync.config import Settings
 from arrsync.mal.repository import get_mal_sync_ui_snapshot
 from arrsync.metrics import Metrics
-from arrsync.services.mal_config_store import mal_client_id_is_configured
+from arrsync.services.mal_config_store import mal_client_id_is_configured, read_mal_feature_flags
 
 _SEVERITY = {"ok": 0, "warning": 1, "critical": 2}
 
@@ -55,8 +55,9 @@ def _eval_integrations(arr_versions: dict[str, str]) -> tuple[str, list[str]]:
     return "ok", []
 
 
-def _eval_mal(settings: Settings, mal_sync: dict[str, Any]) -> tuple[str, list[str]]:
-    any_enabled = settings.mal_ingest_enabled or settings.mal_matcher_enabled or settings.mal_tagging_enabled
+def _eval_mal(mal_sync: dict[str, Any]) -> tuple[str, list[str]]:
+    schedulers = mal_sync.get("schedulers") or {}
+    any_enabled = bool(schedulers.get("ingest_enabled") or schedulers.get("matcher_enabled") or schedulers.get("tagging_enabled"))
     if not any_enabled:
         return "ok", []
     if not bool(mal_sync.get("client_configured")):
@@ -132,13 +133,14 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
     sync_state, sync_r = _eval_sync(settings, max_lag)
     integrations_state, integrations_r = _eval_integrations(arr_versions)
     mal_sync = get_mal_sync_ui_snapshot(session)
+    mal_flags = read_mal_feature_flags(session, settings)
     mal_sync["client_configured"] = mal_client_id_is_configured(session, settings)
     mal_sync["schedulers"] = {
-        "ingest_enabled": settings.mal_ingest_enabled,
-        "matcher_enabled": settings.mal_matcher_enabled,
-        "tagging_enabled": settings.mal_tagging_enabled,
+        "ingest_enabled": bool(mal_flags["ingest_enabled"]),
+        "matcher_enabled": bool(mal_flags["matcher_enabled"]),
+        "tagging_enabled": bool(mal_flags["tagging_enabled"]),
     }
-    mal_state, mal_r = _eval_mal(settings, mal_sync)
+    mal_state, mal_r = _eval_mal(mal_sync)
 
     health_dimensions: dict[str, str] = {
         "webhooks": webhooks_state,

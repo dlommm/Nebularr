@@ -18,6 +18,9 @@ export type MalSyncStatus = {
   running: MalSyncRunningJob[];
   last_finished: Record<string, MalSyncLastFinished>;
   client_configured: boolean;
+  pending_fetch_count?: number;
+  fetched_success_count?: number;
+  dubbed_total?: number;
   schedulers: {
     ingest_enabled: boolean;
     matcher_enabled: boolean;
@@ -57,6 +60,10 @@ export type HealthzResponse = {
 export type MalConfigResponse = {
   client_id_configured: boolean;
   env_fallback_configured: boolean;
+  ingest_enabled: boolean;
+  matcher_enabled: boolean;
+  tagging_enabled: boolean;
+  allow_title_year_match: boolean;
 };
 
 export type LoggingConfigResponse = {

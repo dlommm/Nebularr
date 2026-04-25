@@ -19,6 +19,7 @@ from sqlalchemy import text
 
 from arrsync.log_buffer import get_recent_logs_parsed, ring_buffer_capacity
 from arrsync.logging import apply_root_log_level, normalize_log_level
+from arrsync.mal import repository as mal_repo
 from arrsync.services import repository as repo
 from arrsync.services.alert_config_store import (
     read_alert_webhook_config,
@@ -31,7 +32,13 @@ from arrsync.services.log_level_store import (
     read_stored_log_level,
     store_log_level,
 )
-from arrsync.services.mal_config_store import clear_mal_client_id, mal_client_id_is_configured, store_mal_client_id
+from arrsync.services.mal_config_store import (
+    clear_mal_client_id,
+    mal_client_id_is_configured,
+    read_mal_feature_flags,
+    store_mal_client_id,
+    store_mal_feature_flags,
+)
 from arrsync.services.health_service import compute_health_status
 from arrsync.security import encrypt_secret, hash_secret, verify_secret_hash
 
@@ -3340,21 +3347,46 @@ def build_router(app_state: Any) -> APIRouter:
     async def get_mal_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
             client_id_configured = mal_client_id_is_configured(session, app_state.settings)
+            mal_flags = read_mal_feature_flags(session, app_state.settings)
         env_fallback = bool((app_state.settings.mal_client_id or "").strip())
         return {
             "client_id_configured": client_id_configured,
             "env_fallback_configured": env_fallback,
+            "ingest_enabled": bool(mal_flags["ingest_enabled"]),
+            "matcher_enabled": bool(mal_flags["matcher_enabled"]),
+            "tagging_enabled": bool(mal_flags["tagging_enabled"]),
+            "allow_title_year_match": bool(mal_flags["allow_title_year_match"]),
         }
 
     @router.put("/api/config/mal")
     async def put_mal_config(payload: dict[str, Any]) -> dict[str, Any]:
         clear_flag = _to_bool(payload.get("clear_client_id", False), False)
         client_id = str(payload.get("client_id", ""))
+        ingest_enabled = payload.get("ingest_enabled", None)
+        matcher_enabled = payload.get("matcher_enabled", None)
+        tagging_enabled = payload.get("tagging_enabled", None)
+        allow_title_year_match = payload.get("allow_title_year_match", None)
         with app_state.session_scope() as session:
             if clear_flag:
                 clear_mal_client_id(session)
             elif client_id.strip():
                 store_mal_client_id(session, client_id)
+            store_mal_feature_flags(
+                session,
+                ingest_enabled=(
+                    _to_bool(ingest_enabled, False) if ingest_enabled is not None else None
+                ),
+                matcher_enabled=(
+                    _to_bool(matcher_enabled, False) if matcher_enabled is not None else None
+                ),
+                tagging_enabled=(
+                    _to_bool(tagging_enabled, False) if tagging_enabled is not None else None
+                ),
+                allow_title_year_match=(
+                    _to_bool(allow_title_year_match, False) if allow_title_year_match is not None else None
+                ),
+            )
+        app_state.scheduler.reload()
         return {"status": "ok"}
 
     @router.get("/api/config/logging")
@@ -3544,6 +3576,71 @@ def build_router(app_state: Any) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"mal ingest failed: {exc}") from exc
         return {"status": "ok", "details": details}
+
+    @router.post("/api/mal/ingest-backlog")
+    async def trigger_mal_ingest_backlog(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        svc = app_state.mal_ingest_service
+        if svc is None:
+            raise HTTPException(status_code=501, detail="MAL ingest service unavailable")
+        payload = payload or {}
+        raw_cycles = payload.get("max_cycles", 25)
+        try:
+            max_cycles = max(1, min(int(raw_cycles), 200))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="max_cycles must be an integer") from None
+        raw_cycle_delay = payload.get("cycle_delay_seconds", 2.0)
+        try:
+            cycle_delay_seconds = max(0.0, min(float(raw_cycle_delay), 30.0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="cycle_delay_seconds must be a number") from None
+
+        cycle_results: list[dict[str, Any]] = []
+        with app_state.session_scope() as session:
+            pending_before = mal_repo.count_anime_needing_mal_fetch(session)
+        pending_after = pending_before
+        for idx in range(max_cycles):
+            if pending_after <= 0:
+                break
+            try:
+                details = await svc.run(reason="manual_backlog")
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"mal ingest-backlog failed: {exc}") from exc
+            with app_state.session_scope() as session:
+                pending_after = mal_repo.count_anime_needing_mal_fetch(session)
+            cycle_results.append(
+                {
+                    "cycle": idx + 1,
+                    "pending_after_cycle": pending_after,
+                    "mal_api_calls": int(details.get("mal_api_calls", 0) or 0),
+                    "jikan_calls": int(details.get("jikan_calls", 0) or 0),
+                    "mal_fetch_pending_batch": int(details.get("mal_fetch_pending_batch", 0) or 0),
+                }
+            )
+            # Safety stop: if nothing was fetched in this cycle, further loops are unlikely to progress.
+            if int(details.get("mal_api_calls", 0) or 0) == 0:
+                break
+            if idx + 1 < max_cycles and pending_after > 0 and cycle_delay_seconds > 0:
+                await asyncio.sleep(cycle_delay_seconds)
+        with app_state.session_scope() as session:
+            fetched_success = mal_repo.count_anime_fetched_success(session)
+            dubbed_total = int(
+                session.execute(
+                    text("select count(*) from mal.anime where is_english_dubbed = true")
+                ).scalar_one()
+            )
+        return {
+            "status": "ok",
+            "details": {
+                "pending_before": pending_before,
+                "pending_after": pending_after,
+                "cycles_run": len(cycle_results),
+                "max_cycles": max_cycles,
+                "cycle_delay_seconds": cycle_delay_seconds,
+                "fetched_success": fetched_success,
+                "dubbed_total": dubbed_total,
+                "cycle_results": cycle_results,
+            },
+        }
 
     @router.post("/api/mal/match-refresh")
     async def trigger_mal_match_refresh() -> dict[str, Any]:

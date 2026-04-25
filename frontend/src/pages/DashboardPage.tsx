@@ -188,6 +188,10 @@ export function DashboardPage(): JSX.Element {
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 sm:px-0">
+              <div className="px-4 pb-3 text-xs text-muted-foreground">
+                fetched {malSync.fetched_success_count ?? 0} / {malSync.dubbed_total ?? 0} dubbed MAL entries · pending{" "}
+                {malSync.pending_fetch_count ?? 0}
+              </div>
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>

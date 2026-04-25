@@ -11,6 +11,7 @@ from arrsync.config import Settings
 from arrsync.db import session_scope
 from arrsync.mal import repository as mal_repo
 from arrsync.services import repository as repo
+from arrsync.services.mal_config_store import read_mal_feature_flags
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +53,8 @@ class MalMatcherService:
         self.settings = settings
         self.session_factory = session_factory
 
-    def _apply_title_year(self, session: Any) -> int:
-        if not self.settings.mal_allow_title_year_match:
+    def _apply_title_year(self, session: Any, *, allow_title_year_match: bool) -> int:
+        if not allow_title_year_match:
             return 0
         rows = session.execute(
             text(
@@ -259,13 +260,22 @@ class MalMatcherService:
             run_id = mal_repo.insert_mal_job_run(session, "matcher")
         try:
             with session_scope(self.session_factory) as session:
+                mal_flags = read_mal_feature_flags(session, self.settings)
+            details["allow_title_year_match"] = bool(mal_flags["allow_title_year_match"])
+            with session_scope(self.session_factory) as session:
                 mal_repo.delete_links_for_undubbed(session)
                 mal_repo.clear_auto_warehouse_links(session)
                 details["tvdb_series_links"] = mal_repo.insert_tvdb_series_links(session)
                 details["tmdb_movie_links"] = mal_repo.insert_tmdb_radarr_links(session)
                 details["imdb_movie_links"] = mal_repo.insert_imdb_radarr_links(session)
-                details["title_year_links"] = self._apply_title_year(session)
+                details["title_year_links"] = self._apply_title_year(
+                    session, allow_title_year_match=bool(mal_flags["allow_title_year_match"])
+                )
                 details["manual_links_applied"] = mal_repo.upsert_manual_warehouse_links(session)
+                external_backfill = mal_repo.backfill_external_ids_from_links(session)
+                details["external_ids_backfilled_tvdb"] = int(external_backfill.get("tvdb", 0))
+                details["external_ids_backfilled_tmdb"] = int(external_backfill.get("tmdb", 0))
+                details["external_ids_backfilled_imdb"] = int(external_backfill.get("imdb", 0))
                 details["dubbed_unmatched_count"] = mal_repo.count_dubbed_without_link(session)
                 details["unmatched_sample_mal_ids"] = mal_repo.sample_unmatched_mal_ids(session, 30)
             with session_scope(self.session_factory) as session:

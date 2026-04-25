@@ -32,19 +32,10 @@ import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 type NavItem = { to: string; label: string; end?: boolean; Icon: typeof Home };
 
@@ -73,7 +64,7 @@ export function AppLayout(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { setTheme, resolvedTheme } = useTheme();
   const { lastError, setLastError, errorContext, runAction } = useActionError();
   const [density, setDensity] = useLocalStorageState<"comfortable" | "compact">("nebularr.ui.density", "comfortable");
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState("nebularr.ui.sidebar-collapsed", false);
@@ -86,8 +77,6 @@ export function AppLayout(): JSX.Element {
     queryFn: api.status,
     refetchInterval: 15_000,
   });
-  const healthz = useQuery({ queryKey: ["healthz"], queryFn: api.healthz, refetchInterval: 60_000 });
-
   const currentTitle = pathTitle(location.pathname);
 
   useEffect(() => {
@@ -325,40 +314,23 @@ export function AppLayout(): JSX.Element {
                 {resolvedTheme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
               </Button>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  className="rounded-full border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="User menu"
-                >
-                  <Avatar className="size-8 border border-cyan-500/30">
-                    <AvatarImage src={nebularrIcon} alt="" />
-                    <AvatarFallback className="bg-cyan-500/20 text-[10px]">NB</AvatarFallback>
-                  </Avatar>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56 border-white/10 bg-popover/95">
-                  <DropdownMenuLabel className="font-normal">
-                    <div className="text-sm font-medium">Nebularr</div>
-                    <div className="text-xs text-muted-foreground">v{healthz.data?.version ?? "…"}</div>
-                    <div className="text-[10px] text-muted-foreground/80">theme: {theme}</div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => navigate(PATHS.home)}>Home</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate(PATHS.dashboard)}>Dashboard</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate(PATHS.library)}>Library</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
             </div>
 
             <form onSubmit={onHeaderSearch} className="w-full min-w-0 max-w-2xl">
-              <div className="relative w-full">
-                <Search className="pointer-events-none absolute left-3 top-1/2 z-[1] size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+              <div className="flex h-9 w-full min-w-0 overflow-hidden rounded-md border border-white/10 bg-white/5">
+                <span
+                  className="pointer-events-none flex w-10 shrink-0 items-center justify-center border-r border-white/10"
+                  aria-hidden
+                >
+                  <Search className="size-4 text-muted-foreground/90" />
+                </span>
                 <Input
                   name="q"
                   value={headerSearch}
                   onChange={(e) => setHeaderSearch(e.target.value)}
                   placeholder="Search library…"
-                  className="h-9 w-full min-w-0 border-white/10 bg-white/5 pl-10 pr-3 text-sm"
+                  className="h-9 w-full min-w-0 rounded-none border-0 bg-transparent pl-3 pr-3 text-sm focus-visible:ring-0 focus-visible:border-0"
                   aria-label="Search library"
                 />
               </div>

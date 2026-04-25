@@ -7,7 +7,6 @@ import { BarChart2, BookOpen, FileText, LayoutDashboard, ListOrdered, Network, Z
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import nebularrLogo from "@/assets/nebularr-logo.svg?url";
-import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 
 const mapLinks: { to: string; label: string; blurb: string; Icon: typeof LayoutDashboard }[] = [
   { to: PATHS.dashboard, label: "Dashboard", blurb: "Live KPIs, sync activity, and health at a glance.", Icon: LayoutDashboard },
@@ -32,9 +31,8 @@ export function HomePage(): JSX.Element {
       <div className="relative overflow-hidden rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-[#0e1630] to-violet-600/20 p-6 nebula-glow sm:p-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start">
-            <img className="h-20 w-20 shrink-0 rounded-2xl border border-cyan-500/30 bg-[#0e1630] p-1" src={nebularrIcon} alt="" />
             <div className="min-w-0">
-              <img className="mb-2 h-8 w-auto max-w-full object-contain opacity-90" src={nebularrLogo} alt="Nebularr" />
+              <img className="mb-2 h-12 w-auto max-w-full object-contain opacity-90" src={nebularrLogo} alt="Nebularr" />
               <h1 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">Control plane</h1>
               <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
                 Nebularr syncs Sonarr and Radarr into PostgreSQL so you can monitor health, track media quality, and run

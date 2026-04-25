@@ -22,6 +22,10 @@ export function IntegrationsPage(): JSX.Element {
   const [webhookSecretInput, setWebhookSecretInput] = useState("");
   const [malClientIdInput, setMalClientIdInput] = useState("");
   const [malClearClientId, setMalClearClientId] = useState(false);
+  const [malIngestEnabled, setMalIngestEnabled] = useState(false);
+  const [malMatcherEnabled, setMalMatcherEnabled] = useState(false);
+  const [malTaggingEnabled, setMalTaggingEnabled] = useState(false);
+  const [malAllowTitleYearMatch, setMalAllowTitleYearMatch] = useState(false);
   const [loggingLevelChoice, setLoggingLevelChoice] = useState<string>("INFO");
   const [loggingUseEnvDefault, setLoggingUseEnvDefault] = useState(false);
   const [alertWebhookDraft, setAlertWebhookDraft] = useState<{
@@ -56,6 +60,14 @@ export function IntegrationsPage(): JSX.Element {
     if (!loggingConfig.data) return;
     setLoggingLevelChoice(loggingConfig.data.effective_level);
   }, [loggingConfig.data]);
+
+  useEffect(() => {
+    if (!malConfig.data) return;
+    setMalIngestEnabled(Boolean(malConfig.data.ingest_enabled));
+    setMalMatcherEnabled(Boolean(malConfig.data.matcher_enabled));
+    setMalTaggingEnabled(Boolean(malConfig.data.tagging_enabled));
+    setMalAllowTitleYearMatch(Boolean(malConfig.data.allow_title_year_match));
+  }, [malConfig.data]);
 
   useEffect(() => {
     if (!alertWebhookConfig.data) return;
@@ -102,7 +114,23 @@ export function IntegrationsPage(): JSX.Element {
   };
 
   const saveMalConfig = async (): Promise<void> => {
-    if (!malClearClientId && !malClientIdInput.trim()) {
+    const changingClientId = malClearClientId || Boolean(malClientIdInput.trim());
+    if (!changingClientId && !malConfig.data) {
+      setError("MAL settings are still loading. Please try again.", "save MyAnimeList settings");
+      return;
+    }
+    if (!changingClientId && malConfig.data) {
+      const toggleChanged =
+        malIngestEnabled !== Boolean(malConfig.data.ingest_enabled) ||
+        malMatcherEnabled !== Boolean(malConfig.data.matcher_enabled) ||
+        malTaggingEnabled !== Boolean(malConfig.data.tagging_enabled) ||
+        malAllowTitleYearMatch !== Boolean(malConfig.data.allow_title_year_match);
+      if (!toggleChanged) {
+        setError("Make a change before saving.", "save MyAnimeList settings");
+        return;
+      }
+    }
+    if (changingClientId && !malClearClientId && !malClientIdInput.trim()) {
       setError("Enter a MyAnimeList client ID, or check remove stored ID to clear.", "save MyAnimeList client ID");
       return;
     }
@@ -110,13 +138,17 @@ export function IntegrationsPage(): JSX.Element {
       async () => {
         await api.saveMalConfig({
           clear_client_id: malClearClientId,
+          ingest_enabled: malIngestEnabled,
+          matcher_enabled: malMatcherEnabled,
+          tagging_enabled: malTaggingEnabled,
+          allow_title_year_match: malAllowTitleYearMatch,
           ...(malClearClientId ? {} : { client_id: malClientIdInput.trim() }),
         });
         setMalClientIdInput("");
         setMalClearClientId(false);
         await queryClient.invalidateQueries({ queryKey: ["mal-config"] });
       },
-      "save MyAnimeList client ID",
+      "save MyAnimeList settings",
     );
   };
 
@@ -299,6 +331,30 @@ export function IntegrationsPage(): JSX.Element {
           <label className="pill">
             <input type="checkbox" checked={malClearClientId} onChange={(event) => setMalClearClientId(event.target.checked)} />
             remove stored client ID (fall back to environment only)
+          </label>
+        </div>
+        <div className="row mt8">
+          <label className="pill">
+            <input type="checkbox" checked={malIngestEnabled} onChange={(event) => setMalIngestEnabled(event.target.checked)} />
+            enable MAL ingest scheduler
+          </label>
+          <label className="pill">
+            <input type="checkbox" checked={malMatcherEnabled} onChange={(event) => setMalMatcherEnabled(event.target.checked)} />
+            enable MAL matcher scheduler
+          </label>
+          <label className="pill">
+            <input type="checkbox" checked={malTaggingEnabled} onChange={(event) => setMalTaggingEnabled(event.target.checked)} />
+            enable MAL tag sync scheduler
+          </label>
+        </div>
+        <div className="row mt8">
+          <label className="pill">
+            <input
+              type="checkbox"
+              checked={malAllowTitleYearMatch}
+              onChange={(event) => setMalAllowTitleYearMatch(event.target.checked)}
+            />
+            allow title+year fallback matching (when ID linking is unavailable)
           </label>
         </div>
       </div>

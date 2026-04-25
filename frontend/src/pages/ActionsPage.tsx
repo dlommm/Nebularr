@@ -11,6 +11,7 @@ export function ActionsPage(): JSX.Element {
   const { setError, runAction } = useActionError();
   const syncProgress = useQuery({ queryKey: ["sync-progress"], queryFn: api.syncProgress, refetchInterval: 2_000 });
   const [malPipelineResult, setMalPipelineResult] = useState<string | null>(null);
+  const [malBacklogCycles, setMalBacklogCycles] = useState(25);
 
   const runMalPipeline = async (
     fn: () => Promise<{ status: string; details?: unknown }>,
@@ -78,12 +79,37 @@ export function ActionsPage(): JSX.Element {
           <button type="button" className="secondary" onClick={() => void runMalPipeline(() => api.triggerMalIngest(), "MAL ingest")}>
             Run MAL ingest
           </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              void runMalPipeline(
+                () => api.triggerMalIngestBacklog({ max_cycles: Math.max(1, Math.min(200, malBacklogCycles)) }),
+                "MAL ingest backlog",
+              )
+            }
+          >
+            Process pending backlog
+          </button>
           <button type="button" className="secondary" onClick={() => void runMalPipeline(() => api.triggerMalMatchRefresh(), "MAL match refresh")}>
             Run match refresh
           </button>
           <button type="button" className="secondary" onClick={() => void runMalPipeline(() => api.triggerMalTagSync(), "MAL tag sync")}>
             Run tag sync
           </button>
+        </div>
+        <div className="row mt8">
+          <label className="pill">
+            backlog cycles
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={malBacklogCycles}
+              onChange={(event) => setMalBacklogCycles(Number(event.target.value || 25))}
+              style={{ width: 90, marginLeft: 8 }}
+            />
+          </label>
         </div>
         {malPipelineResult ? (
           <pre className="log-row-extra mt8" style={{ maxHeight: 220, overflow: "auto" }}>

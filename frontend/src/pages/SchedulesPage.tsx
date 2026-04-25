@@ -44,10 +44,8 @@ export function SchedulesPage(): JSX.Element {
     <div className="space-y-4 rounded-2xl border border-white/10 glass-panel p-4 sm:p-6">
       <h3 className="font-heading text-lg font-semibold">Schedules</h3>
       <p className="text-sm text-muted-foreground">
-        Cron uses five fields: minute hour day month day_of_week (APScheduler). Timezone is per row. MAL jobs appear only if the
-        matching feature is enabled in the environment (for example <code>MAL_INGEST_ENABLED</code>, <code>MAL_MATCHER_ENABLED</code>,{" "}
-        <code>MAL_TAGGING_ENABLED</code>); an unchecked &quot;enabled&quot; row here removes that cron from the scheduler
-        entirely.
+        Cron uses five fields: minute hour day month day_of_week (APScheduler). Timezone is per row. MAL jobs are controlled from
+        Integrations → MyAnimeList; an unchecked &quot;enabled&quot; row here removes that cron from the scheduler entirely.
       </p>
       <div className="stack">
         {sortScheduleRows(schedules.data ?? []).map((row) => (
