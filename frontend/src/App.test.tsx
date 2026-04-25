@@ -16,6 +16,11 @@ vi.mock("./api", async () => {
           has_webhook_secret: false,
           integrations: {},
           schedules: [],
+          database: {
+            engine_ready: true,
+            runtime_url_persisted: true,
+            arrapp_role_exists: true,
+          },
         } satisfies Awaited<ReturnType<typeof actual.api.setupStatus>>),
     },
   };

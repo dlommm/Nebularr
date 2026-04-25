@@ -1,0 +1,1 @@
+import{u as o,j as e,L as s,P as n}from"./index-iq-PVyUv.js";function a(){return o("Not found"),e.jsxs("div",{className:"card span-12",children:[e.jsx("h2",{children:"Page not found"}),e.jsx("p",{className:"muted",children:"This path is not part of the Nebularr control plane."}),e.jsx("p",{children:e.jsx(s,{to:n.home,children:"Go to home"})})]})}export{a as NotFoundPage};
