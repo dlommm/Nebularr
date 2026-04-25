@@ -6,7 +6,8 @@ description: >-
   (or sync the remote), always runs the app-version-semver check before
   git push, then pushes to origin, then always publishes the app image to
   Docker Hub with the latest tag plus the current semver (unless the user
-  opts out or Docker is unavailable). After that, can sync docs/wiki/ to the
+  opts out or Docker is unavailable). After that, by default creates a Git tag
+  and GitHub Release for the pushed version, and can sync docs/wiki/ to the
   GitHub Wiki remote. Use when committing, pushing, syncing with GitHub,
   preparing a PR, per-task commit messages, or publishing wiki changes.
 ---
@@ -17,6 +18,7 @@ description: >-
 
 - **As you go:** group related file changes into commits with a **short subject** and optional **body** explaining *what* and *why*.
 - **On “push to GitHub” (or “sync to origin”):** after commits are in order, **run the app version (semver) gate** (see below), then **pull with rebase** if the branch is behind, then **push** the current branch to `origin`, then by default **build and push** the Nebularr app image to **Docker Hub** with **`latest`** and **`$APP_VERSION`** tags (see **Docker Hub publish**). Wiki sync remains a separate optional step.
+- **Release metadata (Nebularr, default for “push to GitHub”):** after successful push and Docker publish, create/push Git tag **`v$APP_VERSION`** (if missing) and create/update a GitHub Release for that tag unless the user asks to skip releases.
 - **Wiki (Nebularr):** the canonical source for GitHub Wiki content lives in the main repo at **`docs/wiki/*.md`**. The GitHub **Wiki** tab is a **separate** git remote (`https://github.com/<owner>/<repo>.wiki.git`), not part of a normal `git push` to `origin`. When appropriate, **sync** that folder to the wiki remote after the main push and Docker step (see below).
 - **Docker Hub (Nebularr, default for “push to GitHub”):** after a successful **`git push`**, **always** run the **Docker Hub publish** procedure for the app image, unless a listed exception applies. The image should match what was just pushed: **`latest`** plus the current **`app_version`** semver. Requires a working **Docker** CLI and a logged-in **Docker Hub** account (`docker login`); do not put credentials in commands or the chat log.
 
@@ -25,6 +27,7 @@ description: >-
 - **Subject:** imperative, ~72 chars, optional `type:` prefix — `feat:`, `fix:`, `db:`, `docs:`, `chore:`, `test:`, `refactor:`, `deploy:`.
 - **Body:** separate paragraphs or `-` bullets for distinct concerns (e.g. migration purpose, API change, follow-up risk).
 - **One logical change per commit** when practical; if a session mixed topics, **split** by `git add` path before committing.
+- **Never add AI attribution trailers** (for example `Made-with: Cursor`, `Co-Authored-By: Cursor`, or similar) unless the user explicitly asks for them.
 
 ## During implementation (as changes occur)
 
@@ -49,7 +52,33 @@ description: >-
    - **Skip only** if: the user said **no docker**, **GitHub only**, **skip image**, **don’t push to Docker Hub**, or the environment has **no Docker** / **no registry access** (in that case, **state clearly** that the image was not published and why).
    - If **build or push fails** (e.g. not logged in to Docker Hub, network error), **report the error**, suggest `docker login` and retry, and **do not** claim the image is published.
    - **Never** embed registry passwords in commands; use **`docker login`** (or credential helper) as already configured on the machine.
-8. **GitHub Wiki (optional, from `docs/wiki/`):** if this repo has `docs/wiki/` and the user asked to **include wiki**, **push wiki**, or the commits being pushed **touch `docs/wiki/`**, then after step **7** (Docker Hub) finishes or is skipped, run the **GitHub Wiki sync** section below. Skip if the user said **code only** or **no wiki**, or if Wikis are disabled for the repository.
+8. **GitHub Release (default):** after step **7** succeeds (or is explicitly skipped by user request), run the **GitHub Release (tag + release object)** section below.
+   - **Skip only** if: the user said **no release**, **skip tag**, **GitHub push only**, or `gh` authentication is unavailable.
+   - Use the semver from `pyproject.toml` and create tag **`v<APP_VERSION>`**.
+   - If tag already exists locally/remotely, do **not** rewrite it; create/update the release for that existing tag instead.
+9. **GitHub Wiki (optional, from `docs/wiki/`):** if this repo has `docs/wiki/` and the user asked to **include wiki**, **push wiki**, or the commits being pushed **touch `docs/wiki/`**, then after step **8** (GitHub Release) finishes or is skipped, run the **GitHub Wiki sync** section below. Skip if the user said **code only** or **no wiki**, or if Wikis are disabled for the repository.
+
+## GitHub Release (tag + release object)
+
+**Why:** tags and releases provide a canonical deploy marker in GitHub that matches the published Docker image/version.
+
+**Prerequisites**
+
+- GitHub CLI available and authenticated (`gh auth status`).
+- `APP_VERSION` already finalized by the semver step.
+
+**Procedure (agent executes when step 8 applies)**
+
+1. Read `APP_VERSION` from `pyproject.toml` and set `TAG="v${APP_VERSION}"`.
+2. Ensure local repo is at the pushed commit on the target branch.
+3. If `TAG` does not exist locally, create annotated tag: `git tag -a "$TAG" -m "release: $TAG"`.
+4. If `TAG` is missing on origin, push it: `git push origin "$TAG"`.
+5. Create or update GitHub Release with `gh release create` (or `gh release edit` if it already exists), using title `$TAG` and concise notes summarizing key changes and Docker tags.
+
+**Notes**
+
+- Never force-move existing release tags unless the user explicitly requests destructive rewrite.
+- Release notes should not include AI attribution trailers (for example `Made-with: Cursor`) unless the user explicitly asks.
 
 ## GitHub Wiki sync (from `docs/wiki/`)
 
@@ -64,7 +93,7 @@ description: >-
 
 - From `git remote get-url origin`: for `https://github.com/OWNER/REPO.git` or `git@github.com:OWNER/REPO.git`, the wiki remote is `https://github.com/OWNER/REPO.wiki.git` or `git@github.com:OWNER/REPO.wiki.git` (same host and auth style as `origin`).
 
-**Procedure (agent executes when step 8 applies)**
+**Procedure (agent executes when step 9 applies)**
 
 1. **Clone or update** the wiki repo in a throwaway directory (e.g. next to the project or under `/tmp`), not inside the main repo as a subfolder to avoid nested-repo confusion.
    - First time: `git clone <wiki-url> <dir>` (empty wiki may have no default branch; create `master` or `main` with an initial commit if GitHub has never had wiki content—otherwise clone works as usual).
@@ -144,6 +173,7 @@ docker buildx build --provenance=false --sbom=false -f Dockerfile \
 
 - Short summary: **branch**, **pushed commit range or tip SHA**, and **link pattern** `https://github.com/<org>/<repo>/compare/...` if useful (use known remote URL).
 - **Docker Hub:** by default, confirm **image**, **`latest`** and **semver** tags, and build **metadata** (version + git sha), or explain **skip** / **failure** and next steps.
+- **Release:** confirm tag/release (`vX.Y.Z`) was created (or intentionally skipped) and share the release URL when available.
 - If wiki sync ran: add **wiki** status (synced or skipped) and the wiki home URL.
 
 ## Relationship to other skills
