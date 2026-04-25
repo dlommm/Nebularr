@@ -4,8 +4,11 @@ description: >-
   Maintains small, well-explained Git commits as work is completed, using
   conventional titles and message bodies. When the user says to push to GitHub
   (or sync the remote), finishes any pending commits safely and runs git push
-  to origin. Use when committing, pushing, syncing with GitHub, preparing a
-  PR, or the user wants per-task commit messages.
+  to origin. After a successful main-repo push, can sync the canonical wiki
+  Markdown under docs/wiki/ to the separate GitHub Wiki git repository
+  (create/update pages on the GitHub Wiki tab). Use when committing, pushing,
+  syncing with GitHub, preparing a PR, per-task commit messages, or publishing
+  wiki changes from docs/wiki.
 ---
 
 # GitHub: incremental commits and push
@@ -14,6 +17,7 @@ description: >-
 
 - **As you go:** group related file changes into commits with a **short subject** and optional **body** explaining *what* and *why*.
 - **On “push to GitHub” (or “sync to origin”):** ensure the working tree is clean (or commit remaining work in sensible chunks), **pull with rebase** if the branch is behind, then **push** the current branch to `origin`.
+- **Wiki (Nebularr):** the canonical source for GitHub Wiki content lives in the main repo at **`docs/wiki/*.md`**. The GitHub **Wiki** tab is a **separate** git remote (`https://github.com/<owner>/<repo>.wiki.git`), not part of a normal `git push` to `origin`. When appropriate, **sync** that folder to the wiki remote after the main push (see below).
 
 ## Commit style (Nebularr)
 
@@ -34,7 +38,38 @@ description: >-
 2. `git remote -v` and current branch (usually `main`).
 3. If **behind** `origin`:** `git pull --rebase origin <branch>`** (or merge if rebase is impossible and the user allows merge). Resolve conflicts, continue rebase, then continue.
 4. `git push origin <branch>`.
-5. **Do not** `git push --force` or rewrite published history unless the user explicitly requests it and understands the impact.
+5. **Do not** `git push --force` or rewrite published history on **origin** unless the user explicitly requests it and understands the impact.
+6. **GitHub Wiki (optional, from `docs/wiki/`):** if this repo has `docs/wiki/` and the user asked to **include wiki**, **push wiki**, or the commits being pushed **touch `docs/wiki/`**, then after step 4 succeeds, run the **GitHub Wiki sync** section below. Skip if the user said **code only** or **no wiki**, or if Wikis are disabled for the repository.
+
+## GitHub Wiki sync (from `docs/wiki/`)
+
+**Why:** Git stores wiki pages in a **second** repository, not the default `origin`. Pushing `main` does not update the Wiki tab. Nebularr keeps the **source of truth** for wiki Markdown in **`docs/wiki/`** in the main repo; publishing means copying that tree into the **`.wiki` git repo** and pushing it.
+
+**Prerequisites**
+
+- **Wikis** enabled in the GitHub repo settings (Settings → General → **Wikis**).
+- The machine running git has **permission** to push to `https://github.com/<owner>/<repo>.wiki.git` (or the SSH form `git@github.com:<owner>/<repo>.wiki.git`), using the same credentials as for `origin`.
+
+**Derive the wiki URL**
+
+- From `git remote get-url origin`: for `https://github.com/OWNER/REPO.git` or `git@github.com:OWNER/REPO.git`, the wiki remote is `https://github.com/OWNER/REPO.wiki.git` or `git@github.com:OWNER/REPO.wiki.git` (same host and auth style as `origin`).
+
+**Procedure (agent executes when step 6 applies)**
+
+1. **Clone or update** the wiki repo in a throwaway directory (e.g. next to the project or under `/tmp`), not inside the main repo as a subfolder to avoid nested-repo confusion.
+   - First time: `git clone <wiki-url> <dir>` (empty wiki may have no default branch; create `master` or `main` with an initial commit if GitHub has never had wiki content—otherwise clone works as usual).
+2. **Copy** (mirror) all `*.md` from the main repo’s **`docs/wiki/`** into the root of the wiki clone, preserving filenames. GitHub Wiki expects pages as top-level `Page-Name.md` (Nebularr’s `docs/wiki` layout is already flat with names like `Home.md`, `_Sidebar.md`).
+3. In the wiki clone: `git status` → `git add -A` → `git commit -m "docs: sync from docs/wiki"` (skip commit if there is **nothing to commit**).
+4. **Push** the wiki clone to its remote. Default branch is often **`master`** for GitHub wikis: `git push origin master` (or `main` if that is the only branch). Use **`git push --force`** to the **wiki** remote only if the user explicitly needs to overwrite divergent wiki history and understands the loss of divergent edits made only on GitHub; otherwise prefer normal merge or pull-rebase in the wiki clone first.
+
+**Notes**
+
+- Edits made **only** in the GitHub web UI will be **overwritten** the next time a full file mirror replaces those paths; treat **`docs/wiki/`** as canonical or merge carefully.
+- If the wiki has **no** `master` branch yet, the first `git push -u origin master` after the first local commit is common.
+
+**Output to the user after wiki push**
+
+- Note whether the wiki was **skipped** (not requested / no `docs/wiki` changes) or **synced**, and the wiki’s web URL: `https://github.com/<owner>/<repo>/wiki`.
 
 ## If pull fails (diverged history)
 
@@ -44,6 +79,7 @@ description: >-
 ## Output to the user after push
 
 - Short summary: **branch**, **pushed commit range or tip SHA**, and **link pattern** `https://github.com/<org>/<repo>/compare/...` if useful (use known remote URL).
+- If wiki sync ran: add **wiki** status (synced or skipped) and the wiki home URL.
 
 ## Relationship to other skills
 
