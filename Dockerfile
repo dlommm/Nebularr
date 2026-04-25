@@ -1,14 +1,6 @@
-FROM node:22-slim AS frontend-build
+FROM python:3.13-slim
 
-WORKDIR /ui
-COPY frontend/package.json frontend/tsconfig.json frontend/tsconfig.app.json frontend/tsconfig.node.json frontend/vite.config.ts frontend/eslint.config.js /ui/
-COPY frontend/index.html /ui/index.html
-COPY frontend/src /ui/src
-RUN npm install && npm run build
-
-FROM python:3.12-slim
-
-ARG APP_VERSION=1.2.1
+ARG APP_VERSION=1.2.2
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -18,16 +10,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+# Upgrade base packages only (no curl: it pulls libnghttp2, which was flagged as HIGH by Docker Scout on Debian 13)
+RUN apt-get update \
+    && apt-get upgrade -y -o Dpkg::Options::="--force-confold" \
     && rm -rf /var/lib/apt/lists/*
 
+# Frontend is the committed Vite output under src/arrsync/web/dist (build locally with: cd frontend && npm run build)
 COPY . /app
-COPY --from=frontend-build /src/arrsync/web/dist /app/src/arrsync/web/dist
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD curl -fsS http://localhost:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=5 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()" || exit 1
 
 CMD ["uvicorn", "arrsync.main:app", "--host", "0.0.0.0", "--port", "8080"]

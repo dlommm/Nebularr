@@ -214,7 +214,7 @@ npm run test
 npm run build
 ```
 
-The frontend build is emitted to `src/arrsync/web/dist` and served by FastAPI.
+The frontend build is emitted to `src/arrsync/web/dist` and served by FastAPI. The **root `Dockerfile`** copies that tree into the image (it does not run `npm` in Docker), so run `npm run build` in `frontend/` after WebUI changes before `docker build` / `docker compose build`, or use CI that does the same.
 
 ## WebUI docs
 
