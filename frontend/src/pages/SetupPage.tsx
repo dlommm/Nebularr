@@ -9,6 +9,8 @@ import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/neb
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import nebularrLogo from "@/assets/nebularr-logo.svg?url";
+import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 
 type WizardForm = {
   sonarrEnabled: boolean;
@@ -149,14 +151,30 @@ export function SetupPage(): JSX.Element {
   let stepBody: JSX.Element = <div />;
   if (wizardStep === 0) {
     stepBody = (
-      <div className="inner-card">
-        <h3>Welcome to Nebularr</h3>
-        <p className="muted">
-          Nebularr syncs Sonarr and Radarr metadata into PostgreSQL so you can search, audit, and automate your media decisions.
-        </p>
-        <p className="muted">
-          This setup wizard will guide you through integrations, webhook security, schedules, and optional initial full sync.
-        </p>
+      <div className="overflow-hidden rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-[#0e1630] to-violet-600/20 nebula-glow">
+        <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start sm:p-6">
+          <img
+            className="h-16 w-16 shrink-0 rounded-2xl border border-cyan-500/30 bg-[#0e1630] p-1 sm:h-20 sm:w-20"
+            src={nebularrIcon}
+            alt=""
+          />
+          <div className="min-w-0 flex-1">
+            <img
+              className="mb-1 h-7 w-auto max-w-full object-contain opacity-90 sm:h-8"
+              src={nebularrLogo}
+              alt="Nebularr"
+            />
+            <h3 className="font-heading text-lg font-semibold tracking-tight">Welcome to Nebularr</h3>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Nebularr syncs Sonarr and Radarr metadata into PostgreSQL so you can search, audit, and automate your media
+              decisions.
+            </p>
+            <p className="mt-3 text-sm text-muted-foreground">
+              This setup wizard will guide you through integrations, webhook security, schedules, and optional initial
+              full sync.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
