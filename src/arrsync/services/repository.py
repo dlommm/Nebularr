@@ -469,7 +469,7 @@ def enqueue_webhook(
     )
 
 
-def claim_webhook_jobs(session: Session, batch_size: int = 20) -> list[dict[str, Any]]:
+def claim_webhook_jobs(session: Session, source: str, batch_size: int = 80) -> list[dict[str, Any]]:
     result = session.execute(
         text(
             """
@@ -478,7 +478,8 @@ def claim_webhook_jobs(session: Session, batch_size: int = 20) -> list[dict[str,
             where id in (
                 select id
                 from app.webhook_queue
-                where status in ('queued', 'retrying') and next_attempt_at <= now()
+                where source = :source
+                  and status in ('queued', 'retrying') and next_attempt_at <= now()
                 order by received_at
                 limit :batch_size
                 for update skip locked
@@ -486,7 +487,7 @@ def claim_webhook_jobs(session: Session, batch_size: int = 20) -> list[dict[str,
             returning id, source, event_type, payload, attempts
             """
         ),
-        {"batch_size": batch_size},
+        {"source": source, "batch_size": batch_size},
     )
     rows = []
     for row in result.mappings():
@@ -623,6 +624,11 @@ def seed_default_integrations(
     radarr_base_url: str,
     radarr_api_key: str,
 ) -> None:
+    """Insert default Sonarr/Radarr rows only when missing.
+
+    On restart we must not overwrite URLs or API keys that were saved via the Web UI;
+    those values live in the database and env defaults are only for first boot.
+    """
     session.execute(
         text(
             """
@@ -630,13 +636,7 @@ def seed_default_integrations(
             values
               ('sonarr', 'default', :sonarr_base_url, :sonarr_api_key, true, true, now()),
               ('radarr', 'default', :radarr_base_url, :radarr_api_key, true, true, now())
-            on conflict (source, name) do update
-            set base_url = excluded.base_url,
-                api_key = case
-                    when excluded.api_key = '' then app.integration_instance.api_key
-                    else excluded.api_key
-                end,
-                updated_at = now()
+            on conflict (source, name) do nothing
             """
         ),
         {

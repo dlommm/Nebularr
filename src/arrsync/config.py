@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8080
     app_timezone: str = "UTC"
-    app_version: str = "1.0.0"
+    app_version: str = "1.1.0"
     app_git_sha: str = "release"
 
     database_url: str = Field(
@@ -49,8 +49,22 @@ class Settings(BaseSettings):
     alert_webhook_min_state: Literal["warning", "critical"] = "warning"
     alert_webhook_notify_recovery: bool = True
 
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    mal_client_id: str = ""
+    mal_dub_info_url: str = "https://raw.githubusercontent.com/MAL-Dubs/MAL-Dubs/main/data/dubInfo.json"
+    mal_ingest_enabled: bool = False
+    mal_matcher_enabled: bool = False
+    mal_tagging_enabled: bool = False
+    mal_jikan_enabled: bool = True
+    mal_ingest_cron: str = "0 3 * * *"
+    mal_matcher_cron: str = "30 3 * * *"
+    mal_tag_sync_cron: str = "0 4 * * *"
+    mal_min_request_interval_seconds: float = 0.6
+    mal_jikan_min_request_interval_seconds: float = 1.0
+    mal_max_ids_per_run: int = 200
+    mal_allow_title_year_match: bool = False
+    arr_dub_tag_label: str = "English-Dubbed-Anime"
 
 @lru_cache
 def get_settings() -> Settings:

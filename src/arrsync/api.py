@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -16,14 +17,25 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import text
 
+from arrsync.log_buffer import get_recent_logs_parsed, ring_buffer_capacity
+from arrsync.logging import apply_root_log_level, normalize_log_level
 from arrsync.services import repository as repo
 from arrsync.services.alert_config_store import (
     read_alert_webhook_config,
     store_alert_webhook_options,
     store_alert_webhook_urls,
 )
+from arrsync.services.log_level_store import (
+    clear_stored_log_level,
+    effective_log_level,
+    read_stored_log_level,
+    store_log_level,
+)
+from arrsync.services.mal_config_store import clear_mal_client_id, mal_client_id_is_configured, store_mal_client_id
 from arrsync.services.health_service import compute_health_status
 from arrsync.security import encrypt_secret, hash_secret, verify_secret_hash
+
+log = logging.getLogger(__name__)
 
 
 def build_router(app_state: Any) -> APIRouter:
@@ -1319,6 +1331,377 @@ def build_router(app_state: Any) -> APIRouter:
             ],
         }
 
+    def _query_reporting_mal(instance_name: str, limit: int) -> dict[str, Any]:
+        """Reporting: MAL schema, dub list, links, and Arr rows tag-sync will target."""
+        normalized_instance = instance_name.strip()
+        bounded_limit = _bounded_limit(limit, default=400, max_limit=reporting_max_limit)
+        tag_label = (app_state.settings.arr_dub_tag_label or "").strip() or "(not configured)"
+        dub_info_url = (app_state.settings.mal_dub_info_url or "").strip() or "https://raw.githubusercontent.com/MAL-Dubs/MAL-Dubs/main/data/dubInfo.json"
+        with app_state.session_scope() as session:
+            dubbed_total = int(
+                session.execute(text("select count(*) from mal.anime where is_english_dubbed = true")).scalar_one()
+            )
+            dubbed_linked = int(
+                session.execute(
+                    text(
+                        """
+                        select count(distinct a.mal_id)
+                        from mal.anime a
+                        where a.is_english_dubbed = true
+                          and exists (select 1 from mal.warehouse_link l where l.mal_id = a.mal_id)
+                        """
+                    )
+                ).scalar_one()
+            )
+            dubbed_unlinked = int(
+                session.execute(
+                    text(
+                        """
+                        select count(*)
+                        from mal.anime a
+                        where a.is_english_dubbed = true
+                          and not exists (select 1 from mal.warehouse_link l where l.mal_id = a.mal_id)
+                        """
+                    )
+                ).scalar_one()
+            )
+            fetch_queue_depth = int(session.execute(text("select count(*) from mal.anime_fetch_queue")).scalar_one())
+            manual_link_count = int(session.execute(text("select count(*) from mal.manual_link")).scalar_one())
+            last_good_dub_fetch = session.execute(
+                text(
+                    """
+                    select id, fetched_at, source_url, content_sha256, id_count
+                    from mal.dub_list_fetch
+                    where coalesce(http_status, 0) < 400
+                      and (error_message is null or error_message = '')
+                    order by id desc
+                    limit 1
+                    """
+                )
+            ).mappings().first()
+            last_dub_fetch_s = (
+                last_good_dub_fetch["fetched_at"].isoformat() if last_good_dub_fetch is not None else "never"
+            )
+            if last_good_dub_fetch is not None:
+                sha = str(last_good_dub_fetch["content_sha256"])
+                dub_list_snapshot_stat = (
+                    f'{int(last_good_dub_fetch["id_count"])} IDs in dubbed[] · sha256 {sha[:16]}… · '
+                    f'fetch #{int(last_good_dub_fetch["id"])}'
+                )
+            else:
+                dub_list_snapshot_stat = "— (run MAL ingest once a dub list fetch succeeds)"
+            dubinfo_dubbed_shows = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select
+                            a.mal_id as mal_anime_id,
+                            a.main_title as primary_title_english_pref,
+                            coalesce(a.additional_titles, '[]'::jsonb) as alternate_titles_synonyms_ja,
+                            a.media_type,
+                            a.status as mal_airing_status,
+                            exists (select 1 from mal.warehouse_link l where l.mal_id = a.mal_id) as linked_to_sonarr_or_radarr,
+                            (select count(*)::int from mal.warehouse_link l where l.mal_id = a.mal_id) as warehouse_link_count,
+                            (
+                                select string_agg(
+                                    l.instance_name || ' · ' || replace(l.arr_entity, '_', ' ') || ' · source_id '
+                                    || l.warehouse_source_id::text,
+                                    ' | '
+                                    order by l.instance_name, l.arr_entity, l.warehouse_source_id
+                                )
+                                from mal.warehouse_link l
+                                where l.mal_id = a.mal_id
+                            ) as library_link_detail
+                        from mal.anime a
+                        where a.is_english_dubbed = true
+                        order by a.main_title nulls last, a.mal_id
+                        limit :lim
+                        """
+                    ),
+                    {"lim": bounded_limit},
+                ).mappings()
+            ]
+            match_method_mix = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select l.match_method as label, count(*)::bigint as value
+                        from mal.warehouse_link l
+                        join mal.anime a on a.mal_id = l.mal_id and a.is_english_dubbed = true
+                        where (:instance_name = '' or l.instance_name = :instance_name)
+                        group by l.match_method
+                        order by value desc
+                        """
+                    ),
+                    {"instance_name": normalized_instance},
+                ).mappings()
+            ]
+            tag_sync_targets = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select
+                            a.mal_id as mal_anime_id,
+                            true as in_mal_dubs_dubbed_list,
+                            l.instance_name,
+                            l.arr_entity,
+                            l.warehouse_source_id,
+                            a.main_title as mal_primary_title,
+                            coalesce(a.additional_titles, '[]'::jsonb) as mal_alternate_titles,
+                            coalesce(
+                                case when l.arr_entity = 'sonarr_series' then s.title else m.title end,
+                                ''
+                            ) as sonarr_or_radarr_title,
+                            l.match_method,
+                            l.confidence,
+                            case
+                                when l.arr_entity = 'sonarr_series' then s.monitored
+                                else m.monitored
+                            end as arr_monitored,
+                            case
+                                when l.arr_entity = 'sonarr_series' then s.payload -> 'tags'
+                                else m.payload -> 'tags'
+                            end as current_tag_ids,
+                            case
+                                when l.arr_entity = 'sonarr_series' and s.source_id is null then 'warehouse series missing'
+                                when l.arr_entity = 'radarr_movie' and m.source_id is null then 'warehouse movie missing'
+                                else 'ok'
+                            end as warehouse_row_state,
+                            'add_dub_tag_if_missing' as tag_sync_action
+                        from mal.warehouse_link l
+                        join mal.anime a on a.mal_id = l.mal_id and a.is_english_dubbed = true
+                        left join warehouse.series s
+                            on l.arr_entity = 'sonarr_series'
+                           and s.instance_name = l.instance_name
+                           and s.source_id = l.warehouse_source_id
+                           and not s.deleted
+                        left join warehouse.movie m
+                            on l.arr_entity = 'radarr_movie'
+                           and m.instance_name = l.instance_name
+                           and m.source_id = l.warehouse_source_id
+                           and not m.deleted
+                        where (:instance_name = '' or l.instance_name = :instance_name)
+                        order by l.instance_name, l.arr_entity, l.warehouse_source_id
+                        limit :lim
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "lim": bounded_limit},
+                ).mappings()
+            ]
+            dubbed_without_link = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select
+                            a.mal_id as mal_anime_id,
+                            true as in_mal_dubs_dubbed_list,
+                            a.main_title as primary_title_english_pref,
+                            coalesce(a.additional_titles, '[]'::jsonb) as alternate_titles_synonyms_ja,
+                            a.mal_fetch_status,
+                            a.mal_fetched_at,
+                            a.media_type,
+                            a.status as mal_airing_status
+                        from mal.anime a
+                        where a.is_english_dubbed = true
+                          and not exists (select 1 from mal.warehouse_link l where l.mal_id = a.mal_id)
+                        order by a.main_title nulls last, a.mal_id
+                        limit :lim
+                        """
+                    ),
+                    {"lim": bounded_limit},
+                ).mappings()
+            ]
+            recent_mal_jobs = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select id, job_type, status, started_at, finished_at,
+                               coalesce(error_message, '') as error_message,
+                               details
+                        from app.mal_job_run
+                        order by started_at desc
+                        limit :lim
+                        """
+                    ),
+                    {"lim": min(bounded_limit, 200)},
+                ).mappings()
+            ]
+            recent_dub_fetches = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select id, fetched_at, source_url, content_sha256, id_count,
+                               http_status, coalesce(error_message, '') as error_message
+                        from mal.dub_list_fetch
+                        order by id desc
+                        limit :lim
+                        """
+                    ),
+                    {"lim": min(bounded_limit, 100)},
+                ).mappings()
+            ]
+            ingest_checkpoints = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select job_name, cursor, run_metadata, updated_at
+                        from mal.ingest_checkpoint
+                        order by job_name
+                        """
+                    )
+                ).mappings()
+            ]
+            fetch_queue = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select mal_id, kind, next_attempt_at, attempts, coalesce(last_error, '') as last_error
+                        from mal.anime_fetch_queue
+                        order by next_attempt_at
+                        limit :lim
+                        """
+                    ),
+                    {"lim": bounded_limit},
+                ).mappings()
+            ]
+            manual_links = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select mal_id, instance_name, arr_entity, warehouse_source_id,
+                               coalesce(note, '') as note, created_at, updated_at
+                        from mal.manual_link
+                        where (:instance_name = '' or instance_name = :instance_name)
+                        order by updated_at desc
+                        limit :lim
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "lim": bounded_limit},
+                ).mappings()
+            ]
+            tag_apply_audit = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select instance_name, arr_entity, warehouse_source_id, tag_label,
+                               last_applied_at, last_desired_tagged, coalesce(payload_hash, '') as payload_hash
+                        from mal.tag_apply_state
+                        where (:instance_name = '' or instance_name = :instance_name)
+                        order by last_applied_at desc
+                        limit :lim
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "lim": bounded_limit},
+                ).mappings()
+            ]
+            external_id_stats = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select site as label, count(*)::bigint as value
+                        from mal.anime_external_id e
+                        join mal.anime a on a.mal_id = e.mal_id and a.is_english_dubbed = true
+                        group by site
+                        order by value desc
+                        """
+                    )
+                ).mappings()
+            ]
+        return {
+            "key": "mal",
+            "title": "MAL-Dubs list ↔ MAL ↔ library",
+            "description": (
+                "MAL-Dubs publishes dubInfo.json with a "
+                '"dubbed" array of integers — each is a MyAnimeList anime ID (same as myanimelist.net/anime/<id>). '
+                "Nebularr ingest downloads that file (see source URL in Recent dub list fetches), then sets "
+                "`mal.anime.is_english_dubbed` for those IDs. "
+                "Primary title prefers MAL `alternative_titles.en`, then falls back to `title`; "
+                "`alternate_titles_synonyms_ja` holds Japanese, synonyms, romaji, and Jikan variants for matching Sonarr/Radarr naming. "
+                "Linked to Sonarr/Radarr means a row exists in `mal.warehouse_link` for that MAL ID. "
+                f'Tag sync adds the Arr label "{tag_label}" to linked series/movies. '
+                f"Configured dub list URL: {dub_info_url}. "
+                "Filter tables by instance where applicable."
+            ),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "panels": [
+                {
+                    "id": "dub_list_last_snapshot",
+                    "title": "Last successful dubInfo.json ingest snapshot",
+                    "kind": "stat",
+                    "value": dub_list_snapshot_stat,
+                },
+                {"id": "dub_tag_label", "title": "Dub tag label applied in Sonarr/Radarr", "kind": "stat", "value": tag_label},
+                {
+                    "id": "dubbed_anime_total",
+                    "title": "MAL IDs flagged dubbed (from MAL-Dubs list)",
+                    "kind": "stat",
+                    "value": dubbed_total,
+                },
+                {
+                    "id": "dubbed_linked_total",
+                    "title": "Those IDs linked to a Sonarr/Radarr title",
+                    "kind": "stat",
+                    "value": dubbed_linked,
+                },
+                {
+                    "id": "dubbed_unlinked_total",
+                    "title": "In MAL-Dubs list but not linked to library yet",
+                    "kind": "stat",
+                    "value": dubbed_unlinked,
+                },
+                {"id": "fetch_queue_depth", "title": "MAL/Jikan fetch queue rows", "kind": "stat", "value": fetch_queue_depth},
+                {"id": "manual_link_total", "title": "Manual MAL ↔ Arr links", "kind": "stat", "value": manual_link_count},
+                {"id": "last_dub_list_fetch", "title": "Last successful dub list fetch (timestamp)", "kind": "stat", "value": last_dub_fetch_s},
+                {
+                    "id": "match_method_mix",
+                    "title": "How linked titles were matched (dubbed IDs only)",
+                    "kind": "distribution",
+                    "rows": match_method_mix,
+                },
+                {
+                    "id": "external_id_sites",
+                    "title": "External IDs stored for dubbed shows (TVDB/TMDB/IMDB)",
+                    "kind": "distribution",
+                    "rows": external_id_stats,
+                },
+                {
+                    "id": "dubinfo_dubbed_shows",
+                    "title": "MAL-Dubs dubbed shows (every MAL ID from the list in your DB)",
+                    "kind": "table",
+                    "rows": dubinfo_dubbed_shows,
+                },
+                {
+                    "id": "tag_sync_targets",
+                    "title": "Linked: Sonarr/Radarr row ↔ MAL-Dubs show (tag sync targets)",
+                    "kind": "table",
+                    "rows": tag_sync_targets,
+                },
+                {
+                    "id": "dubbed_without_link",
+                    "title": "Still only on the MAL-Dubs list (not matched to Sonarr/Radarr)",
+                    "kind": "table",
+                    "rows": dubbed_without_link,
+                },
+                {"id": "recent_mal_jobs", "title": "Recent MAL job runs", "kind": "table", "rows": recent_mal_jobs},
+                {"id": "recent_dub_list_fetches", "title": "Recent dub list fetches", "kind": "table", "rows": recent_dub_fetches},
+                {"id": "ingest_checkpoints", "title": "Ingest checkpoints", "kind": "table", "rows": ingest_checkpoints},
+                {"id": "anime_fetch_queue", "title": "Anime fetch queue", "kind": "table", "rows": fetch_queue},
+                {"id": "manual_links", "title": "Manual links", "kind": "table", "rows": manual_links},
+                {"id": "tag_apply_state", "title": "Tag apply audit (last known apply state)", "kind": "table", "rows": tag_apply_audit},
+            ],
+        }
+
     def _query_reporting_ops_overview(instance_name: str, limit: int) -> dict[str, Any]:
         normalized_instance = instance_name.strip()
         bounded_limit = _bounded_limit(limit, default=300, max_limit=reporting_max_limit)
@@ -2352,6 +2735,11 @@ def build_router(app_state: Any) -> APIRouter:
                 "title": "Radarr Movie Forensics",
                 "description": "Movie-level distributions and storage profile.",
             },
+            {
+                "key": "mal",
+                "title": "MAL-Dubs ↔ MAL ↔ library",
+                "description": "dubInfo.json dubbed[] IDs, titles, Sonarr/Radarr links, and dub tag sync targets.",
+            },
         ]
 
     @router.get("/api/reporting/dashboards/{dashboard_key}")
@@ -2370,6 +2758,7 @@ def build_router(app_state: Any) -> APIRouter:
             "monitoring-audit": _query_reporting_monitoring_audit,
             "sonarr-forensics": _query_reporting_sonarr_forensics,
             "radarr-forensics": _query_reporting_radarr_forensics,
+            "mal": _query_reporting_mal,
         }
         handler = reports.get(dashboard_key)
         if not handler:
@@ -2393,6 +2782,7 @@ def build_router(app_state: Any) -> APIRouter:
             "monitoring-audit": _query_reporting_monitoring_audit,
             "sonarr-forensics": _query_reporting_sonarr_forensics,
             "radarr-forensics": _query_reporting_radarr_forensics,
+            "mal": _query_reporting_mal,
         }
         handler = reports.get(dashboard_key)
         if not handler:
@@ -2699,6 +3089,12 @@ def build_router(app_state: Any) -> APIRouter:
             ).mappings()
             return [dict(r) for r in rows]
 
+    @router.get("/api/ui/logs")
+    async def ui_recent_logs(limit: int = 400) -> dict[str, Any]:
+        bounded = _bounded_limit(limit, default=400, max_limit=2000)
+        items = get_recent_logs_parsed(bounded)
+        return {"items": items, "capacity": ring_buffer_capacity()}
+
     @router.get("/api/ui/webhook-queue")
     async def webhook_queue_summary() -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
@@ -2938,6 +3334,59 @@ def build_router(app_state: Any) -> APIRouter:
             )
         return {"status": "ok"}
 
+    @router.get("/api/config/mal")
+    async def get_mal_config() -> dict[str, Any]:
+        with app_state.session_scope() as session:
+            client_id_configured = mal_client_id_is_configured(session, app_state.settings)
+        env_fallback = bool((app_state.settings.mal_client_id or "").strip())
+        return {
+            "client_id_configured": client_id_configured,
+            "env_fallback_configured": env_fallback,
+        }
+
+    @router.put("/api/config/mal")
+    async def put_mal_config(payload: dict[str, Any]) -> dict[str, Any]:
+        clear_flag = _to_bool(payload.get("clear_client_id", False), False)
+        client_id = str(payload.get("client_id", ""))
+        with app_state.session_scope() as session:
+            if clear_flag:
+                clear_mal_client_id(session)
+            elif client_id.strip():
+                store_mal_client_id(session, client_id)
+        return {"status": "ok"}
+
+    @router.get("/api/config/logging")
+    async def get_logging_config() -> dict[str, Any]:
+        with app_state.session_scope() as session:
+            stored = read_stored_log_level(session)
+            effective = effective_log_level(session, app_state.settings)
+        return {
+            "effective_level": effective,
+            "stored_level": stored,
+            "environment_default": normalize_log_level(app_state.settings.log_level),
+        }
+
+    @router.put("/api/config/logging")
+    async def put_logging_config(payload: dict[str, Any]) -> dict[str, Any]:
+        use_env = _to_bool(payload.get("use_environment_default", False), False)
+        if use_env:
+            with app_state.session_scope() as session:
+                clear_stored_log_level(session)
+            eff = apply_root_log_level(app_state.settings.log_level)
+        else:
+            level = str(payload.get("level", "")).strip()
+            if not level:
+                raise HTTPException(status_code=400, detail="level is required unless use_environment_default is true")
+            try:
+                normalized = normalize_log_level(level)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            with app_state.session_scope() as session:
+                store_log_level(session, normalized)
+            eff = apply_root_log_level(normalized)
+        log.info("log level updated from Web UI", extra={"effective_log_level": eff})
+        return {"status": "ok", "effective_level": eff}
+
     @router.get("/api/config/webhook")
     async def get_webhook_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
@@ -3023,7 +3472,10 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.put("/api/config/schedules/{mode}")
     async def update_schedule(mode: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if mode not in {"incremental", "reconcile", "full"}:
+        allowed_modes = frozenset(
+            {"incremental", "reconcile", "full", "mal_ingest", "mal_matcher", "mal_tag_sync"}
+        )
+        if mode not in allowed_modes:
             raise HTTPException(status_code=400, detail="invalid mode")
         cron = payload.get("cron")
         if not cron:
@@ -3080,6 +3532,39 @@ def build_router(app_state: Any) -> APIRouter:
             "details": result.details,
         }
 
+    @router.post("/api/mal/ingest")
+    async def trigger_mal_ingest() -> dict[str, Any]:
+        svc = app_state.mal_ingest_service
+        if svc is None:
+            raise HTTPException(status_code=501, detail="MAL ingest service unavailable")
+        try:
+            details = await svc.run(reason="manual")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"mal ingest failed: {exc}") from exc
+        return {"status": "ok", "details": details}
+
+    @router.post("/api/mal/match-refresh")
+    async def trigger_mal_match_refresh() -> dict[str, Any]:
+        svc = app_state.mal_matcher_service
+        if svc is None:
+            raise HTTPException(status_code=501, detail="MAL matcher service unavailable")
+        try:
+            details = await asyncio.to_thread(svc.run, reason="manual")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"mal match-refresh failed: {exc}") from exc
+        return {"status": "ok", "details": details}
+
+    @router.post("/api/mal/tag-sync")
+    async def trigger_mal_tag_sync() -> dict[str, Any]:
+        svc = app_state.mal_tag_sync_service
+        if svc is None:
+            raise HTTPException(status_code=501, detail="MAL tag sync service unavailable")
+        try:
+            details = await svc.run(reason="manual")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"mal tag-sync failed: {exc}") from exc
+        return {"status": "ok", "details": details}
+
     @router.post("/api/webhooks/replay-dead-letter/{source}")
     async def replay_dead_letter(source: str) -> dict[str, Any]:
         if source not in {"sonarr", "radarr"}:
@@ -3125,6 +3610,16 @@ def build_router(app_state: Any) -> APIRouter:
                 text(
                     """
                     truncate table
+                        mal.dub_list_snapshot_item,
+                        mal.anime_fetch_queue,
+                        mal.tag_apply_state,
+                        mal.warehouse_link,
+                        mal.manual_link,
+                        mal.anime_external_id,
+                        mal.ingest_checkpoint,
+                        mal.anime,
+                        mal.dub_list_fetch,
+                        app.mal_job_run,
                         warehouse.episode_file,
                         warehouse.movie_file,
                         warehouse.episode,
@@ -3173,6 +3668,10 @@ def build_router(app_state: Any) -> APIRouter:
         with app_state.session_scope() as session:
             repo.enqueue_webhook(session, source=source, event_type=event_type, payload=payload, dedupe_key=dedupe_key)
         app_state.metrics.inc("arrsync_webhooks_received_total")
+        log.info(
+            "incoming webhook queued",
+            extra={"webhook_source": source, "event_type": event_type, "dedupe_key_prefix": dedupe_key[:12]},
+        )
         return JSONResponse({"status": "accepted"})
 
     @router.get("/{frontend_path:path}", response_class=HTMLResponse)

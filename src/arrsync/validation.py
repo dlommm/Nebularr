@@ -23,3 +23,9 @@ def validate_settings(settings: Settings) -> None:
             raise ValueError("ALERT_WEBHOOK_URLS must contain valid http/https URLs")
     CronTrigger.from_crontab(settings.incremental_cron, timezone=settings.scheduler_timezone)
     CronTrigger.from_crontab(settings.full_reconcile_cron, timezone=settings.scheduler_timezone)
+    if settings.mal_ingest_enabled:
+        CronTrigger.from_crontab(settings.mal_ingest_cron, timezone=settings.scheduler_timezone)
+    if settings.mal_matcher_enabled:
+        CronTrigger.from_crontab(settings.mal_matcher_cron, timezone=settings.scheduler_timezone)
+    if settings.mal_tagging_enabled:
+        CronTrigger.from_crontab(settings.mal_tag_sync_cron, timezone=settings.scheduler_timezone)

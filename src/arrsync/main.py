@@ -15,16 +15,20 @@ from fastapi import Request
 from arrsync.api import build_router
 from arrsync.config import Settings, get_settings
 from arrsync.db import build_engine, build_session_factory, session_scope
-from arrsync.logging import configure_logging
+from arrsync.logging import apply_root_log_level, configure_logging
 from arrsync.metrics import Metrics
 from arrsync.migrations import run_migrations
 from arrsync.services.arr_client import ArrClient
 from arrsync.services.alert_config_store import read_alert_webhook_config
 from arrsync.services.alert_notifier import AlertNotifier
 from arrsync.services.health_service import compute_health_status
+from arrsync.mal.ingest_service import MalIngestService
+from arrsync.mal.matcher_service import MalMatcherService
+from arrsync.mal.tag_sync_service import MalTagSyncService
 from arrsync.services.scheduler import SyncScheduler
 from arrsync.services.sync_service import SyncService
 from arrsync.services import repository as repo
+from arrsync.services.log_level_store import effective_log_level
 from arrsync.validation import validate_settings
 
 log = logging.getLogger(__name__)
@@ -40,6 +44,9 @@ class AppState:
     stop_event: asyncio.Event
     session_factory: Any
     alert_notifier: AlertNotifier
+    mal_ingest_service: MalIngestService | None = None
+    mal_matcher_service: MalMatcherService | None = None
+    mal_tag_sync_service: MalTagSyncService | None = None
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
 
@@ -60,7 +67,31 @@ stop_event = asyncio.Event()
 sonarr_client = ArrClient(settings, "sonarr")
 radarr_client = ArrClient(settings, "radarr")
 sync_service = SyncService(session_factory, sonarr_client, radarr_client, stop_event=stop_event)
-scheduler = SyncScheduler(settings, sync_service, session_factory)
+mal_ingest_service = MalIngestService(settings, session_factory)
+mal_matcher_service = MalMatcherService(settings, session_factory)
+mal_tag_sync_service = MalTagSyncService(settings, session_factory)
+
+
+async def _cron_mal_ingest() -> None:
+    await mal_ingest_service.run(reason="cron")
+
+
+async def _cron_mal_matcher() -> None:
+    await asyncio.to_thread(mal_matcher_service.run, reason="cron")
+
+
+async def _cron_mal_tag_sync() -> None:
+    await mal_tag_sync_service.run(reason="cron")
+
+
+scheduler = SyncScheduler(
+    settings,
+    sync_service,
+    session_factory,
+    mal_ingest_coro=_cron_mal_ingest,
+    mal_matcher_coro=_cron_mal_matcher,
+    mal_tag_sync_coro=_cron_mal_tag_sync,
+)
 alert_notifier = AlertNotifier(settings)
 
 app_state = AppState(
@@ -72,6 +103,9 @@ app_state = AppState(
     stop_event=stop_event,
     session_factory=session_factory,
     alert_notifier=alert_notifier,
+    mal_ingest_service=mal_ingest_service,
+    mal_matcher_service=mal_matcher_service,
+    mal_tag_sync_service=mal_tag_sync_service,
 )
 
 app = FastAPI(title="Nebularr Sync", version=settings.app_version)
@@ -127,6 +161,9 @@ async def startup_event() -> None:
             radarr_api_key=settings.radarr_api_key,
         )
         alert_config = read_alert_webhook_config(session, settings)
+        resolved_log_level = effective_log_level(session, settings)
+    apply_root_log_level(resolved_log_level)
+    log.info("logging level active", extra={"effective_log_level": resolved_log_level})
     await alert_notifier.configure(
         webhook_urls=alert_config["webhook_urls"],
         timeout_seconds=alert_config["timeout_seconds"],

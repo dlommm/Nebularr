@@ -88,6 +88,10 @@ class SyncService:
         started = datetime.now(timezone.utc)
         total_records = 0
         if self._should_stop():
+            log.debug(
+                "sync skipped (shutdown)",
+                extra={"source": source, "mode": mode, "trigger": reason},
+            )
             return SyncResult(
                 source=source,
                 mode=mode,
@@ -100,6 +104,10 @@ class SyncService:
         lock_name = f"{source}:{mode}"
         with session_scope(self.session_factory) as lock_session:
             if not repo.try_job_lock(lock_session, lock_name=lock_name, owner_id=self.lock_owner_id):
+                log.warning(
+                    "sync skipped (lock busy)",
+                    extra={"source": source, "mode": mode, "trigger": reason, "lock_name": lock_name},
+                )
                 return SyncResult(
                     source=source,
                     mode=mode,
@@ -110,11 +118,16 @@ class SyncService:
                     details={"reason": "lock-busy", "trigger": reason},
                 )
         try:
+            log.info("sync started", extra={"source": source, "mode": mode, "trigger": reason})
             for integration in self._enabled_integrations(source):
                 if self._should_stop():
                     break
                 instance_name = integration["name"]
                 client = self._client_for_integration(source, integration)
+                log.debug(
+                    "sync instance",
+                    extra={"source": source, "mode": mode, "instance_name": instance_name, "trigger": reason},
+                )
                 run_id: int | None = None
                 records_processed = 0
                 with session_scope(self.session_factory) as session:
@@ -176,6 +189,16 @@ class SyncService:
                 if self._should_stop():
                     break
             finished = datetime.now(timezone.utc)
+            log.info(
+                "sync finished",
+                extra={
+                    "source": source,
+                    "mode": mode,
+                    "trigger": reason,
+                    "records_processed": total_records,
+                    "interrupted": self._should_stop(),
+                },
+            )
             return SyncResult(
                 source=source,
                 mode=mode,
@@ -335,6 +358,10 @@ class SyncService:
         with session_scope(self.session_factory) as session:
             since, _ = repo.get_watermark_for_instance(session, source, instance_name)
         events = await client.list_history_since(since)
+        log.debug(
+            "incremental history batch",
+            extra={"source": source, "instance_name": instance_name, "event_count": len(events)},
+        )
         records = 0
         latest_time: datetime | None = None
         latest_id: int | None = None
@@ -376,93 +403,137 @@ class SyncService:
     async def process_webhook_queue(self, source: str) -> dict[str, Any]:
         processed = 0
         failed = 0
-        with session_scope(self.session_factory) as session:
-            jobs = repo.claim_webhook_jobs(session)
-        for job in jobs:
+        batch_size = 80
+        max_rounds = 30
+        for round_idx in range(max_rounds):
             if self._should_stop():
                 break
-            try:
-                payload = job["payload"] or {}
-                event_type = str(job.get("event_type", "unknown"))
-                mode = "webhook"
-                if source == "sonarr":
-                    instance_name = payload.get("instance_name", "default")
-                    client = self._client_for_integration(source, self._integration_by_name(source, instance_name))
-                    with session_scope(self.session_factory) as session:
-                        run_id = repo.create_sync_run(
-                            session,
-                            source,
-                            mode,
-                            instance_name=instance_name,
-                            trigger="webhook",
+            with session_scope(self.session_factory) as session:
+                jobs = repo.claim_webhook_jobs(session, source, batch_size=batch_size)
+            if not jobs:
+                break
+            log.debug(
+                "webhook queue drain batch",
+                extra={"source": source, "round": round_idx + 1, "job_count": len(jobs)},
+            )
+            for job in jobs:
+                if self._should_stop():
+                    break
+                try:
+                    payload = job["payload"] or {}
+                    event_type = str(job.get("event_type", "unknown"))
+                    mode = "webhook"
+                    job_source = str(job.get("source", source))
+                    if job_source == "sonarr":
+                        instance_name = payload.get("instance_name", "default")
+                        client = self._client_for_integration(
+                            job_source, self._integration_by_name(job_source, instance_name)
                         )
-                    series_id = payload.get("series", {}).get("id")
-                    if series_id:
-                        episodes = await client.list_episodes(int(series_id))
                         with session_scope(self.session_factory) as session:
-                            for episode in episodes:
-                                repo.upsert_episode(session, instance_name, episode, run_id, mode)
-                                ep_file = episode.get("episodeFile")
-                                if ep_file and ep_file.get("id"):
-                                    repo.upsert_episode_file(session, instance_name, int(episode["id"]), ep_file, run_id, mode)
-                    if "delete" in event_type.lower():
-                        deleted_episode_ids = [int(payload["episode"]["id"])] if payload.get("episode", {}).get("id") else []
-                        with session_scope(self.session_factory) as session:
-                            repo.mark_deleted_source_ids(session, "warehouse.episode", instance_name, deleted_episode_ids)
-                    with session_scope(self.session_factory) as session:
-                        repo.finish_sync_run(
-                            session,
-                            run_id=run_id,
-                            source=source,
-                            mode=mode,
-                            status="success",
-                            records_processed=1,
-                            details={"event_type": event_type, "instance_name": instance_name},
-                            instance_name=instance_name,
-                        )
-                else:
-                    instance_name = payload.get("instance_name", "default")
-                    client = self._client_for_integration(source, self._integration_by_name(source, instance_name))
-                    with session_scope(self.session_factory) as session:
-                        run_id = repo.create_sync_run(
-                            session,
-                            source,
-                            mode,
-                            instance_name=instance_name,
-                            trigger="webhook",
-                        )
-                    movies = await client.list_movies()
-                    with session_scope(self.session_factory) as session:
-                        for movie in movies:
-                            repo.upsert_movie(session, instance_name, movie, run_id, mode)
-                            movie_file = movie.get("movieFile")
-                            if movie_file and movie_file.get("id"):
-                                repo.upsert_movie_file(session, instance_name, int(movie["id"]), movie_file, run_id, mode)
+                            run_id = repo.create_sync_run(
+                                session,
+                                job_source,
+                                mode,
+                                instance_name=instance_name,
+                                trigger="webhook",
+                            )
+                        series_id = payload.get("series", {}).get("id")
+                        if series_id:
+                            episodes = await client.list_episodes(int(series_id))
+                            with session_scope(self.session_factory) as session:
+                                for episode in episodes:
+                                    repo.upsert_episode(session, instance_name, episode, run_id, mode)
+                                    ep_file = episode.get("episodeFile")
+                                    if ep_file and ep_file.get("id"):
+                                        repo.upsert_episode_file(
+                                            session, instance_name, int(episode["id"]), ep_file, run_id, mode
+                                        )
                         if "delete" in event_type.lower():
-                            deleted_movie_ids = [int(payload["movie"]["id"])] if payload.get("movie", {}).get("id") else []
-                            repo.mark_deleted_source_ids(session, "warehouse.movie", instance_name, deleted_movie_ids)
-                        repo.finish_sync_run(
-                            session,
-                            run_id=run_id,
-                            source=source,
-                            mode=mode,
-                            status="success",
-                            records_processed=len(movies),
-                            details={"event_type": event_type, "instance_name": instance_name},
-                            instance_name=instance_name,
+                            deleted_episode_ids = (
+                                [int(payload["episode"]["id"])] if payload.get("episode", {}).get("id") else []
+                            )
+                            with session_scope(self.session_factory) as session:
+                                repo.mark_deleted_source_ids(
+                                    session, "warehouse.episode", instance_name, deleted_episode_ids
+                                )
+                        with session_scope(self.session_factory) as session:
+                            repo.finish_sync_run(
+                                session,
+                                run_id=run_id,
+                                source=job_source,
+                                mode=mode,
+                                status="success",
+                                records_processed=1,
+                                details={"event_type": event_type, "instance_name": instance_name},
+                                instance_name=instance_name,
+                            )
+                    else:
+                        instance_name = payload.get("instance_name", "default")
+                        client = self._client_for_integration(
+                            job_source, self._integration_by_name(job_source, instance_name)
                         )
-                with session_scope(self.session_factory) as session:
-                    repo.mark_webhook_done(session, int(job["id"]))
-                processed += 1
-            except Exception as exc:
-                with session_scope(self.session_factory) as session:
-                    repo.mark_webhook_failed(
-                        session,
-                        queue_id=int(job["id"]),
-                        attempts=int(job["attempts"]),
-                        error_message=str(exc),
+                        with session_scope(self.session_factory) as session:
+                            run_id = repo.create_sync_run(
+                                session,
+                                job_source,
+                                mode,
+                                instance_name=instance_name,
+                                trigger="webhook",
+                            )
+                        movie_id = payload.get("movie", {}).get("id")
+                        if movie_id:
+                            movie_row = await client.get_movie(int(movie_id))
+                            movies = [movie_row] if movie_row else []
+                        else:
+                            movies = await client.list_movies()
+                        with session_scope(self.session_factory) as session:
+                            for movie in movies:
+                                repo.upsert_movie(session, instance_name, movie, run_id, mode)
+                                movie_file = movie.get("movieFile")
+                                if movie_file and movie_file.get("id"):
+                                    repo.upsert_movie_file(
+                                        session, instance_name, int(movie["id"]), movie_file, run_id, mode
+                                    )
+                            if "delete" in event_type.lower():
+                                deleted_movie_ids = (
+                                    [int(payload["movie"]["id"])] if payload.get("movie", {}).get("id") else []
+                                )
+                                repo.mark_deleted_source_ids(session, "warehouse.movie", instance_name, deleted_movie_ids)
+                            repo.finish_sync_run(
+                                session,
+                                run_id=run_id,
+                                source=job_source,
+                                mode=mode,
+                                status="success",
+                                records_processed=len(movies),
+                                details={"event_type": event_type, "instance_name": instance_name},
+                                instance_name=instance_name,
+                            )
+                    with session_scope(self.session_factory) as session:
+                        repo.mark_webhook_done(session, int(job["id"]))
+                    processed += 1
+                except Exception as exc:
+                    log.warning(
+                        "webhook job failed",
+                        extra={
+                            "source": source,
+                            "job_id": int(job["id"]),
+                            "event_type": str(job.get("event_type", "")),
+                            "error": str(exc),
+                        },
                     )
-                failed += 1
+                    with session_scope(self.session_factory) as session:
+                        repo.mark_webhook_failed(
+                            session,
+                            queue_id=int(job["id"]),
+                            attempts=int(job["attempts"]),
+                            error_message=str(exc),
+                        )
+                    failed += 1
         with session_scope(self.session_factory) as session:
             repo.prune_old_rows(session)
+        log.info(
+            "webhook queue drain finished",
+            extra={"source": source, "processed": processed, "failed": failed},
+        )
         return {"processed": processed, "failed": failed}

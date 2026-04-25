@@ -83,6 +83,7 @@ class AlertNotifier:
 
     def _build_message(self, status_payload: dict[str, Any], state: str, reasons: tuple[str, ...]) -> str:
         queue_open = int(status_payload.get("webhook_queue_open", 0))
+        dead_letter = int(status_payload.get("webhook_queue_dead_letter", 0))
         active_syncs = int(status_payload.get("active_sync_count", 0))
         lag = status_payload.get("sync_lag_seconds", {})
         if not isinstance(lag, dict):
@@ -94,7 +95,8 @@ class AlertNotifier:
         return (
             f"Nebularr health changed {previous} -> {state}. "
             f"reasons={reasons_text}; "
-            f"queue_open={queue_open}; "
+            f"webhook_backlog={queue_open}; "
+            f"webhook_dead_letter={dead_letter}; "
             f"active_syncs={active_syncs}; "
             f"lag_seconds(sonarr={sonarr_lag}, radarr={radarr_lag})"
         )

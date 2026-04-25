@@ -48,6 +48,7 @@ class ArrClient:
         method: str,
         path: str,
         params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
     ) -> Any:
         url = f"{self.base_url}{path}"
         headers = {"X-Api-Key": self.api_key}
@@ -56,12 +57,28 @@ class ArrClient:
             try:
                 async with self.semaphore:
                     async with httpx.AsyncClient(timeout=self.timeout) as client:
-                        resp = await client.request(method, url, headers=headers, params=params)
+                        resp = await client.request(method, url, headers=headers, params=params, json=json)
+                log.debug(
+                    "arr http response",
+                    extra={
+                        "arr_source": self.source,
+                        "instance_name": self.instance_name,
+                        "method": method,
+                        "path": path,
+                        "status_code": resp.status_code,
+                        "attempt": attempt,
+                    },
+                )
                 if resp.status_code in {429, 500, 502, 503, 504} and attempt < self.retry_attempts:
                     await asyncio.sleep(0.5 * attempt)
                     continue
                 resp.raise_for_status()
-                return resp.json()
+                if not resp.content:
+                    return {}
+                try:
+                    return resp.json()
+                except ValueError:
+                    return {}
             except Exception as exc:
                 last_err = exc
                 if attempt >= self.retry_attempts:
@@ -129,6 +146,12 @@ class ArrClient:
         payload = await self._request("GET", "/api/v3/movie")
         return payload if isinstance(payload, list) else []
 
+    async def get_movie(self, movie_id: int) -> dict[str, Any]:
+        if self.source != "radarr":
+            raise RuntimeError("get_movie requires radarr client")
+        payload = await self._request("GET", f"/api/v3/movie/{int(movie_id)}")
+        return payload if isinstance(payload, dict) else {}
+
     async def list_history_since(self, since: str | None = None) -> list[dict[str, Any]]:
         if not self.capabilities.supports_history:
             return []
@@ -138,6 +161,32 @@ class ArrClient:
         payload = await self._request("GET", "/api/v3/history", params=params)
         records = payload.get("records", payload) if isinstance(payload, dict) else payload
         return records if isinstance(records, list) else []
+
+    async def list_tags(self) -> list[dict[str, Any]]:
+        payload = await self._request("GET", "/api/v3/tag")
+        return payload if isinstance(payload, list) else []
+
+    async def ensure_tag_id(self, label: str) -> int:
+        tags = await self.list_tags()
+        for row in tags:
+            if str(row.get("label", "")).strip() == label:
+                return int(row["id"])
+        created = await self._request(
+            "POST",
+            "/api/v3/tag",
+            json={"label": label},
+        )
+        return int(created["id"])
+
+    async def put_series(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.source != "sonarr":
+            raise RuntimeError("put_series requires sonarr client")
+        return await self._request("PUT", "/api/v3/series", json=body)
+
+    async def put_movie(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.source != "radarr":
+            raise RuntimeError("put_movie requires radarr client")
+        return await self._request("PUT", "/api/v3/movie", json=body)
 
     @staticmethod
     def validate_webhook_secret(given: str, expected: str) -> bool:
