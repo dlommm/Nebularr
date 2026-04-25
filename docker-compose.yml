@@ -20,7 +20,7 @@ services:
     build:
       context: .
       args:
-        APP_VERSION: ${APP_VERSION:-1.0.0}
+        APP_VERSION: ${APP_VERSION:-1.1.0}
         GIT_SHA: ${APP_GIT_SHA:-release}
     environment:
       APP_HOST: 0.0.0.0
@@ -45,6 +45,20 @@ services:
       ALERT_WEBHOOK_TIMEOUT_SECONDS: ${ALERT_WEBHOOK_TIMEOUT_SECONDS:-10}
       ALERT_WEBHOOK_MIN_STATE: ${ALERT_WEBHOOK_MIN_STATE:-warning}
       ALERT_WEBHOOK_NOTIFY_RECOVERY: ${ALERT_WEBHOOK_NOTIFY_RECOVERY:-true}
+      MAL_CLIENT_ID: ${MAL_CLIENT_ID:-}
+      MAL_DUB_INFO_URL: ${MAL_DUB_INFO_URL:-https://raw.githubusercontent.com/MAL-Dubs/MAL-Dubs/main/data/dubInfo.json}
+      MAL_INGEST_ENABLED: ${MAL_INGEST_ENABLED:-false}
+      MAL_MATCHER_ENABLED: ${MAL_MATCHER_ENABLED:-false}
+      MAL_TAGGING_ENABLED: ${MAL_TAGGING_ENABLED:-false}
+      MAL_JIKAN_ENABLED: ${MAL_JIKAN_ENABLED:-true}
+      MAL_INGEST_CRON: ${MAL_INGEST_CRON:-0 3 * * *}
+      MAL_MATCHER_CRON: ${MAL_MATCHER_CRON:-30 3 * * *}
+      MAL_TAG_SYNC_CRON: ${MAL_TAG_SYNC_CRON:-0 4 * * *}
+      MAL_MIN_REQUEST_INTERVAL_SECONDS: ${MAL_MIN_REQUEST_INTERVAL_SECONDS:-0.6}
+      MAL_JIKAN_MIN_REQUEST_INTERVAL_SECONDS: ${MAL_JIKAN_MIN_REQUEST_INTERVAL_SECONDS:-1.0}
+      MAL_MAX_IDS_PER_RUN: ${MAL_MAX_IDS_PER_RUN:-200}
+      MAL_ALLOW_TITLE_YEAR_MATCH: ${MAL_ALLOW_TITLE_YEAR_MATCH:-false}
+      ARR_DUB_TAG_LABEL: ${ARR_DUB_TAG_LABEL:-English-Dubbed-Anime}
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
@@ -52,5 +66,31 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  pgadmin:
+    build:
+      context: .
+      dockerfile: docker/pgadmin/Dockerfile
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_DISABLE_POSTFIX: "1"
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-arranalytics}
+      POSTGRES_USER: ${POSTGRES_USER:-arradmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
+      ARRAPP_USER: arrapp
+      ARRAPP_PASSWORD: ${ARRAPP_PASSWORD:-arrapp}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  pgadmin_data:

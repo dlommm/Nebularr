@@ -8,8 +8,8 @@ RUN npm install && npm run build
 
 FROM python:3.12-slim
 
-ARG APP_VERSION=dev
-ARG GIT_SHA=unknown
+ARG APP_VERSION=1.1.0
+ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
