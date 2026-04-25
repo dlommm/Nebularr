@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>nebularr-postgres</Name>
+  <Repository>postgres:16</Repository>
+  <Registry>https://hub.docker.com/_/postgres</Registry>
+  <Network>nebularr</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/dlommm/Nebularr/issues</Support>
+  <Project>https://github.com/dlommm/Nebularr</Project>
+  <Overview>
+    PostgreSQL for Nebularr (same role as [i]docker-compose.yml[/i] [i]postgres[/i] service).
+
+    [b]Before first install:[/b]
+    - Docker → Networks → add a custom bridge network named [b]nebularr[/b] (must match [i]Network[/i] above).
+    - On the host, use [i]/mnt/user/appdata/nebularr/init[/i] and copy [i]docker/postgres/init/00_roles.sql[/i] from the Nebularr repo into it (required on first DB init).
+    - Map that folder read-only to [i]/docker-entrypoint-initdb.d[/i] below (same paths as [i]deploy/unraid/docker-compose.yml[/i]).
+
+    [b]Start order:[/b] Start this container before Nebularr. Init SQL runs only when the data directory is empty.
+  </Overview>
+  <Category>Home Automation:Tools:</Category>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/dlommm/Nebularr/main/src/arrsync/web/assets/nebularr-logo.svg</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArguments/>
+  <CPUset/>
+
+  <Config Type="Port" Name="Postgres TCP (optional)" Target="5432" Default="5432" Mode="tcp" Description="Publish Postgres for host/backup tools. Nebularr only needs it on the Docker network." Display="always" Required="false" Mask="false">5432</Config>
+
+  <Config Type="Path" Name="Postgres data" Target="/var/lib/postgresql/data" Default="/mnt/user/appdata/nebularr/postgres" Mode="rw" Description="Persistent database files." Display="always" Required="true" Mask="false">/mnt/user/appdata/nebularr/postgres</Config>
+
+  <Config Type="Path" Name="Init scripts (00_roles.sql)" Target="/docker-entrypoint-initdb.d" Default="/mnt/user/appdata/nebularr/init" Mode="ro" Description="Must contain 00_roles.sql from the repo on first install." Display="always" Required="true" Mask="false">/mnt/user/appdata/nebularr/init</Config>
+
+  <Config Type="Variable" Name="POSTGRES_DB" Target="POSTGRES_DB" Default="arranalytics" Mode="" Description="Database name (matches repo defaults)." Display="always" Required="true" Mask="false">arranalytics</Config>
+  <Config Type="Variable" Name="POSTGRES_USER" Target="POSTGRES_USER" Default="arradmin" Mode="" Description="Superuser created by the official Postgres image." Display="always" Required="true" Mask="false">arradmin</Config>
+  <Config Type="Variable" Name="POSTGRES_PASSWORD" Target="POSTGRES_PASSWORD" Default="change-me" Mode="" Description="Password for POSTGRES_USER." Display="always" Required="true" Mask="true">change-me</Config>
+</Container>

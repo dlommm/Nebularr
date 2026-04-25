@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>nebularr</Name>
+  <Repository>dendlomm/nebularr:latest</Repository>
+  <Registry>https://hub.docker.com/r/dendlomm/nebularr</Registry>
+  <Network>nebularr</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/dlommm/Nebularr/issues</Support>
+  <Project>https://github.com/dlommm/Nebularr</Project>
+  <Overview>
+    Nebularr app (same role as [i]docker-compose.yml[/i] [i]app[/i] service): Web UI, API, metrics, webhooks.
+
+    [b]Requires[/b] [i]nebularr-postgres[/i] on the same custom Docker network [b]nebularr[/b] (create the network under Docker → Networks if needed).
+
+    [b]DATABASE_URL[/b] defaults match the compose stack: user [i]arrapp[/i] / password [i]arrapp[/i] (created by [i]00_roles.sql[/i]) and host [i]nebularr-postgres[/i]. Change passwords in Postgres init + here if you customize.
+
+    [b]Disk:[/b] The Web UI is served from the image; configuration lives in Postgres. The optional path [i]/mnt/user/appdata/nebularr/webserver[/i] → [i]/var/lib/nebularr[/i] is only a reserved host folder (same as Unraid compose); you can remove that mapping if you do not want it.
+  </Overview>
+  <Category>Home Automation:Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/dlommm/Nebularr/main/src/arrsync/web/assets/nebularr-logo.svg</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArguments/>
+  <CPUset/>
+
+  <Config Type="Port" Name="Web UI / API port" Target="8080" Default="8080" Mode="tcp" Description="HTTP port for Web UI, REST API, metrics, and webhooks." Display="always" Required="true" Mask="false">8080</Config>
+
+  <Config Type="Path" Name="App host folder (optional)" Target="/var/lib/nebularr" Default="/mnt/user/appdata/nebularr/webserver" Mode="rw" Description="Matches Unraid compose: reserved host path; app state is in Postgres, not here." Display="advanced" Required="false" Mask="false">/mnt/user/appdata/nebularr/webserver</Config>
+
+  <Config Type="Variable" Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql+psycopg://arrapp:arrapp@nebularr-postgres:5432/arranalytics" Mode="" Description="Must point at your Postgres container hostname on network [i]nebularr[/i]." Display="always" Required="true" Mask="true">postgresql+psycopg://arrapp:arrapp@nebularr-postgres:5432/arranalytics</Config>
+
+  <Config Type="Variable" Name="ENABLE_BOOTSTRAP_MIGRATIONS" Target="ENABLE_BOOTSTRAP_MIGRATIONS" Default="true" Mode="" Description="Run Alembic migrations on startup." Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Type="Variable" Name="APP_TIMEZONE" Target="APP_TIMEZONE" Default="UTC" Mode="" Description="Application timezone fallback." Display="advanced" Required="false" Mask="false">UTC</Config>
+  <Config Type="Variable" Name="SCHEDULER_TIMEZONE" Target="SCHEDULER_TIMEZONE" Default="UTC" Mode="" Description="Scheduler timezone fallback." Display="advanced" Required="false" Mask="false">UTC</Config>
+</Container>
