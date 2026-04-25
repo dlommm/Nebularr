@@ -73,6 +73,7 @@ flowchart LR
 - `v2-ui-004` (`proposed`): Add CSV/JSON export actions for table datasets.
 - `v2-ui-005` (`proposed`): Add retention and queue policy editing in UI with validation and previews.
 - `v2-ui-006` (`proposed`): Add guided setup wizard for first-time deployment.
+- `v2-ui-007` (`proposed`): Add Web UI panels for MAL ingest/matcher/tag-sync job history (`app.mal_job_run`) and unmatched dubbed IDs.
 
 ### Integrations And Automation
 

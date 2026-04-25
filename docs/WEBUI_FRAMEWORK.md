@@ -22,9 +22,11 @@ flowchart TB
 ## Stack
 
 - Framework: React + TypeScript + Vite (`frontend/`).
-- Data layer: `@tanstack/react-query` with polling + cache invalidation.
+- Routing: `react-router-dom` with URL-based sections (Home, Dashboard, library, etc.); `GET /{path}` serves `index.html` (SPA fallback) for non-API paths.
+- Data layer: `@tanstack/react-query` with polling + cache invalidation (queries are scoped to the active page where possible).
 - Table UX: server-side pagination/sort/filter via FastAPI contracts.
 - Build output: `src/arrsync/web/dist` (served by FastAPI at `/`).
+- Layout: `frontend/src/layout/AppLayout.tsx` (sidebar + top bar + `<Outlet />`); pages under `frontend/src/pages/`. Command palette and shared chrome live in the layout; feature state stays on feature pages.
 
 ## Local Development
 
@@ -81,9 +83,9 @@ CSV endpoints support sort params and `export_all=true`:
 
 ## Advanced UX Capabilities Implemented
 
-- Saved state for current view and library filters (local storage).
-- Command palette (`Ctrl/Cmd + K`) for quick actions.
-- Keyboard shortcuts (`/` focuses library search, quick nav keybinds).
+- Saved state for library and reporting filters (local storage). Legacy `nebularr.active.view` is migrated once to a real path and removed.
+- Command palette (`Ctrl/Cmd + K`) for quick actions and navigation.
+- Keyboard shortcuts (`/` focuses library search when on the Library page; `Cmd/Ctrl+G` opens Library).
 - Compare mode for episode-level side-by-side checks.
 - Detail drawer for row payload drilldown.
 - Structured diagnostics panel for API and action failures.
