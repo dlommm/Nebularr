@@ -221,4 +221,8 @@ The frontend build is emitted to `src/arrsync/web/dist` and served by FastAPI.
 - `docs/WEBUI_FRAMEWORK.md`: frontend architecture, contracts, and local workflows.
 - `docs/WEBUI_AGENT_WORKFLOW.md`: task tracker + quality guardian gates and completion criteria.
 
+## GitHub wiki (optional)
+
+A companion wiki can track how the code and in-repo docs fit together. **Source files** (including a navigation sidebar) live in [`docs/wiki/`](docs/wiki/); [publish them](docs/wiki/README.md) to the GitHub wiki (separate `*.wiki` git repository) or browse them on the default branch. Replace `OWNER/REPO` in the wiki with your org/repo when forking.
+
 CI runs lint/type/tests on push and pull request. An optional Docker smoke job is available via manual workflow dispatch.
