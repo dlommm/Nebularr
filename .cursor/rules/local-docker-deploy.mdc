@@ -1,0 +1,17 @@
+---
+description: Local Docker deploy must use host .env via Compose only; never leak or bake secrets into images or git.
+globs: docker-compose.yml
+alwaysApply: false
+---
+
+# Local Docker and `.env`
+
+When the user asks to **run**, **start**, or **redeploy** Nebularr **local Docker** (or similar):
+
+1. **Use `.env` only—no shell overrides** — run **`./scripts/docker-local-up.sh`** from the repo root for local testing. It creates **`.env` from `.env.example` if missing**, syncs **`COMPOSE_PROFILES`** from values already in **`.env`** (`NEBULARR_BUNDLED_POSTGRES`), then **`docker compose up -d --build`**. Do **not** prefix with `DATABASE_URL=` or `COMPOSE_PROFILES=...` unless the user explicitly asks for a one-off workaround.
+
+2. **Never expose `.env` in artifacts** — do not paste secrets or full `.env` into chat, commits, or images. Do not `COPY` **`.env`** into any image stage (see **`.dockerignore`**).
+
+3. **Production-style one-click** — **`./scripts/one-click-all-in-one.sh`** still **requires** an existing **`.env`** (no auto-create). Use that when the operator wants the strict flow.
+
+4. **Skill** — **`.cursor/skills/run-local-docker/SKILL.md`** has the full checklist.
