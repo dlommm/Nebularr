@@ -1,13 +1,40 @@
 export type HealthState = "ok" | "warning" | "critical";
 
+export type MalSyncRunningJob = {
+  run_id: number;
+  job_type: string;
+  started_at: string;
+};
+
+export type MalSyncLastFinished = {
+  job_type: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  error_message: string | null;
+};
+
+export type MalSyncStatus = {
+  running: MalSyncRunningJob[];
+  last_finished: Record<string, MalSyncLastFinished>;
+  client_configured: boolean;
+  schedulers: {
+    ingest_enabled: boolean;
+    matcher_enabled: boolean;
+    tagging_enabled: boolean;
+  };
+};
+
 export type StatusResponse = {
   jobs_total: number;
   webhook_queue_open: number;
+  webhook_queue_dead_letter?: number;
   active_sync_count: number;
   sync_lag_seconds: { sonarr?: number; radarr?: number };
   arr_versions: { sonarr: string; radarr: string };
   health_state: HealthState;
   health_reasons: string[];
+  mal_sync?: MalSyncStatus;
 };
 
 export type HealthzResponse = {
@@ -15,6 +42,24 @@ export type HealthzResponse = {
   version: string;
   git_sha: string;
   time: string;
+};
+
+export type MalConfigResponse = {
+  client_id_configured: boolean;
+  env_fallback_configured: boolean;
+};
+
+export type LoggingConfigResponse = {
+  effective_level: string;
+  stored_level: string | null;
+  environment_default: string;
+};
+
+export type UiLogEntry = Record<string, unknown>;
+
+export type UiLogsResponse = {
+  items: UiLogEntry[];
+  capacity: number;
 };
 
 export type SyncActivityRow = {

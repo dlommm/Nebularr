@@ -1,10 +1,17 @@
 import { test, expect } from "@playwright/test";
 
-test("loads shell and key views", async ({ page, baseURL }) => {
-  await page.goto(baseURL ?? "http://localhost:8080");
+test("loads shell, navigates by URL, and key views render", async ({ page, baseURL }) => {
+  const root = baseURL ?? "http://localhost:8080";
+  await page.goto(root);
   await expect(page.getByText("Nebularr")).toBeVisible();
-  await page.getByRole("button", { name: "Library" }).click();
+  await expect(page.getByRole("link", { name: /^home$/i })).toBeVisible();
+
+  await page.goto(`${root}/library`);
   await expect(page.getByText("Drilldown")).toBeVisible();
-  await page.getByRole("button", { name: "Manual Actions" }).click();
-  await expect(page.getByText("Run Sync")).toBeVisible();
+
+  await page.goto(`${root}/actions`);
+  await expect(page.getByText("Run sync", { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText("Run sync", { exact: true })).toBeVisible();
 });

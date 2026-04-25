@@ -3,6 +3,9 @@ import type {
   EpisodeRow,
   HealthzResponse,
   IntegrationRow,
+  LoggingConfigResponse,
+  MalConfigResponse,
+  UiLogsResponse,
   MovieRow,
   PagedResponse,
   RunRow,
@@ -63,6 +66,16 @@ export const api = {
   schedules: () => requestJson<ScheduleRow[]>("/api/config/schedules"),
   saveIntegration: (source: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/integrations/${source}`, "PUT", payload),
+  malConfig: () => requestJson<MalConfigResponse>("/api/config/mal"),
+  saveMalConfig: (payload: { client_id?: string; clear_client_id?: boolean }) =>
+    requestJson<{ status: string }>("/api/config/mal", "PUT", payload),
+  loggingConfig: () => requestJson<LoggingConfigResponse>("/api/config/logging"),
+  saveLoggingConfig: (payload: { level?: string; use_environment_default?: boolean }) =>
+    requestJson<{ status: string; effective_level: string }>("/api/config/logging", "PUT", payload),
+  uiLogs: (limit = 500) => requestJson<UiLogsResponse>(withParams("/api/ui/logs", { limit })),
+  triggerMalIngest: () => requestJson<{ status: string; details: unknown }>("/api/mal/ingest", "POST"),
+  triggerMalMatchRefresh: () => requestJson<{ status: string; details: unknown }>("/api/mal/match-refresh", "POST"),
+  triggerMalTagSync: () => requestJson<{ status: string; details: unknown }>("/api/mal/tag-sync", "POST"),
   saveSchedule: (mode: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/schedules/${mode}`, "PUT", payload),
   webhookConfig: () => requestJson<{ secret_set: boolean }>("/api/config/webhook"),

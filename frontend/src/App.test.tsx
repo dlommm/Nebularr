@@ -1,7 +1,25 @@
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+
+vi.mock("./api", async () => {
+  const actual = await vi.importActual<typeof import("./api")>("./api");
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      setupStatus: () =>
+        Promise.resolve({
+          completed: true,
+          has_webhook_secret: false,
+          integrations: {},
+          schedules: [],
+        } satisfies Awaited<ReturnType<typeof actual.api.setupStatus>>),
+    },
+  };
+});
 
 function renderApp(): void {
   const queryClient = new QueryClient({
@@ -19,9 +37,13 @@ function renderApp(): void {
 }
 
 describe("App", () => {
-  it("renders nebularr shell", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders nebularr shell with home in nav", async () => {
     renderApp();
-    expect(screen.getByText("Nebularr")).toBeInTheDocument();
-    expect(screen.getAllByText("Overview").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Nebularr")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /home/i }).length).toBeGreaterThan(0);
   });
 });
