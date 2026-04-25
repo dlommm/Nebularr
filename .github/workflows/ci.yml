@@ -41,6 +41,33 @@ jobs:
       - name: Tests
         run: pytest -q
 
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint (app Dockerfile)
+        run: docker run --rm -i hadolint/hadolint < Dockerfile
+      - name: Trivy filesystem + secret + vuln
+        run: |
+          docker run --rm -v "$PWD:/src" aquasec/trivy:latest fs \
+            --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --exit-code 1 /src
+      - name: Trivy Dockerfile / compose misconfig
+        run: |
+          docker run --rm -v "$PWD:/src" aquasec/trivy:latest config \
+            --severity HIGH,CRITICAL --exit-code 1 /src
+      - name: Docker build (image scan input)
+        run: docker build -t nebularr:ci .
+      - name: Trivy image (HIGH/CRITICAL)
+        run: |
+          docker save nebularr:ci -o /tmp/nebularr-ci.tar
+          docker run --rm -v "$PWD:/src" -v /tmp:/tmp aquasec/trivy:latest image \
+            --input /tmp/nebularr-ci.tar --severity HIGH,CRITICAL --exit-code 1 \
+            --ignorefile /src/.trivyignore.image
+      - name: Grype image (fixed issues only; avoids unfixed distro noise)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/grype:latest \
+            nebularr:ci --only-fixed --fail-on high -o table
+
   smoke_optional:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

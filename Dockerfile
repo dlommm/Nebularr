@@ -1,23 +1,53 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1
+# Multi-stage: wheel build (no repo dev junk), minimal runtime, non-root.
 
-ARG APP_VERSION=1.3.0
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update \
+    && apt-get upgrade -y -o Dpkg::Options::="--force-confold" \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY alembic.ini ./
+COPY alembic ./alembic
+
+# hadolint DL3013: pin bootstrap tooling for reproducible wheel builds.
+RUN pip install --no-cache-dir pip==26.0.1 setuptools==82.0.1 wheel==0.47.0 \
+    && pip wheel --no-cache-dir --wheel-dir /wheels .
+
+FROM python:3.13-slim AS runtime
+
+ARG APP_VERSION=1.6.0
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
     APP_VERSION=${APP_VERSION} \
     APP_GIT_SHA=${GIT_SHA}
 
 WORKDIR /app
 
-# Upgrade base packages only (no curl: it pulls libnghttp2, which was flagged as HIGH by Docker Scout on Debian 13)
 RUN apt-get update \
     && apt-get upgrade -y -o Dpkg::Options::="--force-confold" \
     && rm -rf /var/lib/apt/lists/*
 
-# Frontend is the committed Vite output under src/arrsync/web/dist (build locally with: cd frontend && npm run build)
-COPY . /app
-RUN pip install --no-cache-dir -e .
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels nebularr \
+    && rm -rf /wheels
+
+COPY alembic.ini ./
+COPY alembic ./alembic
+
+RUN groupadd --system --gid 1001 nebularr \
+    && useradd --uid 1001 --gid nebularr --home-dir /app --shell /usr/sbin/nologin --no-create-home nebularr \
+    && mkdir -p /app/data \
+    && chown -R 1001:1001 /app
+
+USER 1001:1001
 
 EXPOSE 8080
 

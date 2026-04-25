@@ -7,9 +7,10 @@ from apscheduler.triggers.cron import CronTrigger
 from arrsync.config import Settings
 
 
-def validate_settings(settings: Settings) -> None:
-    if not settings.database_url.startswith("postgresql"):
-        raise ValueError("DATABASE_URL must be a PostgreSQL SQLAlchemy URL")
+def validate_settings(settings: Settings, *, require_database_url: bool = True) -> None:
+    if require_database_url:
+        if not settings.database_url or not settings.database_url.startswith("postgresql"):
+            raise ValueError("DATABASE_URL must be set to a PostgreSQL SQLAlchemy URL")
     for key, value in (
         ("SONARR_BASE_URL", settings.sonarr_base_url),
         ("RADARR_BASE_URL", settings.radarr_base_url),

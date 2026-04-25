@@ -205,11 +205,21 @@ def upgrade() -> None:
         """
     )
 
-    op.execute("grant usage on schema mal to arrapp")
-    op.execute("grant all privileges on all tables in schema mal to arrapp")
-    op.execute("grant all privileges on all sequences in schema mal to arrapp")
-    op.execute("grant all privileges on app.mal_job_run to arrapp")
-    op.execute("grant all privileges on sequence app.mal_job_run_id_seq to arrapp")
+    op.execute(
+        """
+        do $arrapp_mal_grants$
+        begin
+          if exists (select 1 from pg_roles where rolname = 'arrapp') then
+            execute 'grant usage on schema mal to arrapp';
+            execute 'grant all privileges on all tables in schema mal to arrapp';
+            execute 'grant all privileges on all sequences in schema mal to arrapp';
+            execute 'grant all privileges on app.mal_job_run to arrapp';
+            execute 'grant all privileges on sequence app.mal_job_run_id_seq to arrapp';
+          end if;
+        end
+        $arrapp_mal_grants$;
+        """
+    )
 
 
 def downgrade() -> None:

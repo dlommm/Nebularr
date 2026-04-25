@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import csv
 import hashlib
 import io
@@ -40,6 +41,17 @@ from arrsync.services.mal_config_store import (
     store_mal_feature_flags,
 )
 from arrsync.services.health_service import compute_health_status
+from arrsync.database_lifecycle import (
+    bind_database_engine,
+    build_sqlalchemy_url,
+    dispose_bound_engine,
+    finalize_application_services,
+    refresh_settings_from_environment,
+    run_migrations_and_seed,
+    wait_for_postgres,
+)
+from arrsync.postgres_bootstrap import bootstrap_arrapp_from_admin_url
+from arrsync.runtime_database_url import persist_runtime_database_url, runtime_database_url_persisted
 from arrsync.security import encrypt_secret, hash_secret, verify_secret_hash
 
 log = logging.getLogger(__name__)
@@ -2639,14 +2651,19 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.get("/healthz")
     async def healthz() -> dict[str, Any]:
-        with app_state.session_scope() as session:
-            session.execute(text("select 1"))
-        return {
+        payload: dict[str, Any] = {
             "status": "ok",
             "version": app_state.settings.app_version,
             "git_sha": app_state.settings.app_git_sha,
             "time": datetime.now(timezone.utc).isoformat(),
         }
+        if not app_state.session_factory.ready:
+            payload["database"] = "not_configured"
+            return payload
+        with app_state.session_scope() as session:
+            session.execute(text("select 1"))
+        payload["database"] = "ok"
+        return payload
 
     @router.get("/metrics")
     async def metrics() -> PlainTextResponse:
@@ -2654,6 +2671,8 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.get("/", response_class=HTMLResponse)
     async def ui_home():
+        if not app_state.session_factory.ready:
+            return RedirectResponse(url="/setup", status_code=307)
         with app_state.session_scope() as session:
             setup_completed = _get_setting(session, "app.setup_completed", "false").lower() == "true"
         if not setup_completed:
@@ -2666,10 +2685,11 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.get("/setup", response_class=HTMLResponse)
     async def ui_setup():
-        with app_state.session_scope() as session:
-            setup_completed = _get_setting(session, "app.setup_completed", "false").lower() == "true"
-        if setup_completed:
-            return RedirectResponse(url="/", status_code=307)
+        if app_state.session_factory.ready:
+            with app_state.session_scope() as session:
+                setup_completed = _get_setting(session, "app.setup_completed", "false").lower() == "true"
+            if setup_completed:
+                return RedirectResponse(url="/", status_code=307)
         selected_index = web_dist_index if web_dist_index.exists() else web_ui_path
         html = selected_index.read_text(encoding="utf-8")
         html = html.replace("__APP_VERSION__", app_state.settings.app_version)
@@ -2807,6 +2827,18 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.get("/api/setup/status")
     async def setup_status() -> dict[str, Any]:
+        if not app_state.session_factory.ready:
+            return {
+                "completed": False,
+                "has_webhook_secret": False,
+                "integrations": {},
+                "schedules": [],
+                "database": {
+                    "engine_ready": False,
+                    "runtime_url_persisted": runtime_database_url_persisted(),
+                    "arrapp_role_exists": False,
+                },
+            }
         with app_state.session_scope() as session:
             setup_completed = _get_setting(session, "app.setup_completed", "false").lower() == "true"
             webhook_hash = _get_setting(session, "app.webhook_secret_hash", "")
@@ -2836,21 +2868,146 @@ def build_router(app_state: Any) -> APIRouter:
                 )
             ).mappings()
             schedules = [dict(r) for r in schedule_rows]
+            arrapp_exists = bool(
+                session.execute(
+                    text("select exists(select 1 from pg_roles where rolname = 'arrapp')")
+                ).scalar()
+            )
             return {
                 "completed": setup_completed,
                 "has_webhook_secret": bool(webhook_hash),
                 "integrations": integration_map,
                 "schedules": schedules,
+                "database": {
+                    "engine_ready": True,
+                    "runtime_url_persisted": runtime_database_url_persisted(),
+                    "arrapp_role_exists": arrapp_exists,
+                },
             }
 
     @router.post("/api/setup/skip")
     async def setup_skip() -> dict[str, Any]:
+        if not app_state.session_factory.ready:
+            raise HTTPException(
+                status_code=400,
+                detail="Complete the PostgreSQL step before skipping setup.",
+            )
         with app_state.session_scope() as session:
             _set_setting(session, "app.setup_completed", "true")
         return {"status": "ok", "completed": True}
 
+    @router.post("/api/setup/initialize-postgres")
+    async def setup_initialize_postgres(payload: dict[str, Any]) -> dict[str, Any]:
+        if app_state.session_factory.ready:
+            raise HTTPException(status_code=409, detail="database already initialized")
+        host = str(payload.get("host", "")).strip()
+        database = str(payload.get("database", "")).strip()
+        username = str(payload.get("username", "")).strip()
+        password = str(payload.get("password", "")).strip()
+        arrapp_pw = str(payload.get("arrapp_password", "")).strip()
+        try:
+            port = int(payload.get("port", 5432))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="port must be an integer") from None
+        if not host or not database or not username or not password:
+            raise HTTPException(status_code=400, detail="host, database, username, and password are required")
+        if port < 1 or port > 65535:
+            raise HTTPException(status_code=400, detail="port must be between 1 and 65535")
+        admin_url = build_sqlalchemy_url(
+            host=host, port=port, database=database, username=username, password=password
+        )
+        try:
+            await asyncio.to_thread(wait_for_postgres, admin_url, 120.0)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail="Postgres did not become ready in time") from exc
+
+        os.environ["DATABASE_URL"] = admin_url
+        app_state.settings = refresh_settings_from_environment()
+        app_state._engine = bind_database_engine(app_state.settings, app_state.session_factory)
+        try:
+            await asyncio.to_thread(run_migrations_and_seed, app_state, app_state.settings)
+        except Exception:
+            dispose_bound_engine(app_state)
+            app_state.session_factory.unbind()
+            raise
+
+        final_url = admin_url
+        if arrapp_pw:
+            try:
+                final_url = await asyncio.to_thread(
+                    bootstrap_arrapp_from_admin_url,
+                    admin_url,
+                    database,
+                    arrapp_pw,
+                )
+            except Exception:
+                log.exception("arrapp bootstrap failed after migrations")
+                dispose_bound_engine(app_state)
+                app_state.session_factory.unbind()
+                raise HTTPException(status_code=500, detail="arrapp bootstrap failed") from None
+            dispose_bound_engine(app_state)
+            os.environ["DATABASE_URL"] = final_url
+            app_state.settings = refresh_settings_from_environment()
+            app_state._engine = bind_database_engine(app_state.settings, app_state.session_factory)
+
+        try:
+            await asyncio.to_thread(persist_runtime_database_url, final_url)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"cannot persist database URL: {exc}") from exc
+
+        app_state.settings = refresh_settings_from_environment()
+        app_state.scheduler.settings = app_state.settings
+        await finalize_application_services(app_state)
+        return {"status": "ok", "restart_recommended": bool(arrapp_pw)}
+
+    @router.post("/api/setup/bootstrap-database")
+    async def setup_bootstrap_database(payload: dict[str, Any]) -> dict[str, Any]:
+        if runtime_database_url_persisted():
+            raise HTTPException(status_code=409, detail="runtime database URL already configured")
+        admin_url = str(payload.get("admin_database_url", "")).strip()
+        database_name = str(payload.get("database_name", "")).strip()
+        arrapp_pw = str(payload.get("arrapp_password", "")).strip()
+        if not admin_url or not database_name or not arrapp_pw:
+            raise HTTPException(status_code=400, detail="admin_database_url, database_name, and arrapp_password are required")
+        try:
+            arrapp_url = await asyncio.to_thread(
+                bootstrap_arrapp_from_admin_url,
+                admin_url,
+                database_name,
+                arrapp_pw,
+            )
+            await asyncio.to_thread(persist_runtime_database_url, arrapp_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            log.exception("database bootstrap failed")
+            raise HTTPException(status_code=500, detail="database bootstrap failed") from exc
+        return {"status": "ok", "restart_required": True}
+
+    @router.post("/api/setup/persist-runtime-database-url")
+    async def setup_persist_runtime_database_url() -> dict[str, Any]:
+        if not app_state.session_factory.ready:
+            raise HTTPException(status_code=503, detail="database not configured")
+        if runtime_database_url_persisted():
+            raise HTTPException(status_code=409, detail="runtime database URL already configured")
+        url = app_state.settings.database_url.strip()
+        if not url.startswith("postgresql"):
+            raise HTTPException(status_code=400, detail="DATABASE_URL must be a PostgreSQL URL")
+        try:
+            await asyncio.to_thread(persist_runtime_database_url, url)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"cannot write runtime config: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"status": "ok", "restart_required": True}
+
     @router.post("/api/setup/wizard")
     async def setup_wizard(payload: dict[str, Any]) -> dict[str, Any]:
+        if not app_state.session_factory.ready:
+            raise HTTPException(
+                status_code=400,
+                detail="Complete the PostgreSQL step before saving integrations and schedules.",
+            )
         sonarr = payload.get("sonarr", {}) if isinstance(payload.get("sonarr"), dict) else {}
         radarr = payload.get("radarr", {}) if isinstance(payload.get("radarr"), dict) else {}
         schedules = payload.get("schedules", {}) if isinstance(payload.get("schedules"), dict) else {}
@@ -2940,6 +3097,11 @@ def build_router(app_state: Any) -> APIRouter:
     @router.post("/api/setup/initial-sync")
     async def setup_initial_sync(payload: dict[str, Any]) -> dict[str, Any]:
         nonlocal setup_sync_task, setup_sync_sources
+        if not app_state.session_factory.ready:
+            raise HTTPException(
+                status_code=400,
+                detail="Complete the PostgreSQL step before running initial sync.",
+            )
         requested_sources = payload.get("sources", [])
         if not isinstance(requested_sources, list):
             raise HTTPException(status_code=400, detail="sources must be an array")

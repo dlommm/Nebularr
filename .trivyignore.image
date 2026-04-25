@@ -1,0 +1,4 @@
+# Unfixed Debian base (python:3.13-slim) OS packages — no patched release in trixie yet.
+# Re-scan after base image updates; remove entries when Trivy reports fixed versions.
+CVE-2025-69720
+CVE-2026-29111

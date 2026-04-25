@@ -142,9 +142,24 @@ More diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/ORIGINAL_P
 ./scripts/one-click-all-in-one.sh
 ```
 
-Creates `.env` if needed and starts the core stack (app URL and Postgres port are printed when the script finishes).
+Requires an existing **`.env`** (copy from **`.env.example`** first; the script exits with an error if `.env` is missing—see **docs/SECRETS.md**). Then it starts the core stack (app URL and Postgres lines are printed when the script finishes). The script reads **`NEBULARR_BUNDLED_POSTGRES`** (default `true`) and syncs **`COMPOSE_PROFILES`** so bundled Postgres starts unless you opt out.
 
-### Core stack (Postgres + App only)
+### Local Docker testing (auto `.env`)
+
+For quick local runs without preparing **`.env`** by hand:
+
+```bash
+./scripts/docker-local-up.sh
+```
+
+Creates **`.env` from `.env.example` if missing**, then **`docker compose up -d --build`** using **only** your **`.env`** (no `DATABASE_URL=` / `COMPOSE_PROFILES=` shell overrides). Same bundled-postgres profile merge as the one-click script.
+
+### Bundled Postgres vs external
+
+- **Default (local bundled Postgres):** `.env` from `.env.example` sets `NEBULARR_BUNDLED_POSTGRES=true` and `COMPOSE_PROFILES=nebularr-bundled-postgres`, which starts the `postgres` service in `docker-compose.yml`. The Web UI setup can still use host **`postgres`** on port **5432** (the Docker service name on the compose network).
+- **External / existing Postgres:** set **`NEBULARR_BUNDLED_POSTGRES=false`** in `.env` and remove **`nebularr-bundled-postgres`** from **`COMPOSE_PROFILES`** (or rely on `./scripts/one-click-all-in-one.sh`, which strips the profile when bundled is false). Then `docker compose up` runs **app only**; in the first setup step, use your real DB hostname, port, database name, and credentials. **`POSTGRES_*` in `.env` only apply to the bundled image** when that service is enabled.
+
+### Core stack (optional bundled Postgres + App)
 
 1. Copy env defaults:
 
@@ -158,13 +173,15 @@ cp .env.example .env
 docker compose up --build
 ```
 
+(`docker compose` loads `.env` from the project directory, including **`COMPOSE_PROFILES`**, so bundled Postgres starts with the defaults above.)
+
 3. Validate app is up:
 
 ```bash
 ./scripts/smoke.sh
 ```
 
-4. Open the Web UI at `http://localhost:8080`, finish setup (integrations, webhook secret, schedules), then trigger initial full sync if you have not already:
+4. Open the Web UI at `http://localhost:8080`. If you did not set `DATABASE_URL`, the first step collects Postgres host, database name, and credentials (for bundled Postgres, match your `POSTGRES_*`; for external DB, use that server’s host and credentials), waits until Postgres accepts connections, runs Alembic migrations, then continues with integrations, webhook secret, and schedules. Then trigger initial full sync if you have not already:
 
 ```bash
 curl -X POST "http://localhost:8080/api/sync/sonarr/full"

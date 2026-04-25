@@ -6,29 +6,32 @@ import signal
 import time
 import uuid
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 from fastapi import FastAPI
 from fastapi import Request
+from fastapi.responses import JSONResponse
 
 from arrsync.api import build_router
 from arrsync.config import Settings, get_settings
-from arrsync.db import build_engine, build_session_factory, session_scope
+from arrsync.database_lifecycle import (
+    bind_database_engine,
+    dispose_bound_engine,
+    finalize_application_services,
+    run_migrations_and_seed,
+)
+from arrsync.db import session_scope
+from arrsync.deferred_session import DeferredSessionFactory
 from arrsync.logging import apply_root_log_level, configure_logging
 from arrsync.metrics import Metrics
-from arrsync.migrations import run_migrations
 from arrsync.services.arr_client import ArrClient
-from arrsync.services.alert_config_store import read_alert_webhook_config
 from arrsync.services.alert_notifier import AlertNotifier
-from arrsync.services.health_service import compute_health_status
 from arrsync.mal.ingest_service import MalIngestService
 from arrsync.mal.matcher_service import MalMatcherService
 from arrsync.mal.tag_sync_service import MalTagSyncService
 from arrsync.services.scheduler import SyncScheduler
 from arrsync.services.sync_service import SyncService
-from arrsync.services import repository as repo
-from arrsync.services.log_level_store import effective_log_level
 from arrsync.validation import validate_settings
 
 log = logging.getLogger(__name__)
@@ -42,34 +45,36 @@ class AppState:
     scheduler: SyncScheduler
     arr_client_class: type[ArrClient]
     stop_event: asyncio.Event
-    session_factory: Any
+    session_factory: DeferredSessionFactory
     alert_notifier: AlertNotifier
     mal_ingest_service: MalIngestService | None = None
     mal_matcher_service: MalMatcherService | None = None
     mal_tag_sync_service: MalTagSyncService | None = None
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
+    _engine: Any | None = field(default=None, repr=False)
+    _pending_alert_config: dict[str, Any] | None = field(default=None, repr=False)
+    scheduler_started: bool = field(default=False, repr=False)
 
     @contextmanager
     def session_scope(self) -> Iterator:
-        with session_scope(self.session_factory) as session:
+        with session_scope(self.session_factory) as session:  # type: ignore[arg-type]
             yield session
 
 
 settings = get_settings()
 configure_logging(settings.log_level)
 
-engine = build_engine(settings)
-session_factory = build_session_factory(engine)
+session_factory_holder = DeferredSessionFactory()
 metrics = Metrics()
 stop_event = asyncio.Event()
 
 sonarr_client = ArrClient(settings, "sonarr")
 radarr_client = ArrClient(settings, "radarr")
-sync_service = SyncService(session_factory, sonarr_client, radarr_client, stop_event=stop_event)
-mal_ingest_service = MalIngestService(settings, session_factory)
-mal_matcher_service = MalMatcherService(settings, session_factory)
-mal_tag_sync_service = MalTagSyncService(settings, session_factory)
+sync_service = SyncService(session_factory_holder, sonarr_client, radarr_client, stop_event=stop_event)
+mal_ingest_service = MalIngestService(settings, session_factory_holder)
+mal_matcher_service = MalMatcherService(settings, session_factory_holder)
+mal_tag_sync_service = MalTagSyncService(settings, session_factory_holder)
 
 
 async def _cron_mal_ingest() -> None:
@@ -87,7 +92,7 @@ async def _cron_mal_tag_sync() -> None:
 scheduler = SyncScheduler(
     settings,
     sync_service,
-    session_factory,
+    session_factory_holder,
     mal_ingest_coro=_cron_mal_ingest,
     mal_matcher_coro=_cron_mal_matcher,
     mal_tag_sync_coro=_cron_mal_tag_sync,
@@ -101,7 +106,7 @@ app_state = AppState(
     scheduler=scheduler,
     arr_client_class=ArrClient,
     stop_event=stop_event,
-    session_factory=session_factory,
+    session_factory=session_factory_holder,
     alert_notifier=alert_notifier,
     mal_ingest_service=mal_ingest_service,
     mal_matcher_service=mal_matcher_service,
@@ -130,6 +135,21 @@ async def request_context_middleware(request: Request, call_next: Any) -> Any:
     )
     return response
 
+
+@app.middleware("http")
+async def database_ready_gate(request: Request, call_next: Any) -> Any:
+    if app_state.session_factory.ready:
+        return await call_next(request)
+    path = request.url.path
+    if path.startswith(("/setup", "/assets/", "/api/setup")):
+        return await call_next(request)
+    if path in {"/healthz", "/metrics", "/docs", "/openapi.json", "/redoc", "/favicon.ico"}:
+        return await call_next(request)
+    if path == "/":
+        return await call_next(request)
+    return JSONResponse({"detail": "database not configured"}, status_code=503)
+
+
 app.include_router(build_router(app_state))
 
 
@@ -149,50 +169,16 @@ def _register_signal_handlers() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    validate_settings(settings)
-    if settings.enable_bootstrap_migrations:
-        run_migrations(settings)
-    with session_scope(session_factory) as session:
-        repo.seed_default_integrations(
-            session,
-            sonarr_base_url=settings.sonarr_base_url,
-            sonarr_api_key=settings.sonarr_api_key,
-            radarr_base_url=settings.radarr_base_url,
-            radarr_api_key=settings.radarr_api_key,
-        )
-        alert_config = read_alert_webhook_config(session, settings)
-        resolved_log_level = effective_log_level(session, settings)
-    apply_root_log_level(resolved_log_level)
-    log.info("logging level active", extra={"effective_log_level": resolved_log_level})
-    await alert_notifier.configure(
-        webhook_urls=alert_config["webhook_urls"],
-        timeout_seconds=alert_config["timeout_seconds"],
-        min_state=alert_config["min_state"],
-        notify_recovery=alert_config["notify_recovery"],
-    )
     _register_signal_handlers()
-    async def _detect_capabilities_background() -> None:
-        try:
-            await sync_service.detect_capabilities()
-        except Exception:
-            log.exception("capability detection background task failed")
-
-    async def _run_health_alerts_background() -> None:
-        while not stop_event.is_set():
-            try:
-                with session_scope(session_factory) as session:
-                    status_payload = compute_health_status(session, settings, metrics)
-                await alert_notifier.maybe_send_health_alert(status_payload)
-            except Exception:
-                log.exception("health alert background task failed")
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=60)
-            except TimeoutError:
-                continue
-
-    app_state.capability_task = asyncio.create_task(_detect_capabilities_background())
-    app_state.health_alert_task = asyncio.create_task(_run_health_alerts_background())
-    scheduler.start()
+    if not settings.database_url:
+        validate_settings(settings, require_database_url=False)
+        apply_root_log_level(settings.log_level)
+        log.warning("DATABASE_URL not configured; Web UI setup will connect to Postgres and run migrations")
+        return
+    validate_settings(settings)
+    app_state._engine = bind_database_engine(settings, app_state.session_factory)
+    await asyncio.to_thread(run_migrations_and_seed, app_state, settings)
+    await finalize_application_services(app_state)
     log.info("startup complete")
 
 
@@ -208,4 +194,5 @@ async def shutdown_event() -> None:
         app_state.health_alert_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.health_alert_task
+    dispose_bound_engine(app_state)
     log.info("shutdown complete")

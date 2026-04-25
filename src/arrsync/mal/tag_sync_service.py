@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from arrsync.config import Settings
 from arrsync.db import session_scope
@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 
 class MalTagSyncService:
-    def __init__(self, settings: Settings, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, settings: Settings, session_factory: Any) -> None:
         self.settings = settings
         self.session_factory = session_factory
 

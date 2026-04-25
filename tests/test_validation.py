@@ -24,6 +24,15 @@ def test_validate_settings_rejects_invalid_arr_base_url():
         validate_settings(settings)
 
 
+def test_validate_settings_allows_empty_database_when_not_required():
+    settings = Settings(
+        database_url="",
+        sonarr_base_url="http://sonarr:8989",
+        radarr_base_url="http://radarr:7878",
+    )
+    validate_settings(settings, require_database_url=False)
+
+
 def test_validate_settings_rejects_invalid_alert_webhook_url():
     settings = Settings(
         database_url="postgresql+psycopg://arrapp:arrapp@localhost:5432/arranalytics",

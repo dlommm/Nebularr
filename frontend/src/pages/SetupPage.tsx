@@ -13,6 +13,12 @@ import nebularrLogo from "@/assets/nebularr-logo.svg?url";
 import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 
 type WizardForm = {
+  pgHost: string;
+  pgPort: number;
+  pgDatabase: string;
+  pgUsername: string;
+  pgPassword: string;
+  arrappPassword: string;
   sonarrEnabled: boolean;
   sonarrSkip: boolean;
   sonarrBaseUrl: string;
@@ -35,6 +41,8 @@ export function SetupPage(): JSX.Element {
   const setupStatus = useQuery({
     queryKey: ["setup-status"],
     queryFn: api.setupStatus,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const [wizardBusy, setWizardBusy] = useState(false);
@@ -42,7 +50,14 @@ export function SetupPage(): JSX.Element {
   const [wizardRunInitialSync, setWizardRunInitialSync] = useState(false);
   const [wizardRunSonarr, setWizardRunSonarr] = useState(true);
   const [wizardRunRadarr, setWizardRunRadarr] = useState(true);
+  const [dbNotice, setDbNotice] = useState<string | null>(null);
   const [wizardForm, setWizardForm] = useState<WizardForm>({
+    pgHost: "postgres",
+    pgPort: 5432,
+    pgDatabase: "arranalytics",
+    pgUsername: "arradmin",
+    pgPassword: "",
+    arrappPassword: "",
     sonarrEnabled: true,
     sonarrSkip: false,
     sonarrBaseUrl: "",
@@ -57,8 +72,14 @@ export function SetupPage(): JSX.Element {
     timezone: "UTC",
   });
 
+  const engineReady = Boolean(setupStatus.data?.database?.engine_ready);
+
   useEffect(() => {
     if (!setupStatus.data) return;
+    const ready = Boolean(setupStatus.data.database?.engine_ready);
+    if (!ready && wizardStep > 0) {
+      setWizardStep(0);
+    }
     setWizardForm((prev) => ({
       ...prev,
       sonarrBaseUrl: setupStatus.data?.integrations?.sonarr?.base_url ?? prev.sonarrBaseUrl,
@@ -67,10 +88,10 @@ export function SetupPage(): JSX.Element {
       reconcileCron: setupStatus.data?.schedules.find((s) => s.mode === "reconcile")?.cron ?? prev.reconcileCron,
       timezone: setupStatus.data?.schedules.find((s) => s.mode === "incremental")?.timezone ?? prev.timezone,
     }));
-    if (setupStatus.data.completed) {
+    if (setupStatus.data.completed && setupStatus.data.database?.engine_ready) {
       navigate(PATHS.home, { replace: true });
     }
-  }, [setupStatus.data, navigate]);
+  }, [setupStatus.data, navigate, wizardStep]);
 
   const submitWizard = async (): Promise<void> => {
     setWizardBusy(true);
@@ -137,8 +158,33 @@ export function SetupPage(): JSX.Element {
     }
   };
 
+  const runInitializePostgres = async (): Promise<void> => {
+    setWizardBusy(true);
+    setDbNotice(null);
+    try {
+      const res = await api.setupInitializePostgres({
+        host: wizardForm.pgHost.trim(),
+        port: wizardForm.pgPort,
+        database: wizardForm.pgDatabase.trim(),
+        username: wizardForm.pgUsername.trim(),
+        password: wizardForm.pgPassword,
+        arrapp_password: wizardForm.arrappPassword.trim() || undefined,
+      });
+      setDbNotice(
+        res.restart_recommended
+          ? "Database initialized. You may restart the container later; the app is already using the new connection."
+          : "Database initialized. Migrations have been applied.",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["setup-status"] });
+    } catch (err) {
+      setError(err, "initialize postgres");
+    } finally {
+      setWizardBusy(false);
+    }
+  };
+
   const stepTitles = [
-    "Welcome",
+    "PostgreSQL",
     "Sonarr Setup",
     "Radarr Setup",
     "Webhook + Schedule",
@@ -147,33 +193,85 @@ export function SetupPage(): JSX.Element {
   ];
   const totalSteps = stepTitles.length;
   const isLastStep = wizardStep === totalSteps - 1;
+  const databaseStepBlocksNext = wizardStep === 0 && !engineReady;
+  const databaseBlocksNonDbSteps = !engineReady && wizardStep > 0;
 
   let stepBody: JSX.Element = <div />;
   if (wizardStep === 0) {
     stepBody = (
-      <div className="overflow-hidden rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-[#0e1630] to-violet-600/20 nebula-glow">
-        <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start sm:p-6">
-          <img
-            className="h-16 w-16 shrink-0 rounded-2xl border border-cyan-500/30 bg-[#0e1630] p-1 sm:h-20 sm:w-20"
-            src={nebularrIcon}
-            alt=""
-          />
-          <div className="min-w-0 flex-1">
+      <div className="space-y-4">
+        <div className="overflow-hidden rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-[#0e1630] to-violet-600/20 nebula-glow">
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:p-6">
             <img
-              className="mb-1 h-7 w-auto max-w-full object-contain opacity-90 sm:h-8"
-              src={nebularrLogo}
-              alt="Nebularr"
+              className="h-14 w-14 shrink-0 rounded-2xl border border-cyan-500/30 bg-[#0e1630] p-1"
+              src={nebularrIcon}
+              alt=""
             />
-            <h3 className="font-heading text-lg font-semibold tracking-tight">Welcome to Nebularr</h3>
-            <p className="mt-3 text-sm text-muted-foreground">
-              Nebularr syncs Sonarr and Radarr metadata into PostgreSQL so you can search, audit, and automate your media
-              decisions.
-            </p>
-            <p className="mt-3 text-sm text-muted-foreground">
-              This setup wizard will guide you through integrations, webhook security, schedules, and optional initial
-              full sync.
-            </p>
+            <div className="min-w-0 flex-1">
+              <img className="mb-1 h-6 w-auto max-w-full object-contain opacity-90 sm:h-7" src={nebularrLogo} alt="Nebularr" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                This step <strong>connects</strong> to a server that is already listening. For Docker Compose with the
+                bundled <span className="font-mono text-xs">postgres</span> service, start that container first (with
+                your <span className="font-mono text-xs">POSTGRES_*</span> values); the official image needs those at
+                first boot to initialize data, and Nebularr cannot securely start sibling containers from the browser.
+                Then enter the same database name, user, and password here. Nebularr waits for Postgres, runs Alembic
+                migrations, then continues with integrations below.
+              </p>
+            </div>
           </div>
+        </div>
+        <div className="inner-card space-y-3">
+          <div className="row mt8 flex-col gap-3 sm:flex-row">
+            <input
+              placeholder="Host (e.g. postgres)"
+              value={wizardForm.pgHost}
+              onChange={(event) => setWizardForm({ ...wizardForm, pgHost: event.target.value })}
+            />
+            <input
+              type="number"
+              placeholder="Port"
+              value={wizardForm.pgPort || ""}
+              onChange={(event) =>
+                setWizardForm({ ...wizardForm, pgPort: Number.parseInt(event.target.value, 10) || 5432 })
+              }
+            />
+          </div>
+          <div className="row mt8 flex-col gap-3 sm:flex-row">
+            <input
+              placeholder="Database name"
+              value={wizardForm.pgDatabase}
+              onChange={(event) => setWizardForm({ ...wizardForm, pgDatabase: event.target.value })}
+            />
+            <input
+              placeholder="Username (superuser)"
+              value={wizardForm.pgUsername}
+              onChange={(event) => setWizardForm({ ...wizardForm, pgUsername: event.target.value })}
+            />
+          </div>
+          <div className="row mt8">
+            <input
+              type="password"
+              placeholder="Password"
+              value={wizardForm.pgPassword}
+              onChange={(event) => setWizardForm({ ...wizardForm, pgPassword: event.target.value })}
+            />
+          </div>
+          <div className="row mt8">
+            <input
+              type="password"
+              placeholder="Optional: arrapp role password (recommended for least privilege)"
+              value={wizardForm.arrappPassword}
+              onChange={(event) => setWizardForm({ ...wizardForm, arrappPassword: event.target.value })}
+            />
+          </div>
+          {engineReady ? (
+            <p className="text-sm text-emerald-200/90">Database is connected and migrations are ready.</p>
+          ) : (
+            <Button type="button" disabled={wizardBusy} onClick={() => void runInitializePostgres()}>
+              {wizardBusy ? "Connecting…" : "Wait for Postgres & run migrations"}
+            </Button>
+          )}
+          {dbNotice ? <p className="text-sm text-cyan-200/90">{dbNotice}</p> : null}
         </div>
       </div>
     );
@@ -331,6 +429,7 @@ export function SetupPage(): JSX.Element {
         <strong>Review</strong>
         <div className="muted">Confirm details and complete setup.</div>
         <div className="stack mt8">
+          <div className="muted">PostgreSQL: {engineReady ? "connected" : "not connected"}</div>
           <div className="muted">Sonarr: {wizardForm.sonarrSkip ? "skipped" : wizardForm.sonarrBaseUrl || "configured later"}</div>
           <div className="muted">Radarr: {wizardForm.radarrSkip ? "skipped" : wizardForm.radarrBaseUrl || "configured later"}</div>
           <div className="muted">Webhook Secret: {wizardForm.webhookSecret ? "set" : "not set"}</div>
@@ -390,15 +489,19 @@ export function SetupPage(): JSX.Element {
               Back
             </Button>
             {!isLastStep ? (
-              <Button type="button" disabled={wizardBusy} onClick={() => setWizardStep((prev) => Math.min(totalSteps - 1, prev + 1))}>
+              <Button
+                type="button"
+                disabled={wizardBusy || databaseStepBlocksNext || databaseBlocksNonDbSteps}
+                onClick={() => setWizardStep((prev) => Math.min(totalSteps - 1, prev + 1))}
+              >
                 Next
               </Button>
             ) : (
               <>
-                <Button type="button" variant="secondary" disabled={wizardBusy} onClick={() => void skipWizard()}>
+                <Button type="button" variant="secondary" disabled={wizardBusy || !engineReady} onClick={() => void skipWizard()}>
                   Skip for now
                 </Button>
-                <Button type="button" disabled={wizardBusy} onClick={() => void submitWizard()}>
+                <Button type="button" disabled={wizardBusy || !engineReady} onClick={() => void submitWizard()}>
                   {wizardBusy ? "Saving…" : "Complete setup"}
                 </Button>
               </>

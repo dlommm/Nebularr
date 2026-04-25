@@ -1,23 +1,44 @@
 from functools import lru_cache
 import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from arrsync.runtime_database_url import apply_runtime_database_url_to_environ
+
+
+def _allow_settings_without_dotenv_file() -> bool:
+    """Docker / CI / tests inject configuration via the process environment, not a repo .env file."""
+    if Path("/.dockerenv").is_file():
+        return True
+    if os.getenv("NEBULARR_ENV_FROM_PROCESS_ONLY", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    if os.getenv("CI", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    if os.getenv("GITHUB_ACTIONS"):
+        return True
+    if "PYTEST_VERSION" in os.environ:
+        return True
+    if os.getenv("NEBULARR_ALLOW_NO_DOTENV", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return False
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # `.env` is loaded only from get_settings() when that file exists (never shipped inside the app image).
+    model_config = SettingsConfigDict(extra="ignore")
 
     app_host: str = "0.0.0.0"
     app_port: int = 8080
     app_timezone: str = "UTC"
-    app_version: str = "1.3.0"
+    app_version: str = "1.6.0"
     app_git_sha: str = "release"
 
     database_url: str = Field(
-        "postgresql+psycopg://arrapp:arrapp@localhost:5432/arranalytics",
-        description="SQLAlchemy DB URL",
+        "",
+        description="SQLAlchemy DB URL (empty until first-run setup or env / persisted file)",
     )
     enable_bootstrap_migrations: bool = True
     sqlalchemy_pool_size: int = 10
@@ -68,9 +89,18 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings(
-        database_url=os.getenv(
-            "DATABASE_URL",
-            "postgresql+psycopg://arrapp:arrapp@localhost:5432/arranalytics",
+    apply_runtime_database_url_to_environ()
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    dotenv_path = Path(".env")
+    if dotenv_path.is_file():
+        return Settings(  # type: ignore[call-arg]
+            database_url=db_url,
+            _env_file=".env",
+            _env_file_encoding="utf-8",
         )
+    if _allow_settings_without_dotenv_file():
+        return Settings(database_url=db_url, _env_file=None)  # type: ignore[call-arg]
+    raise RuntimeError(
+        "Missing .env file in the current working directory. Copy .env.example to .env and configure "
+        "values for your environment. See README Quickstart and docs/SECRETS.md."
     )

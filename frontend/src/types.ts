@@ -238,6 +238,11 @@ export type SetupStatus = {
   has_webhook_secret: boolean;
   integrations: Record<string, { configured: boolean; base_url: string; api_key_set: boolean }>;
   schedules: { mode: string; cron: string; timezone: string; enabled: boolean }[];
+  database: {
+    engine_ready?: boolean;
+    runtime_url_persisted: boolean;
+    arrapp_role_exists: boolean;
+  };
 };
 
 export type AlertWebhookConfig = {

@@ -1,13 +1,41 @@
 .git
+.github
+.cursor
 .venv
 __pycache__
 .pytest_cache
 .mypy_cache
 .ruff_cache
-dist
-!src/arrsync/web/dist
-build
+htmlcov
+.coverage
+*.egg-info
 *.pyc
 *.pyo
 *.pyd
 .env
+.env.*
+!.env.example
+
+dist
+build
+!src/arrsync/web/dist
+
+# Frontend dev tree must never enter the app image (CVE noise + bloat)
+frontend/node_modules
+frontend/dist
+node_modules
+
+# Docs and deploy templates are not runtime inputs
+docs
+deploy
+
+# Tests and local tooling
+tests
+scripts
+*.md
+!README.md
+
+# IDE / OS
+.DS_Store
+.idea
+.vscode

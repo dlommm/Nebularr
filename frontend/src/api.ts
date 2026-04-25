@@ -51,6 +51,21 @@ export const api = {
   status: () => requestJson<StatusResponse>("/api/status"),
   setupStatus: () => requestJson<SetupStatus>("/api/setup/status"),
   setupSkip: () => requestJson<{ status: string; completed: boolean }>("/api/setup/skip", "POST"),
+  setupInitializePostgres: (payload: {
+    host: string;
+    port: number;
+    database: string;
+    username: string;
+    password: string;
+    arrapp_password?: string;
+  }) => requestJson<{ status: string; restart_recommended: boolean }>("/api/setup/initialize-postgres", "POST", payload),
+  setupBootstrapDatabase: (payload: {
+    admin_database_url: string;
+    database_name: string;
+    arrapp_password: string;
+  }) => requestJson<{ status: string; restart_required: boolean }>("/api/setup/bootstrap-database", "POST", payload),
+  setupPersistRuntimeDatabaseUrl: () =>
+    requestJson<{ status: string; restart_required: boolean }>("/api/setup/persist-runtime-database-url", "POST"),
   setupWizard: (payload: unknown) => requestJson<{ status: string; completed: boolean }>("/api/setup/wizard", "POST", payload),
   setupInitialSync: (sources: string[]) =>
     requestJson<{ status: string; running: boolean; sources: string[] }>("/api/setup/initial-sync", "POST", { sources }),

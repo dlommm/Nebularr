@@ -3,30 +3,15 @@
 # --- Host paths (defaults below) ---
 # Default base: /mnt/user/appdata/nebularr
 #
-# 1) Create folders yourself before `docker compose up` (Unraid: Shares / terminal / mkdir).
-#    Docker will create missing mount points as root, which can cause permission surprises;
-#    pre-creating the tree under appdata is recommended.
+# 1) Create folders before `docker compose up`:
+#    mkdir -p /mnt/user/appdata/nebularr/{postgres,runtime,webserver}
 #
-#    mkdir -p /mnt/user/appdata/nebularr/{postgres,init,webserver,pgadmin}
+# 2) First boot: set DATABASE_URL to the Postgres superuser (same user/password as POSTGRES_*).
+#    After the Web UI "Database" step (or bootstrap API), Nebularr saves the arrapp URL under
+#    .../runtime and overrides DATABASE_URL on the next container start. You may then remove
+#    DATABASE_URL from this file if you prefer.
 #
-# 2) Init SQL: copy everything from the Nebularr repo path `docker/postgres/init/` into
-#    .../init/ (at minimum `00_roles.sql`) before the first Postgres start.
-#
-# 3) If your base path is NOT /mnt/user/appdata/nebularr, update EVERY host path in this
-#    file the same way (postgres data, init, webserver). A quick check: search this file
-#    for that string and ensure no old paths remain.
-#
-# 4) Optional: place this compose file at /mnt/user/appdata/nebularr/docker-compose.yml,
-#    cd to that directory, then:  docker compose up -d
-#
-# Postgres init scripts run only when the postgres data directory is empty. To re-init,
-# stop containers and remove the data under .../postgres (destructive).
-#
-# Host layout (left side of each volume mapping):
-#   .../postgres   — Postgres data (required)
-#   .../init       — entrypoint init scripts, read-only (required on first DB init)
-#   .../webserver  — optional reserved host folder → /var/lib/nebularr in the app container
-#                    (UI is in the image; app state is in Postgres; this is for your files)
+# 3) If your base path is NOT /mnt/user/appdata/nebularr, update every host path below the same way.
 
 services:
   postgres:
@@ -38,10 +23,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
-    # Host paths: see file header — create dirs and keep paths in sync if you change the base.
     volumes:
       - /mnt/user/appdata/nebularr/postgres:/var/lib/postgresql/data
-      - /mnt/user/appdata/nebularr/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arradmin} -d ${POSTGRES_DB:-arranalytics}"]
       interval: 10s
@@ -50,76 +33,22 @@ services:
     networks:
       - nebularr
 
-  # Requires this compose file to live in a tree that includes ./docker/pgadmin/ (same layout as the Git repo).
-  pgadmin:
-    build:
-      context: .
-      dockerfile: docker/pgadmin/Dockerfile
-    container_name: nebularr-pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
-      PGADMIN_DISABLE_POSTFIX: "1"
-      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-arranalytics}
-      POSTGRES_USER: ${POSTGRES_USER:-arradmin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
-      ARRAPP_USER: arrapp
-      ARRAPP_PASSWORD: ${ARRAPP_PASSWORD:-arrapp}
-    ports:
-      - "${PGADMIN_PORT:-5050}:80"
-    volumes:
-      - /mnt/user/appdata/nebularr/pgadmin:/var/lib/pgadmin
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - nebularr
-
   app:
     image: ${NEBULARR_IMAGE:-dendlomm/nebularr:latest}
     container_name: nebularr
     environment:
+      NEBULARR_ENV_FROM_PROCESS_ONLY: "true"
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
       APP_TIMEZONE: ${APP_TIMEZONE:-UTC}
       SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-UTC}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://arrapp:arrapp@postgres:5432/arranalytics}
+      DATABASE_URL: ${DATABASE_URL:-}
       ENABLE_BOOTSTRAP_MIGRATIONS: ${ENABLE_BOOTSTRAP_MIGRATIONS:-true}
-      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-15}
-      HTTP_RETRY_ATTEMPTS: ${HTTP_RETRY_ATTEMPTS:-3}
-      HTTP_MAX_PARALLEL_REQUESTS: ${HTTP_MAX_PARALLEL_REQUESTS:-4}
-      SQLALCHEMY_POOL_SIZE: ${SQLALCHEMY_POOL_SIZE:-10}
-      SQLALCHEMY_MAX_OVERFLOW: ${SQLALCHEMY_MAX_OVERFLOW:-20}
-      SQLALCHEMY_POOL_RECYCLE: ${SQLALCHEMY_POOL_RECYCLE:-1800}
-      SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-120000}
-      WEBHOOK_MAX_BODY_BYTES: ${WEBHOOK_MAX_BODY_BYTES:-262144}
-      ALERT_SYNC_LAG_WARNING_SECONDS: ${ALERT_SYNC_LAG_WARNING_SECONDS:-3600}
-      ALERT_SYNC_LAG_CRITICAL_SECONDS: ${ALERT_SYNC_LAG_CRITICAL_SECONDS:-7200}
-      ALERT_WEBHOOK_QUEUE_WARNING: ${ALERT_WEBHOOK_QUEUE_WARNING:-100}
-      ALERT_WEBHOOK_QUEUE_CRITICAL: ${ALERT_WEBHOOK_QUEUE_CRITICAL:-500}
-      ALERT_WEBHOOK_URLS: ${ALERT_WEBHOOK_URLS:-}
-      ALERT_WEBHOOK_TIMEOUT_SECONDS: ${ALERT_WEBHOOK_TIMEOUT_SECONDS:-10}
-      ALERT_WEBHOOK_MIN_STATE: ${ALERT_WEBHOOK_MIN_STATE:-warning}
-      ALERT_WEBHOOK_NOTIFY_RECOVERY: ${ALERT_WEBHOOK_NOTIFY_RECOVERY:-true}
-      MAL_CLIENT_ID: ${MAL_CLIENT_ID:-}
-      MAL_INGEST_ENABLED: ${MAL_INGEST_ENABLED:-false}
-      MAL_MATCHER_ENABLED: ${MAL_MATCHER_ENABLED:-false}
-      MAL_TAGGING_ENABLED: ${MAL_TAGGING_ENABLED:-false}
-      MAL_JIKAN_ENABLED: ${MAL_JIKAN_ENABLED:-true}
-      MAL_INGEST_CRON: ${MAL_INGEST_CRON:-0 3 * * *}
-      MAL_MATCHER_CRON: ${MAL_MATCHER_CRON:-30 3 * * *}
-      MAL_TAG_SYNC_CRON: ${MAL_TAG_SYNC_CRON:-0 4 * * *}
-      MAL_MAX_IDS_PER_RUN: ${MAL_MAX_IDS_PER_RUN:-200}
-      MAL_ALLOW_TITLE_YEAR_MATCH: ${MAL_ALLOW_TITLE_YEAR_MATCH:-false}
-      ARR_DUB_TAG_LABEL: ${ARR_DUB_TAG_LABEL:-English-Dubbed-Anime}
+      NEBULARR_RUNTIME_DIR: /app/data
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
-      # Remove this line if you do not want the optional webserver host folder.
+      - /mnt/user/appdata/nebularr/runtime:/app/data
       - /mnt/user/appdata/nebularr/webserver:/var/lib/nebularr
     depends_on:
       postgres:

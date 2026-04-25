@@ -332,12 +332,23 @@ def upgrade() -> None:
         """
     )
 
-    op.execute("grant usage on schema app to arrapp")
-    op.execute("grant usage on schema warehouse to arrapp")
-    op.execute("grant all privileges on all tables in schema app to arrapp")
-    op.execute("grant all privileges on all tables in schema warehouse to arrapp")
-    op.execute("grant all privileges on all sequences in schema app to arrapp")
-    op.execute("grant all privileges on all sequences in schema warehouse to arrapp")
+    # Init scripts used to create arrapp before the app connected; grants are optional until bootstrap.
+    op.execute(
+        """
+        do $arrapp_grants$
+        begin
+          if exists (select 1 from pg_roles where rolname = 'arrapp') then
+            execute 'grant usage on schema app to arrapp';
+            execute 'grant usage on schema warehouse to arrapp';
+            execute 'grant all privileges on all tables in schema app to arrapp';
+            execute 'grant all privileges on all tables in schema warehouse to arrapp';
+            execute 'grant all privileges on all sequences in schema app to arrapp';
+            execute 'grant all privileges on all sequences in schema warehouse to arrapp';
+          end if;
+        end
+        $arrapp_grants$;
+        """
+    )
 
 
 def downgrade() -> None:

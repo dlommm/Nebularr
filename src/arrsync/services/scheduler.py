@@ -8,7 +8,6 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import text
-from sqlalchemy.orm import Session, sessionmaker
 
 from arrsync.config import Settings
 from arrsync.db import session_scope
@@ -23,7 +22,7 @@ class SyncScheduler:
         self,
         settings: Settings,
         sync_service: SyncService,
-        session_factory: sessionmaker[Session],
+        session_factory: Any,
         *,
         mal_ingest_coro: Callable[[], Awaitable[Any]] | None = None,
         mal_matcher_coro: Callable[[], Awaitable[Any]] | None = None,

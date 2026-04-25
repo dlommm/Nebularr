@@ -9,7 +9,7 @@ Synthesis of in-repo database documentation, with **canonical** detail in the li
 
 ## First boot: roles and Alembic
 
-1. Postgres starts; init scripts under [`docker/postgres/init`](https://github.com/OWNER/REPO/tree/main/docker/postgres) (e.g. `00_roles.sql`) create the DB role used in `DATABASE_URL`.  
+1. Postgres starts (official image variables only). The Nebularr Web UI setup **Database** step (or bootstrap API) creates the `arrapp` role and persists its connection string encrypted under the app runtime directory; see [`docker/postgres/README.md`](https://github.com/OWNER/REPO/blob/main/docker/postgres/README.md).  
 2. The application runs **Alembic** to **create/update** `app` and `warehouse` objects.  
 
 **Full reference:** [DB_BOOTSTRAP.md](https://github.com/OWNER/REPO/blob/main/docs/DB_BOOTSTRAP.md) (sequence diagram, verification SQL).

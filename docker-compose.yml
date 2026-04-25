@@ -1,15 +1,18 @@
+# Default stack: optional bundled Postgres (profile `nebularr-bundled-postgres`) + app (non-root,
+# read-only root, caps dropped). Enable the profile in `.env` (`COMPOSE_PROFILES`) or use
+# `./scripts/one-click-all-in-one.sh`, which respects `NEBULARR_BUNDLED_POSTGRES`. Omit the profile
+# to run app-only against an external Postgres (wizard host must reach that server).
 services:
   postgres:
+    profiles:
+      - nebularr-bundled-postgres
     image: postgres:16
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-arranalytics}
       POSTGRES_USER: ${POSTGRES_USER:-arradmin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arradmin} -d ${POSTGRES_DB:-arranalytics}"]
       interval: 10s
@@ -20,77 +23,38 @@ services:
     build:
       context: .
       args:
-        APP_VERSION: ${APP_VERSION:-1.3.0}
+        APP_VERSION: ${APP_VERSION:-1.6.0}
         GIT_SHA: ${APP_GIT_SHA:-release}
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
+      # App reads only process env inside the container (.env is not copied into the image; see .dockerignore).
+      NEBULARR_ENV_FROM_PROCESS_ONLY: "true"
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
       APP_TIMEZONE: ${APP_TIMEZONE:-UTC}
       SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-UTC}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://arrapp:arrapp@postgres:5432/arranalytics}
+      # Optional: set DATABASE_URL to skip the Web UI database step (e.g. CI). Otherwise the
+      # wizard collects Postgres settings and persists the URL under /app/data.
+      DATABASE_URL: ${DATABASE_URL:-}
       ENABLE_BOOTSTRAP_MIGRATIONS: ${ENABLE_BOOTSTRAP_MIGRATIONS:-true}
-      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-15}
-      HTTP_RETRY_ATTEMPTS: ${HTTP_RETRY_ATTEMPTS:-3}
-      HTTP_MAX_PARALLEL_REQUESTS: ${HTTP_MAX_PARALLEL_REQUESTS:-4}
-      SQLALCHEMY_POOL_SIZE: ${SQLALCHEMY_POOL_SIZE:-10}
-      SQLALCHEMY_MAX_OVERFLOW: ${SQLALCHEMY_MAX_OVERFLOW:-20}
-      SQLALCHEMY_POOL_RECYCLE: ${SQLALCHEMY_POOL_RECYCLE:-1800}
-      SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-120000}
-      WEBHOOK_MAX_BODY_BYTES: ${WEBHOOK_MAX_BODY_BYTES:-262144}
-      ALERT_SYNC_LAG_WARNING_SECONDS: ${ALERT_SYNC_LAG_WARNING_SECONDS:-3600}
-      ALERT_SYNC_LAG_CRITICAL_SECONDS: ${ALERT_SYNC_LAG_CRITICAL_SECONDS:-7200}
-      ALERT_WEBHOOK_QUEUE_WARNING: ${ALERT_WEBHOOK_QUEUE_WARNING:-100}
-      ALERT_WEBHOOK_QUEUE_CRITICAL: ${ALERT_WEBHOOK_QUEUE_CRITICAL:-500}
-      ALERT_WEBHOOK_URLS: ${ALERT_WEBHOOK_URLS:-}
-      ALERT_WEBHOOK_TIMEOUT_SECONDS: ${ALERT_WEBHOOK_TIMEOUT_SECONDS:-10}
-      ALERT_WEBHOOK_MIN_STATE: ${ALERT_WEBHOOK_MIN_STATE:-warning}
-      ALERT_WEBHOOK_NOTIFY_RECOVERY: ${ALERT_WEBHOOK_NOTIFY_RECOVERY:-true}
-      MAL_CLIENT_ID: ${MAL_CLIENT_ID:-}
-      MAL_DUB_INFO_URL: ${MAL_DUB_INFO_URL:-https://raw.githubusercontent.com/MAL-Dubs/MAL-Dubs/main/data/dubInfo.json}
-      MAL_INGEST_ENABLED: ${MAL_INGEST_ENABLED:-false}
-      MAL_MATCHER_ENABLED: ${MAL_MATCHER_ENABLED:-false}
-      MAL_TAGGING_ENABLED: ${MAL_TAGGING_ENABLED:-false}
-      MAL_JIKAN_ENABLED: ${MAL_JIKAN_ENABLED:-true}
-      MAL_INGEST_CRON: ${MAL_INGEST_CRON:-0 3 * * *}
-      MAL_MATCHER_CRON: ${MAL_MATCHER_CRON:-30 3 * * *}
-      MAL_TAG_SYNC_CRON: ${MAL_TAG_SYNC_CRON:-0 4 * * *}
-      MAL_MIN_REQUEST_INTERVAL_SECONDS: ${MAL_MIN_REQUEST_INTERVAL_SECONDS:-0.6}
-      MAL_JIKAN_MIN_REQUEST_INTERVAL_SECONDS: ${MAL_JIKAN_MIN_REQUEST_INTERVAL_SECONDS:-1.0}
-      MAL_MAX_IDS_PER_RUN: ${MAL_MAX_IDS_PER_RUN:-200}
-      MAL_ALLOW_TITLE_YEAR_MATCH: ${MAL_ALLOW_TITLE_YEAR_MATCH:-false}
-      ARR_DUB_TAG_LABEL: ${ARR_DUB_TAG_LABEL:-English-Dubbed-Anime}
+      NEBULARR_RUNTIME_DIR: /app/data
     ports:
       - "${APP_PORT:-8080}:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-
-  pgadmin:
-    build:
-      context: .
-      dockerfile: docker/pgadmin/Dockerfile
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
-      PGADMIN_DISABLE_POSTFIX: "1"
-      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-arranalytics}
-      POSTGRES_USER: ${POSTGRES_USER:-arradmin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
-      ARRAPP_USER: arrapp
-      ARRAPP_PASSWORD: ${ARRAPP_PASSWORD:-arrapp}
-    ports:
-      - "${PGADMIN_PORT:-5050}:80"
     volumes:
-      - pgadmin_data:/var/lib/pgadmin
+      - nebularr_runtime:/app/data
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  pgadmin_data:
+  nebularr_runtime:

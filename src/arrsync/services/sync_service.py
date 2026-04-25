@@ -6,8 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy.orm import Session, sessionmaker
-
 from arrsync.db import session_scope
 from arrsync.models import CapabilitySet, SyncResult
 from arrsync.services.arr_client import ArrClient
@@ -19,7 +17,7 @@ log = logging.getLogger(__name__)
 class SyncService:
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        session_factory: Any,
         sonarr: ArrClient,
         radarr: ArrClient,
         *,

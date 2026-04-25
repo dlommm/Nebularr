@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import bindparam, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from arrsync.mal.titles import (
@@ -37,7 +38,7 @@ def get_mal_sync_ui_snapshot(session: Session) -> dict[str, Any]:
             """
         )
     ).mappings():
-        running.append(_jsonify_row(r))
+        running.append(_jsonify_row(dict(r)))
     last_finished: dict[str, dict[str, Any]] = {}
     for r in session.execute(
         text(
@@ -50,7 +51,7 @@ def get_mal_sync_ui_snapshot(session: Session) -> dict[str, Any]:
             """
         )
     ).mappings():
-        last_finished[str(r["job_type"])] = _jsonify_row(r)
+        last_finished[str(r["job_type"])] = _jsonify_row(dict(r))
     pending_fetch_count = count_anime_needing_mal_fetch(session)
     fetched_success_count = count_anime_fetched_success(session)
     dubbed_total = int(
@@ -203,7 +204,8 @@ def upsert_manual_warehouse_links(session: Session) -> int:
             """
         )
     )
-    return result.rowcount or 0
+    cr = cast(CursorResult[Any], result)
+    return int(cr.rowcount or 0)
 
 
 def insert_tvdb_series_links(session: Session) -> int:
@@ -242,7 +244,8 @@ def insert_tvdb_series_links(session: Session) -> int:
             """
         )
     )
-    return result.rowcount or 0
+    cr = cast(CursorResult[Any], result)
+    return int(cr.rowcount or 0)
 
 
 def insert_tmdb_radarr_links(session: Session) -> int:
@@ -281,7 +284,8 @@ def insert_tmdb_radarr_links(session: Session) -> int:
             """
         )
     )
-    return result.rowcount or 0
+    cr = cast(CursorResult[Any], result)
+    return int(cr.rowcount or 0)
 
 
 def insert_imdb_radarr_links(session: Session) -> int:
@@ -320,7 +324,8 @@ def insert_imdb_radarr_links(session: Session) -> int:
             """
         )
     )
-    return result.rowcount or 0
+    cr = cast(CursorResult[Any], result)
+    return int(cr.rowcount or 0)
 
 
 def backfill_external_ids_from_links(session: Session) -> dict[str, int]:
@@ -399,10 +404,13 @@ def backfill_external_ids_from_links(session: Session) -> dict[str, int]:
             """
         )
     )
+    tvdb_cr = cast(CursorResult[Any], tvdb_result)
+    tmdb_cr = cast(CursorResult[Any], tmdb_result)
+    imdb_cr = cast(CursorResult[Any], imdb_result)
     return {
-        "tvdb": tvdb_result.rowcount or 0,
-        "tmdb": tmdb_result.rowcount or 0,
-        "imdb": imdb_result.rowcount or 0,
+        "tvdb": int(tvdb_cr.rowcount or 0),
+        "tmdb": int(tmdb_cr.rowcount or 0),
+        "imdb": int(imdb_cr.rowcount or 0),
     }
 
 
@@ -463,7 +471,8 @@ def clear_dub_flag_not_in_list(session: Session, active_ids: list[int]) -> int:
                 """
             )
         )
-        return result.rowcount or 0
+        cr0 = cast(CursorResult[Any], result)
+        return int(cr0.rowcount or 0)
     result = session.execute(
         text(
             """
@@ -475,7 +484,8 @@ def clear_dub_flag_not_in_list(session: Session, active_ids: list[int]) -> int:
         ).bindparams(bindparam("ids", expanding=True)),
         {"ids": active_ids},
     )
-    return result.rowcount or 0
+    cr = cast(CursorResult[Any], result)
+    return int(cr.rowcount or 0)
 
 
 def insert_dub_list_fetch(

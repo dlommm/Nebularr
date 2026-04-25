@@ -111,8 +111,8 @@ class MalMatcherService:
                 if not norm_keys:
                     continue
                 my = _mal_year(ar["start_date"])
-                sid: int | None = None
-                matched_norm: str | None = None
+                series_match_id: int | None = None
+                sonarr_matched_norm: str | None = None
                 for mt in norm_keys:
                     candidates = by_norm.get(mt, [])
                     if not candidates:
@@ -130,10 +130,10 @@ class MalMatcherService:
                             len(filtered),
                         )
                         continue
-                    sid = int(filtered[0][0])
-                    matched_norm = mt
+                    series_match_id = int(filtered[0][0])
+                    sonarr_matched_norm = mt
                     break
-                if sid is None or matched_norm is None:
+                if series_match_id is None or sonarr_matched_norm is None:
                     continue
                 session.execute(
                     text(
@@ -159,8 +159,8 @@ class MalMatcherService:
                     {
                         "mal_id": mal_id,
                         "instance_name": instance_name,
-                        "sid": sid,
-                        "detail": json.dumps({"normalized_title": matched_norm}),
+                        "sid": series_match_id,
+                        "detail": json.dumps({"normalized_title": sonarr_matched_norm}),
                     },
                 )
                 inserted += 1
@@ -200,7 +200,7 @@ class MalMatcherService:
                     continue
                 my = _mal_year(ar["start_date"])
                 mid_match: int | None = None
-                matched_norm: str | None = None
+                radarr_matched_norm: str | None = None
                 for mt in norm_keys:
                     candidates = by_norm_m.get(mt, [])
                     if not candidates:
@@ -219,9 +219,9 @@ class MalMatcherService:
                         )
                         continue
                     mid_match = int(filtered[0][0])
-                    matched_norm = mt
+                    radarr_matched_norm = mt
                     break
-                if mid_match is None or matched_norm is None:
+                if mid_match is None or radarr_matched_norm is None:
                     continue
                 session.execute(
                     text(
@@ -248,7 +248,7 @@ class MalMatcherService:
                         "mal_id": mal_id,
                         "instance_name": instance_name,
                         "mid": mid_match,
-                        "detail": json.dumps({"normalized_title": matched_norm, "arr": "radarr"}),
+                        "detail": json.dumps({"normalized_title": radarr_matched_norm, "arr": "radarr"}),
                     },
                 )
                 inserted += 1

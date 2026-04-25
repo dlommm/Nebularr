@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import FastAPI
@@ -74,6 +75,7 @@ class FakeAppState:
         self.arr_client_class = type("ArrClient", (), {"validate_webhook_secret": staticmethod(lambda *_: True)})
         self.alert_notifier = FakeAlertNotifier()
         self._session = FakeSession()
+        self.session_factory = SimpleNamespace(ready=True, unbind=lambda: None)
 
     @contextmanager
     def session_scope(self):  # type: ignore[no-untyped-def]
