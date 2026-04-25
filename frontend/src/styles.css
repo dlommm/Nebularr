@@ -113,7 +113,8 @@ body {
   gap: 8px;
 }
 
-.grid {
+/* Legacy 12-column shell — do not use the global name `grid` (conflicts with Tailwind `grid` utility). */
+.grid-12 {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;

@@ -3,6 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { LogViewerRow } from "../components/ui";
+import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 export function LogsPage(): JSX.Element {
   usePageTitle("Logs");
@@ -21,31 +25,36 @@ export function LogsPage(): JSX.Element {
   }, [logsPaused, uiLogs.data?.items]);
 
   return (
-    <div className="card">
-      <h3>Application logs</h3>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Recent log lines captured in memory on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"} lines). Shows
-        loggers under the application namespace (e.g. arrsync.*), not uvicorn access logs. For full history use container or
-        process logs. Set level under Integrations → Application logging.
-      </p>
-      <div className="row mt8">
-        <label className="pill">
-          <input type="checkbox" checked={logsPaused} onChange={(event) => setLogsPaused(event.target.checked)} />
-          pause live updates
-        </label>
-        <button type="button" className="secondary" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ui-logs"] })}>
-          Refresh now
-        </button>
-        <span className="muted">
-          showing {uiLogs.data?.items?.length ?? 0} line{(uiLogs.data?.items?.length ?? 0) === 1 ? "" : "s"}
-        </span>
-      </div>
-      <div className="log-viewport mt8">
-        {(uiLogs.data?.items ?? []).map((entry, idx) => (
-          <LogViewerRow key={`${String(entry.ts)}-${idx}`} entry={entry} />
-        ))}
-        <div ref={logsEndRef} />
-      </div>
-    </div>
+    <GlassCard>
+      <CardHeader>
+        <CardTitle className="text-lg">Application logs</CardTitle>
+        <CardDescription>
+          In-memory lines on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"}). arrsync.* loggers — not
+          uvicorn access. tune level under Integrations → application logging.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Checkbox id="logs-pause" checked={logsPaused} onCheckedChange={(c) => setLogsPaused(c === true)} />
+            <Label htmlFor="logs-pause" className="text-sm text-muted-foreground">
+              Pause live updates
+            </Label>
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ui-logs"] })}>
+            Refresh
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {uiLogs.data?.items?.length ?? 0} line{(uiLogs.data?.items?.length ?? 0) === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="log-viewport max-h-[min(70vh,720px)] overflow-y-auto rounded-xl border border-white/10 bg-[#0a0e18] p-2 font-mono text-xs">
+          {(uiLogs.data?.items ?? []).map((entry, idx) => (
+            <LogViewerRow key={`${String(entry.ts)}-${idx}`} entry={entry} />
+          ))}
+          <div ref={logsEndRef} />
+        </div>
+      </CardContent>
+    </GlassCard>
   );
 }

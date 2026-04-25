@@ -5,6 +5,10 @@ import { api } from "../api";
 import { useActionError } from "../hooks/useActionError";
 import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
 
 type WizardForm = {
   sonarrEnabled: boolean;
@@ -320,59 +324,70 @@ export function SetupPage(): JSX.Element {
 
   if (setupStatus.isLoading) {
     return (
-      <main className="setup-page">
-        <p className="muted">Loading setup…</p>
+      <main className="flex min-h-svh items-center justify-center bg-background px-4">
+        <p className="text-sm text-muted-foreground">Loading setup…</p>
       </main>
     );
   }
 
   return (
-    <main className="setup-page">
-      <div className="card wizard-card standalone-wizard">
-        <h3>First Setup Wizard</h3>
-        <div className="wizard-progress">
-          <span className="pill">
-            Step {wizardStep + 1} of {totalSteps}
-          </span>
-          <span className="muted">{stepTitles[wizardStep]}</span>
-        </div>
-        <div className="wizard-steps">
-          {stepTitles.map((title, index) => (
-            <span key={title} className={`wizard-step-pill ${index === wizardStep ? "active" : index < wizardStep ? "done" : ""}`}>
-              {index + 1}. {title}
-            </span>
-          ))}
-        </div>
-        {stepBody}
-        <div className="row">
-          <button
-            type="button"
-            className="secondary"
-            disabled={wizardBusy || wizardStep === 0}
-            onClick={() => setWizardStep((prev) => Math.max(0, prev - 1))}
-          >
-            Back
-          </button>
-          {!isLastStep ? (
-            <button
+    <main className="min-h-svh bg-background px-4 py-10">
+      <GlassCard className="mx-auto w-full max-w-3xl border-cyan-500/20 nebula-glow">
+        <CardHeader>
+          <CardTitle className="text-xl">First-time setup</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Step {wizardStep + 1} of {totalSteps} — {stepTitles[wizardStep]}
+          </p>
+          <Progress
+            value={((wizardStep + 1) / totalSteps) * 100}
+            className="mt-3 h-2 w-full max-w-md flex-col gap-0 [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-white/10 [&_[data-slot=progress-indicator]]:bg-gradient-to-r [&_[data-slot=progress-indicator]]:from-cyan-400 [&_[data-slot=progress-indicator]]:to-violet-500"
+          />
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex flex-wrap gap-2">
+            {stepTitles.map((title, index) => (
+              <span
+                key={title}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                  index === wizardStep
+                    ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-100"
+                    : index < wizardStep
+                      ? "border-emerald-500/40 text-emerald-200/80"
+                      : "border-white/10 text-muted-foreground",
+                )}
+              >
+                {index + 1}. {title}
+              </span>
+            ))}
+          </div>
+          {stepBody}
+          <div className="flex flex-wrap gap-2 border-t border-white/10 pt-4">
+            <Button
               type="button"
-              disabled={wizardBusy}
-              onClick={() => setWizardStep((prev) => Math.min(totalSteps - 1, prev + 1))}
+              variant="secondary"
+              disabled={wizardBusy || wizardStep === 0}
+              onClick={() => setWizardStep((prev) => Math.max(0, prev - 1))}
             >
-              Next
-            </button>
-          ) : (
-            <>
-              <button type="button" className="secondary" disabled={wizardBusy} onClick={() => void skipWizard()}>
-                Skip for now
-              </button>
-              <button type="button" disabled={wizardBusy} onClick={() => void submitWizard()}>
-                {wizardBusy ? "Saving..." : "Complete setup"}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+              Back
+            </Button>
+            {!isLastStep ? (
+              <Button type="button" disabled={wizardBusy} onClick={() => setWizardStep((prev) => Math.min(totalSteps - 1, prev + 1))}>
+                Next
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="secondary" disabled={wizardBusy} onClick={() => void skipWizard()}>
+                  Skip for now
+                </Button>
+                <Button type="button" disabled={wizardBusy} onClick={() => void submitWizard()}>
+                  {wizardBusy ? "Saving…" : "Complete setup"}
+                </Button>
+              </>
+            )}
+          </div>
+        </CardContent>
+      </GlassCard>
     </main>
   );
 }

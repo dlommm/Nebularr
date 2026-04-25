@@ -1,7 +1,10 @@
 import { formatLogExtras } from "../lib/logExtras";
+import { StatusBadge } from "./nebula/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { GlassCard, CardContent, CardHeader, CardTitle } from "./nebula/GlassCard";
 
 export function StatusPill({ status }: { status: string }): JSX.Element {
-  return <span className={`status-pill ${status.toLowerCase()}`}>{status}</span>;
+  return <StatusBadge status={status} className="status-pill-legacy" />;
 }
 
 export function Pagination({
@@ -18,16 +21,16 @@ export function Pagination({
   const start = Math.min(offset + 1, total);
   const end = Math.min(offset + limit, total);
   return (
-    <div className="pager">
+    <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
       <span>
         {total === 0 ? "0 results" : `${start}-${end} of ${total}`}
       </span>
-      <button type="button" className="secondary" disabled={offset <= 0} onClick={() => onChange(Math.max(0, offset - limit))}>
+      <Button type="button" variant="secondary" size="sm" disabled={offset <= 0} onClick={() => onChange(Math.max(0, offset - limit))}>
         Prev
-      </button>
-      <button type="button" className="secondary" disabled={offset + limit >= total} onClick={() => onChange(offset + limit)}>
+      </Button>
+      <Button type="button" variant="secondary" size="sm" disabled={offset + limit >= total} onClick={() => onChange(offset + limit)}>
         Next
-      </button>
+      </Button>
     </div>
   );
 }
@@ -60,15 +63,17 @@ export function DiagnosticsPanel({
 }): JSX.Element | null {
   if (!message) return null;
   return (
-    <div className="card error-card">
-      <div className="row">
-        <strong>Diagnostics</strong>
-        <button type="button" className="secondary" onClick={clear}>
+    <GlassCard className="mb-4 border-rose-500/40 bg-rose-950/20" glow="none">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm text-rose-100">Diagnostics</CardTitle>
+        <Button type="button" variant="secondary" size="sm" onClick={clear}>
           Dismiss
-        </button>
-      </div>
-      <div className="muted">{message}</div>
-      {context ? <pre>{context}</pre> : null}
-    </div>
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-rose-100/90">{message}</p>
+        {context ? <pre className="mt-2 max-h-40 overflow-auto text-xs text-rose-200/80">{context}</pre> : null}
+      </CardContent>
+    </GlassCard>
   );
 }

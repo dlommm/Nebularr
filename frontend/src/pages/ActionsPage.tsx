@@ -26,7 +26,7 @@ export function ActionsPage(): JSX.Element {
   };
 
   return (
-    <div className="grid">
+    <div className="grid-12">
       <div className="card span-6">
         <h3>Run sync</h3>
         <div className="row">

@@ -1,0 +1,24 @@
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="nebularrIconGradient" x1="24" y1="20" x2="156" y2="160" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#54A8FF"/>
+      <stop offset="0.52" stop-color="#6C7CFF"/>
+      <stop offset="1" stop-color="#9D5CFF"/>
+    </linearGradient>
+    <filter id="iconGlow" x="4" y="4" width="172" height="172" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="180" height="180" rx="24" fill="#0E1630"/>
+  <g filter="url(#iconGlow)">
+    <circle cx="90" cy="90" r="62" fill="#111D3D" stroke="url(#nebularrIconGradient)" stroke-width="6"/>
+    <path d="M56 118V62H74L111 106V62H126V118H108L71 74V118H56Z" fill="url(#nebularrIconGradient)"/>
+    <circle cx="90" cy="90" r="71" stroke="url(#nebularrIconGradient)" stroke-opacity="0.35" stroke-width="2"/>
+    <path d="M132 54L163 71L132 88V54Z" fill="#8D67FF"/>
+  </g>
+</svg>

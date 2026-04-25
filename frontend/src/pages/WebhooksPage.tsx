@@ -13,7 +13,7 @@ export function WebhooksPage(): JSX.Element {
     refetchInterval: 15_000,
   });
   return (
-    <div className="grid">
+    <div className="grid-12">
       <div className="card span-4">
         <h3>Queue summary</h3>
         <div className="stack">

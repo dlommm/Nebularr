@@ -168,8 +168,8 @@ export function IntegrationsPage(): JSX.Element {
   };
 
   return (
-    <div className="card">
-      <h3>Integrations</h3>
+    <div className="space-y-6 rounded-2xl border border-white/10 glass-panel p-4 sm:p-6">
+      <h3 className="font-heading text-lg font-semibold">Integrations</h3>
       <div className="stack">
         {(integrations.data ?? []).map((row) => (
           <div className="inner-card" key={`${row.source}-${row.name}`}>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { api } from "../api";
 import { fmtDate, useLocalStorageState } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -114,6 +115,11 @@ export function ReportingPage(): JSX.Element {
     const filteredRows = rows.filter((row) => rowMatchesFilters(row, terms));
     const total = filteredRows.reduce((acc, row) => acc + Number(row.value ?? 0), 0);
     const max = filteredRows.reduce((acc, row) => Math.max(acc, Number(row.value ?? 0)), 0);
+    const pieData = filteredRows.slice(0, 12).map((row, idx) => ({
+      name: String(row.label ?? "unknown").slice(0, 32),
+      value: Number(row.value ?? 0),
+      fill: `hsl(${220 + ((idx * 19) % 100)} 70% ${52 - (idx % 5) * 4}%)`,
+    }));
     return (
       <div className="card span-6 report-panel report-panel--chart" key={panel.id}>
         <div className="report-panel-head">
@@ -148,6 +154,23 @@ export function ReportingPage(): JSX.Element {
             </button>
           </div>
         </div>
+        {pieData.length > 0 ? (
+          <div className="mb-4 h-56 w-full rounded-xl border border-cyan-500/15 bg-[#0a1020]/80 px-1 py-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={44} outerRadius={72} paddingAngle={2}>
+                  {pieData.map((entry, i) => (
+                    <Cell key={entry.name + i} fill={entry.fill} stroke="rgba(0,0,0,0.2)" />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ background: "#0e1630", border: "1px solid rgba(84,168,255,0.3)", borderRadius: 8 }}
+                  labelStyle={{ color: "#e8f1fa" }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        ) : null}
         <div className="report-chart-body">
           {filteredRows.slice(0, 20).map((row, idx) => {
             const label = String(row.label ?? "unknown");
@@ -378,7 +401,7 @@ export function ReportingPage(): JSX.Element {
   };
 
   return (
-    <div className="grid reporting-grid">
+    <div className="grid-12 reporting-grid">
       <div className="card span-12 sticky-toolbar report-toolbar-card">
         <div className="report-dashboard-tabs" role="tablist" aria-label="Reporting dashboards">
           {(reportingDashboards.data ?? []).map((dash) => (

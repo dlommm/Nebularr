@@ -3,6 +3,8 @@ export const PATHS = {
   dashboard: "/dashboard",
   reporting: "/reporting",
   library: "/library",
+  /** Combined sync progress, queue, webhooks, and manual actions */
+  sync: "/sync",
   runs: "/runs",
   integrations: "/integrations",
   schedules: "/schedules",
@@ -17,6 +19,7 @@ export const APP_ROUTE_TITLES: Record<string, string> = {
   [PATHS.dashboard]: "Dashboard",
   [PATHS.reporting]: "Reporting",
   [PATHS.library]: "Library",
+  [PATHS.sync]: "Sync & Queue",
   [PATHS.runs]: "Sync Runs",
   [PATHS.integrations]: "Integrations",
   [PATHS.schedules]: "Schedules",

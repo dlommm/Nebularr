@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { ActionErrorProvider } from "./context/ActionErrorContext";
 import { AppLayout } from "./layout/AppLayout";
 import { PageFallback } from "./components/PageFallback";
@@ -11,11 +11,9 @@ const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const ReportingPage = lazy(() => import("./pages/ReportingPage").then((m) => ({ default: m.ReportingPage })));
 const LibraryPage = lazy(() => import("./pages/LibraryPage").then((m) => ({ default: m.LibraryPage })));
-const RunsPage = lazy(() => import("./pages/RunsPage").then((m) => ({ default: m.RunsPage })));
+const SyncQueuePage = lazy(() => import("./pages/SyncQueuePage").then((m) => ({ default: m.SyncQueuePage })));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const SchedulesPage = lazy(() => import("./pages/SchedulesPage").then((m) => ({ default: m.SchedulesPage })));
-const WebhooksPage = lazy(() => import("./pages/WebhooksPage").then((m) => ({ default: m.WebhooksPage })));
-const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ default: m.ActionsPage })));
 const LogsPage = lazy(() => import("./pages/LogsPage").then((m) => ({ default: m.LogsPage })));
 const NotFoundPage = lazy(() => import("./components/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
@@ -37,11 +35,12 @@ export function App(): JSX.Element {
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="reporting" element={<ReportingPage />} />
             <Route path="library" element={<LibraryPage />} />
-            <Route path="runs" element={<RunsPage />} />
+            <Route path="sync" element={<SyncQueuePage />} />
+            <Route path="runs" element={<Navigate to={`${PATHS.sync}?tab=runs`} replace />} />
+            <Route path="webhooks" element={<Navigate to={`${PATHS.sync}?tab=webhooks`} replace />} />
+            <Route path="actions" element={<Navigate to={`${PATHS.sync}?tab=manual`} replace />} />
             <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="schedules" element={<SchedulesPage />} />
-            <Route path="webhooks" element={<WebhooksPage />} />
-            <Route path="actions" element={<ActionsPage />} />
             <Route path="logs" element={<LogsPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
