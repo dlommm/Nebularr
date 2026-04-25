@@ -8,6 +8,7 @@ import { MAL_JOB_TYPE_ORDER } from "../constants/domain";
 import { StatusPill } from "../components/ui";
 import { useActionError } from "../hooks/useActionError";
 import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
+import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
 import { MetricCard } from "../components/nebula/MetricCard";
 import { EmptyState } from "../components/nebula/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -47,16 +48,44 @@ export function DashboardPage(): JSX.Element {
               Live sync telemetry, health, and queue pressure. Data refreshes every few seconds.
             </p>
           </div>
-          <div className="flex w-full min-w-0 flex-shrink-0 flex-wrap items-stretch justify-start gap-2 sm:w-auto sm:justify-end">
-            <Button className="min-w-0" size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr")}>
-              Sonarr incremental
-            </Button>
-            <Button className="min-w-0" size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr")}>
-              Radarr incremental
-            </Button>
-            <Button type="button" className="min-w-0" size="sm" variant="secondary" onClick={() => navigate(PATHS.sync)}>
-              Open sync &amp; queue
-            </Button>
+          <div className="flex w-full min-w-0 flex-shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:items-end">
+            <div className="flex flex-wrap items-stretch justify-start gap-2 sm:justify-end">
+              <Button className="min-w-0" size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr")}>
+                Sonarr incremental
+              </Button>
+              <Button className="min-w-0" size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr")}>
+                Radarr incremental
+              </Button>
+              <Button type="button" className="min-w-0" size="sm" variant="outline" onClick={() => navigate(PATHS.sync)}>
+                Open sync &amp; queue
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-stretch justify-start gap-2 sm:justify-end">
+              <Button
+                className="min-w-0"
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  if (window.confirm("Run Sonarr full sync? This re-fetches the full library and may run for a long time.")) {
+                    void runAction(() => api.runSync("sonarr", "full"), "dashboard sonarr full");
+                  }
+                }}
+              >
+                Sonarr full
+              </Button>
+              <Button
+                className="min-w-0"
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  if (window.confirm("Run Radarr full sync? This re-fetches the full library and may run for a long time.")) {
+                    void runAction(() => api.runSync("radarr", "full"), "dashboard radarr full");
+                  }
+                }}
+              >
+                Radarr full
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -95,7 +124,7 @@ export function DashboardPage(): JSX.Element {
               <HeartPulse className="size-4 text-emerald-300/80" strokeWidth={1.75} aria-hidden />
               Health
             </CardTitle>
-            <CardDescription>Aggregate control-plane state from /api/status</CardDescription>
+            <CardDescription>Control-plane + subsystem breakdown (queues, lag, Sonarr/Radarr, MAL)</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {status.isLoading ? (
@@ -109,7 +138,9 @@ export function DashboardPage(): JSX.Element {
                       "border",
                       healthOk
                         ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200"
-                        : "border-amber-500/50 bg-amber-500/10 text-amber-200",
+                        : status.data.health_state === "critical"
+                          ? "border-rose-500/50 bg-rose-500/10 text-rose-200"
+                          : "border-amber-500/50 bg-amber-500/10 text-amber-200",
                     )}
                   >
                     {status.data.health_state}
@@ -118,15 +149,25 @@ export function DashboardPage(): JSX.Element {
                     Sonarr {status.data.arr_versions.sonarr} · Radarr {status.data.arr_versions.radarr}
                   </span>
                 </div>
+                {status.data.health_dimensions ? (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">Subsystems</p>
+                    <HealthPillsRow
+                      dimensions={status.data.health_dimensions}
+                      reasonMap={status.data.health_dimension_reasons}
+                      size="md"
+                    />
+                  </div>
+                ) : null}
                 {status.data.health_state !== "ok" ? (
                   <p className="text-sm text-amber-100/90">{status.data.health_reasons?.join(", ") || "No reason codes"}</p>
                 ) : (
-                  <p className="text-sm text-muted-foreground">All checks nominal.</p>
+                  <p className="text-sm text-muted-foreground">All checks nominal for the current thresholds.</p>
                 )}
                 <p className="text-xs text-muted-foreground/90 leading-relaxed">
-                  <code className="rounded bg-white/5 px-1">webhook_queue_critical</code> uses queued + retrying only.{" "}
-                  <code className="rounded bg-white/5 px-1">sync_lag_critical</code> is based on your incremental watermark
-                  threshold.
+                  <code className="rounded bg-white/5 px-1">Queues</code> = webhook queue backlog + dead-letter.{" "}
+                  <code className="rounded bg-white/5 px-1">Sync</code> = history lag. <code className="rounded bg-white/5 px-1">Arr</code> = known app
+                  versions. <code className="rounded bg-white/5 px-1">MAL</code> = client + last job results when MAL is enabled.
                 </p>
               </>
             ) : (

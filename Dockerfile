@@ -8,7 +8,7 @@ RUN npm install && npm run build
 
 FROM python:3.12-slim
 
-ARG APP_VERSION=1.1.0
+ARG APP_VERSION=1.2.0
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

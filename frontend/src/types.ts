@@ -25,6 +25,13 @@ export type MalSyncStatus = {
   };
 };
 
+export type HealthDimensions = {
+  webhooks: HealthState;
+  sync: HealthState;
+  integrations: HealthState;
+  mal: HealthState;
+};
+
 export type StatusResponse = {
   jobs_total: number;
   webhook_queue_open: number;
@@ -34,6 +41,9 @@ export type StatusResponse = {
   arr_versions: { sonarr: string; radarr: string };
   health_state: HealthState;
   health_reasons: string[];
+  /** When present, per-subsystem state (queues, sync lag, Arr connectivity, MAL) */
+  health_dimensions?: HealthDimensions;
+  health_dimension_reasons?: Partial<Record<keyof HealthDimensions, string[]>>;
   mal_sync?: MalSyncStatus;
 };
 
@@ -60,6 +70,8 @@ export type UiLogEntry = Record<string, unknown>;
 export type UiLogsResponse = {
   items: UiLogEntry[];
   capacity: number;
+  /** Server-side log level; lines below this severity are not kept in the ring buffer */
+  effective_level?: string;
 };
 
 export type SyncActivityRow = {

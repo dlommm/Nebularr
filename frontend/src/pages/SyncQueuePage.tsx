@@ -44,6 +44,12 @@ export function SyncQueuePage(): JSX.Element {
   const syncProgress = useQuery({ queryKey: ["sync-progress"], queryFn: api.syncProgress, refetchInterval: 2_000 });
   const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 15_000 });
 
+  const runFullSync = (source: "sonarr" | "radarr", actionLabel: string) => {
+    const name = source === "sonarr" ? "Sonarr" : "Radarr";
+    if (!window.confirm(`Run ${name} full sync? This re-fetches the full ${name} library and may take a long time.`)) return;
+    void runAction(() => api.runSync(source, "full"), actionLabel);
+  };
+
   const runMalPipeline = async (
     fn: () => Promise<{ status: string; details?: unknown }>,
     label: string,
@@ -159,13 +165,25 @@ export function SyncQueuePage(): JSX.Element {
                 ) : (
                   <p className="text-sm text-muted-foreground">No active sync job reported by /api/ui/sync-progress.</p>
                 )}
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental")}>
-                    Sonarr incremental
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental")}>
-                    Radarr incremental
-                  </Button>
+                <div className="space-y-2 pt-1">
+                  <p className="text-[11px] font-medium text-muted-foreground">Incremental</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental")}>
+                      Sonarr incremental
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental")}>
+                      Radarr incremental
+                    </Button>
+                  </div>
+                  <p className="text-[11px] font-medium text-muted-foreground">Full</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => runFullSync("sonarr", "runSync sonarr/full")}>
+                      Sonarr full
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => runFullSync("radarr", "runSync radarr/full")}>
+                      Radarr full
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </GlassCard>
@@ -291,12 +309,28 @@ export function SyncQueuePage(): JSX.Element {
               <CardHeader>
                 <CardTitle className="text-base">On-demand sync</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental")}>Sonarr incremental</Button>
-                  <Button variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental")}>
-                    Radarr incremental
-                  </Button>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Incremental (history &amp; deltas)</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental")}>
+                      Sonarr incremental
+                    </Button>
+                    <Button variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental")}>
+                      Radarr incremental
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Full (entire library from Arr — slow)</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => runFullSync("sonarr", "runSync sonarr/full")}>
+                      Sonarr full
+                    </Button>
+                    <Button variant="outline" onClick={() => runFullSync("radarr", "runSync radarr/full")}>
+                      Radarr full
+                    </Button>
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {syncProgress.data?.running

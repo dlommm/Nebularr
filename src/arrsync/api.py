@@ -3093,7 +3093,9 @@ def build_router(app_state: Any) -> APIRouter:
     async def ui_recent_logs(limit: int = 400) -> dict[str, Any]:
         bounded = _bounded_limit(limit, default=400, max_limit=2000)
         items = get_recent_logs_parsed(bounded)
-        return {"items": items, "capacity": ring_buffer_capacity()}
+        with app_state.session_scope() as session:
+            eff = effective_log_level(session, app_state.settings)
+        return {"items": items, "capacity": ring_buffer_capacity(), "effective_level": eff}
 
     @router.get("/api/ui/webhook-queue")
     async def webhook_queue_summary() -> list[dict[str, Any]]:

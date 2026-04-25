@@ -34,7 +34,13 @@ class JsonFormatter(logging.Formatter):
 
 
 def apply_root_log_level(level: str) -> str:
-    """Set the root logger and its handlers to *level* (validated). Returns normalized name."""
+    """Set the root logger and its handlers to *level* (validated). Returns normalized name.
+
+    The ``arrsync`` *logger* stays at DEBUG so child loggers (``arrsync.*``) can emit. The
+    configured *user* level is enforced by the root ``StreamHandler`` and the web UI
+    ``RingBufferHandler`` only — otherwise setting ``arrsync`` to e.g. ERROR would block INFO
+    records before they reached the in-memory buffer, and the Logs page would stay empty.
+    """
     from arrsync.log_buffer import RingBufferHandler, attach_ring_buffer_handler
 
     normalized = normalize_log_level(level)
@@ -46,7 +52,7 @@ def apply_root_log_level(level: str) -> str:
     # Web UI buffer listens on the ``arrsync`` logger tree so we always capture app logs regardless of
     # uvicorn's dictConfig (uvicorn loggers use propagate=False). Re-attach if something stripped it.
     arrsync_log = logging.getLogger("arrsync")
-    arrsync_log.setLevel(numeric)
+    arrsync_log.setLevel(logging.DEBUG)
     has_ring = any(isinstance(h, RingBufferHandler) for h in arrsync_log.handlers)
     if not has_ring:
         attach_ring_buffer_handler(JsonFormatter(), numeric, arrsync_log)
@@ -71,6 +77,6 @@ def configure_logging(level: str) -> None:
 
     clear_ring_buffer()
     arrsync_log = logging.getLogger("arrsync")
-    arrsync_log.setLevel(numeric)
+    arrsync_log.setLevel(logging.DEBUG)
     attach_ring_buffer_handler(formatter, numeric, arrsync_log)
     root.setLevel(numeric)

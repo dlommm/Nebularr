@@ -26,6 +26,7 @@ import { useLocalStorageState } from "../hooks";
 import { LegacyViewRedirect } from "./LegacyViewRedirect";
 import { pathTitle, PATHS } from "../routes/paths";
 import { DiagnosticsPanel } from "../components/ui";
+import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
 import { PageFallback } from "../components/PageFallback";
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { Button } from "@/components/ui/button";
@@ -258,19 +259,28 @@ export function AppLayout(): JSX.Element {
               <h1 className="truncate font-heading text-lg font-semibold tracking-tight sm:text-xl" id="page-title">
                 {currentTitle}
               </h1>
-              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground sm:text-xs">
-                <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5", healthPillClass(status.data?.health_state))}>
-                  health: {status.data?.health_state ?? "—"}
-                </span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">sync: {status.data?.active_sync_count ?? "—"}</span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">webhooks: {status.data?.webhook_queue_open ?? "—"}</span>
-                {status.data?.mal_sync ? (
-                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">
-                    MAL:{" "}
-                    {status.data.mal_sync.running.length > 0
-                      ? `running (${status.data.mal_sync.running.map((r) => r.job_type).join(", ")})`
-                      : "idle"}
+              <div className="mt-0.5 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground sm:text-xs">
+                  <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5", healthPillClass(status.data?.health_state))}>
+                    health: {status.data?.health_state ?? "—"}
                   </span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">sync: {status.data?.active_sync_count ?? "—"}</span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">webhooks: {status.data?.webhook_queue_open ?? "—"}</span>
+                  {status.data?.mal_sync ? (
+                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">
+                      MAL:{" "}
+                      {status.data.mal_sync.running.length > 0
+                        ? `running (${status.data.mal_sync.running.map((r) => r.job_type).join(", ")})`
+                        : "idle"}
+                    </span>
+                  ) : null}
+                </div>
+                {status.data?.health_dimensions ? (
+                  <HealthPillsRow
+                    dimensions={status.data.health_dimensions}
+                    reasonMap={status.data.health_dimension_reasons}
+                    className="max-w-full"
+                  />
                 ) : null}
               </div>
             </div>

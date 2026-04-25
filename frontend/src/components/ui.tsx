@@ -40,14 +40,14 @@ export function LogViewerRow({ entry }: { entry: Record<string, unknown> }): JSX
   const levelClass = `log-lvl-${lvl.toLowerCase()}`;
   const extra = formatLogExtras(entry);
   return (
-    <div className={`log-row ${levelClass}`}>
+    <div className={`log-row ${levelClass} text-foreground`}>
       <div className="log-row-main">
-        <span className="log-ts">{String(entry.ts ?? "")}</span>
+        <span className="log-ts text-muted-foreground">{String(entry.ts ?? "")}</span>
         <span className="log-level-badge">{lvl}</span>
-        <span className="log-logger">{String(entry.logger ?? "")}</span>
-        <span className="log-message">{String(entry.message ?? "")}</span>
+        <span className="log-logger text-cyan-200/80">{String(entry.logger ?? "")}</span>
+        <span className="log-message text-foreground">{String(entry.message ?? "")}</span>
       </div>
-      {extra ? <pre className="log-row-extra">{extra}</pre> : null}
+      {extra ? <pre className="log-row-extra text-muted-foreground">{extra}</pre> : null}
     </div>
   );
 }

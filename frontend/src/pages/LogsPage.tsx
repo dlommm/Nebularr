@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -18,11 +18,13 @@ export function LogsPage(): JSX.Element {
     queryFn: () => api.uiLogs(500),
     refetchInterval: logsPaused ? false : 2500,
   });
+  const items = useMemo(() => uiLogs.data?.items ?? [], [uiLogs.data?.items]);
+  const eff = uiLogs.data?.effective_level;
 
   useEffect(() => {
     if (logsPaused || !logsEndRef.current) return;
     logsEndRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [logsPaused, uiLogs.data?.items]);
+  }, [logsPaused, items]);
 
   return (
     <GlassCard>
@@ -48,8 +50,22 @@ export function LogsPage(): JSX.Element {
             {uiLogs.data?.items?.length ?? 0} line{(uiLogs.data?.items?.length ?? 0) === 1 ? "" : "s"}
           </span>
         </div>
-        <div className="log-viewport max-h-[min(70vh,720px)] overflow-y-auto rounded-xl border border-white/10 bg-[#0a0e18] p-2 font-mono text-xs">
-          {(uiLogs.data?.items ?? []).map((entry, idx) => (
+        {uiLogs.isError ? (
+          <p className="text-sm text-rose-300/90">Could not load logs: {String(uiLogs.error)}</p>
+        ) : null}
+        <div className="log-viewport max-h-[min(70vh,720px)] overflow-y-auto rounded-xl border border-white/10 bg-[#0a0e18] p-2 font-mono text-xs text-foreground">
+          {uiLogs.isLoading && items.length === 0 ? (
+            <p className="m-0 px-1 py-2 text-sm text-muted-foreground">Loading…</p>
+          ) : null}
+          {items.length === 0 && !uiLogs.isLoading ? (
+            <p className="m-0 px-1 py-2 text-sm text-muted-foreground">
+              No log lines in the ring buffer yet.
+              {eff
+                ? ` Effective level is ${eff} (set under Integrations → application logging). Only messages at that level and above are shown.`
+                : null}
+            </p>
+          ) : null}
+          {items.map((entry, idx) => (
             <LogViewerRow key={`${String(entry.ts)}-${idx}`} entry={entry} />
           ))}
           <div ref={logsEndRef} />
