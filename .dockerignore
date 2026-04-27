@@ -1,6 +1,6 @@
 .git
 .github
-.cursor
+.cursor/
 .venv
 __pycache__
 .pytest_cache
