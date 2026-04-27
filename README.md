@@ -245,19 +245,83 @@ For **Docker Hub** releases, prefer **`./scripts/docker-release-build.sh --push`
 
 Screenshots are generated from the current React app render and stored in `docs/reference/webui-pages/`.
 
-1. Setup: `docs/reference/webui-pages/setup.png`
-2. Home: `docs/reference/webui-pages/home.png`
-3. Dashboard: `docs/reference/webui-pages/dashboard.png`
-4. Reporting: `docs/reference/webui-pages/reporting.png`
-5. Library: `docs/reference/webui-pages/library.png`
-6. Sync & Queue (Overview): `docs/reference/webui-pages/sync-overview.png`
-7. Sync & Queue (Runs): `docs/reference/webui-pages/sync-runs.png`
-8. Sync & Queue (Webhooks): `docs/reference/webui-pages/sync-webhooks.png`
-9. Sync & Queue (Manual): `docs/reference/webui-pages/sync-manual.png`
-10. Integrations: `docs/reference/webui-pages/integrations.png`
-11. Schedules: `docs/reference/webui-pages/schedules.png`
-12. Logs: `docs/reference/webui-pages/logs.png`
-13. Not Found route: `docs/reference/webui-pages/not-found.png`
+### 1) Setup
+
+Initial first-run flow for database/bootstrap, integration credentials, webhook secret, and initial scheduler defaults.
+
+![WebUI Setup page](docs/reference/webui-pages/setup.png)
+
+### 2) Home
+
+Landing page that orients operators and links quickly to the main operational views.
+
+![WebUI Home page](docs/reference/webui-pages/home.png)
+
+### 3) Dashboard
+
+Mission-control summary with health state, sync telemetry, queue pressure, and fast action buttons for sync operations.
+
+![WebUI Dashboard page](docs/reference/webui-pages/dashboard.png)
+
+### 4) Reporting
+
+Analytics-focused view for dashboard panels, distribution/table outputs, and export-oriented review.
+
+![WebUI Reporting page](docs/reference/webui-pages/reporting.png)
+
+### 5) Library
+
+Search, browse, and inspect synced show/movie/episode rows with paging, sorting, and export workflows.
+
+![WebUI Library page](docs/reference/webui-pages/library.png)
+
+### 6) Sync & Queue (Overview)
+
+Live progress snapshot for active sync runs plus high-level queue status and quick controls.
+
+![WebUI Sync overview tab](docs/reference/webui-pages/sync-overview.png)
+
+### 7) Sync & Queue (Runs)
+
+Historical run table showing source/mode/status timing and row/write outcomes for recent jobs.
+
+![WebUI Sync runs tab](docs/reference/webui-pages/sync-runs.png)
+
+### 8) Sync & Queue (Webhooks)
+
+Webhook queue/dead-letter visibility with per-job status, attempts, and error detail context.
+
+![WebUI Sync webhooks tab](docs/reference/webui-pages/sync-webhooks.png)
+
+### 9) Sync & Queue (Manual)
+
+Operator actions for incremental/full sync triggers, replay/reset controls, and MAL pipeline execution.
+
+![WebUI Sync manual tab](docs/reference/webui-pages/sync-manual.png)
+
+### 10) Integrations
+
+Configuration surface for Sonarr/Radarr/MAL/logging/webhook settings and related connectivity state.
+
+![WebUI Integrations page](docs/reference/webui-pages/integrations.png)
+
+### 11) Schedules
+
+Cron/timezone controls for incremental and reconcile cadence management.
+
+![WebUI Schedules page](docs/reference/webui-pages/schedules.png)
+
+### 12) Logs
+
+In-app log stream for quick troubleshooting across sync, webhook, and runtime behaviors.
+
+![WebUI Logs page](docs/reference/webui-pages/logs.png)
+
+### 13) Not Found route
+
+Fallback route shown when navigating to an unknown path.
+
+![WebUI Not Found page](docs/reference/webui-pages/not-found.png)
 
 ## GitHub wiki (optional)
 
