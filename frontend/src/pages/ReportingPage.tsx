@@ -22,13 +22,17 @@ export function ReportingPage(): JSX.Element {
   );
   const [reportingInstance, setReportingInstance] = useLocalStorageState<string>("nebularr.reporting.instance", "");
   const [reportingLimit, setReportingLimit] = useLocalStorageState<number>("nebularr.reporting.limit", 200);
+  const [reportingIgnoreSeasonZero, setReportingIgnoreSeasonZero] = useLocalStorageState<boolean>(
+    "nebularr.reporting.ignore-season-zero",
+    false,
+  );
   const [reportingTablePageSize, setReportingTablePageSize] = useLocalStorageState<number>(
     "nebularr.reporting.table.page-size",
     10,
   );
   const [reportingTableOffsets, setReportingTableOffsets] = useState<Record<string, number>>({});
   const [reportingPanelFilters, setReportingPanelFilters] = useState<Record<string, string>>({});
-  const [reportingColumnFilters, setReportingColumnFilters] = useState<Record<string, string>>({});
+  const [reportingColumnFilters, setReportingColumnFilters] = useState<Record<string, string[]>>({});
 
   const reportingDashboards = useQuery({
     queryKey: ["reporting-dashboards"],
@@ -72,6 +76,18 @@ export function ReportingPage(): JSX.Element {
     return String(value ?? "-");
   };
 
+  const rowPassesSeasonFilter = (row: Record<string, unknown>): boolean => {
+    if (!reportingIgnoreSeasonZero) return true;
+    const seasonKeys = ["season_number", "season", "seasonNumber"];
+    for (const key of seasonKeys) {
+      if (!(key in row)) continue;
+      const raw = row[key];
+      const normalized = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+      if (!Number.isNaN(normalized) && normalized === 0) return false;
+    }
+    return true;
+  };
+
   const reportingDashboardFilter = reportingDashboardFilters[reportingDashboardKey] ?? "";
   const reportingSharedTerms = useMemo(
     () => [...tokenizeFilter(reportingGlobalFilter), ...tokenizeFilter(reportingDashboardFilter)],
@@ -87,10 +103,10 @@ export function ReportingPage(): JSX.Element {
   ): boolean => {
     return columns.every((column) => {
       const key = `${panelStateKey}:${column}`;
-      const rawFilter = (reportingColumnFilters[key] ?? "").trim().toLowerCase();
-      if (!rawFilter) return true;
+      const rawFilters = (reportingColumnFilters[key] ?? []).map((item) => item.trim().toLowerCase()).filter(Boolean);
+      if (rawFilters.length === 0) return true;
       const cellText = stringifyCellValue(row[column]).toLowerCase();
-      return cellText === rawFilter;
+      return rawFilters.includes(cellText);
     });
   };
 
@@ -112,7 +128,7 @@ export function ReportingPage(): JSX.Element {
     const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
     const panelFilter = reportingPanelFilters[panelStateKey] ?? "";
     const terms = [...reportingSharedTerms, ...tokenizeFilter(panelFilter)];
-    const filteredRows = rows.filter((row) => rowMatchesFilters(row, terms));
+    const filteredRows = rows.filter((row) => rowPassesSeasonFilter(row) && rowMatchesFilters(row, terms));
     const total = filteredRows.reduce((acc, row) => acc + Number(row.value ?? 0), 0);
     const max = filteredRows.reduce((acc, row) => Math.max(acc, Number(row.value ?? 0)), 0);
     const pieData = filteredRows.slice(0, 12).map((row, idx) => ({
@@ -205,7 +221,7 @@ export function ReportingPage(): JSX.Element {
     const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
     const panelFilter = reportingPanelFilters[panelStateKey] ?? "";
     const terms = [...reportingSharedTerms, ...tokenizeFilter(panelFilter)];
-    const termFilteredRows = rows.filter((row) => rowMatchesFilters(row, terms));
+    const termFilteredRows = rows.filter((row) => rowPassesSeasonFilter(row) && rowMatchesFilters(row, terms));
     const columns =
       termFilteredRows.length > 0 ? Object.keys(termFilteredRows[0]) : rows.length > 0 ? Object.keys(rows[0]) : [];
     const columnOptions = Object.fromEntries(
@@ -315,15 +331,15 @@ export function ReportingPage(): JSX.Element {
                       <span className="report-th-name">{column}</span>
                       <select
                         className="report-th-filter"
-                        value={reportingColumnFilters[`${panelStateKey}:${column}`] ?? ""}
+                        multiple
+                        value={reportingColumnFilters[`${panelStateKey}:${column}`] ?? []}
                         onChange={(event) =>
                           setReportingColumnFilters((prev) => ({
                             ...prev,
-                            [`${panelStateKey}:${column}`]: event.target.value,
+                            [`${panelStateKey}:${column}`]: Array.from(event.target.selectedOptions, (option) => option.value),
                           }))
                         }
                       >
-                        <option value="">All values</option>
                         {(columnOptions[column] ?? []).map((option) => (
                           <option key={`${panelStateKey}:${column}:${option}`} value={option}>
                             {option.length > 80 ? `${option.slice(0, 80)}…` : option}
@@ -477,6 +493,17 @@ export function ReportingPage(): JSX.Element {
               </button>
             </div>
           </div>
+          <div className="report-field report-field--compact">
+            <span className="report-field-label">Season filter</span>
+            <label className="report-inline-label">
+              <input
+                type="checkbox"
+                checked={reportingIgnoreSeasonZero}
+                onChange={(event) => setReportingIgnoreSeasonZero(event.target.checked)}
+              />
+              <span>Ignore Season 0</span>
+            </label>
+          </div>
           <div className="report-toolbar-actions">
             <button type="button" onClick={() => void reportingDashboard.refetch()}>
               Refresh
@@ -496,6 +523,7 @@ export function ReportingPage(): JSX.Element {
                 setReportingColumnFilters((prev) =>
                   Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${reportingDashboardKey}:`))),
                 );
+                setReportingIgnoreSeasonZero(false);
               }}
             >
               Clear filters
