@@ -26,4 +26,7 @@ htmlcov/
 
 *.log
 Backlog/
-.cursor/
+# Editor/agent config (ignore by default; track shared Cursor skills for the team)
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
