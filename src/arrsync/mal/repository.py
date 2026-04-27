@@ -82,6 +82,38 @@ def insert_mal_job_run(session: Session, job_type: str) -> int:
     return int(row)
 
 
+def clear_mal_stuck_ingest_state(
+    session: Session, *, clear_ingest_lock: bool = True, fail_running_job_rows: bool = True
+) -> dict[str, int]:
+    """Remove ``mal:ingest`` from ``app.job_lock`` and/or mark running MAL job rows as failed.
+
+    Use when a process crashed or the container stopped before releasing the lock, leaving
+    "MAL ingest is already running" until the row expires. Does not delete MAL anime data.
+    """
+    out: dict[str, int] = {"mal_ingest_locks_removed": 0, "mal_job_runs_marked_failed": 0}
+    if clear_ingest_lock:
+        lock_result = session.execute(
+            text("delete from app.job_lock where lock_name = 'mal:ingest' returning lock_name")
+        )
+        out["mal_ingest_locks_removed"] = len(lock_result.all())
+    if fail_running_job_rows:
+        jobs_result = session.execute(
+            text(
+                """
+                update app.mal_job_run
+                set status = 'failed',
+                    finished_at = now(),
+                    error_message = 'Cleared: stale running state (operator clear-stuck)',
+                    details = coalesce(details, '{}'::jsonb) || jsonb_build_object('cleared_stuck', true)
+                where status = 'running'
+                returning id
+                """
+            )
+        )
+        out["mal_job_runs_marked_failed"] = len(jobs_result.all())
+    return out
+
+
 def merge_mal_job_run_details(session: Session, run_id: int, patch: dict[str, Any]) -> None:
     """Merge *patch* into ``details`` for a running job (for live ingest progress in the Web UI)."""
     if not patch:

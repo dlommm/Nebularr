@@ -275,6 +275,62 @@ export type WorkStatusResponse = {
   setup_running: boolean;
 };
 
+export type StuckLockRow = {
+  lock_name: string;
+  owner_id: string;
+  acquired_at: string;
+  heartbeat_at: string;
+  expires_at: string;
+};
+
+export type StuckMalJobRow = {
+  id: number;
+  job_type: string;
+  status: string;
+  started_at: string;
+  error_message: string | null;
+};
+
+export type StuckWarehouseSyncRunRow = {
+  id: number;
+  source: string;
+  mode: string;
+  instance_name: string;
+  status: string;
+  started_at: string;
+  records_processed: number;
+  trigger: string;
+  stage: string;
+};
+
+export type StuckJobRunSummaryRow = {
+  id: number;
+  source: string;
+  mode: string;
+  instance_name: string;
+  status: string;
+  started_at: string;
+  rows_written: number;
+};
+
+export type StuckStateResponse = {
+  job_locks: StuckLockRow[];
+  mal_job_runs_running: StuckMalJobRow[];
+  warehouse_sync_runs_running: StuckWarehouseSyncRunRow[];
+  job_run_summary_running: StuckJobRunSummaryRow[];
+};
+
+export type ClearStuckResponse = {
+  status: string;
+  cleared_all_job_locks: boolean;
+  job_locks_removed: number;
+  mal_ingest_locks_removed: number;
+  warehouse_sync_locks_removed: number;
+  mal_job_runs_marked_failed: number;
+  warehouse_sync_runs_marked_failed: number;
+  job_run_summary_rows_marked_failed: number;
+};
+
 export type WebhookQueueRow = { status: string; count: number };
 
 export type WebhookJobRow = {

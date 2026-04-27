@@ -10,6 +10,8 @@ import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/neb
 import { ProgressBar } from "../components/nebula/ProgressBar";
 import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Activity, Inbox, ListOrdered, Wrench, Zap } from "lucide-react";
 const TAB_VALUES = ["overview", "runs", "webhooks", "manual"] as const;
@@ -39,6 +41,11 @@ export function SyncQueuePage(): JSX.Element {
   const [malCycleDelaySeconds, setMalCycleDelaySeconds] = useState(2);
   const [malBatchSize, setMalBatchSize] = useState(200);
   const [malImportAll, setMalImportAll] = useState(false);
+  const [stuckClearAllLocks, setStuckClearAllLocks] = useState(false);
+  const [stuckClearMalLock, setStuckClearMalLock] = useState(true);
+  const [stuckClearMalJobs, setStuckClearMalJobs] = useState(true);
+  const [stuckClearWhLocks, setStuckClearWhLocks] = useState(false);
+  const [stuckFailWhSync, setStuckFailWhSync] = useState(false);
 
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.recentRuns, refetchInterval: 15_000 });
   const webhookQueue = useQuery({ queryKey: ["webhook-queue"], queryFn: api.webhookQueue, refetchInterval: 15_000 });
@@ -50,6 +57,12 @@ export function SyncQueuePage(): JSX.Element {
   const syncProgress = useQuery({ queryKey: ["sync-progress"], queryFn: api.syncProgress, refetchInterval: 2_000 });
   const workStatus = useQuery({ queryKey: ["work-status"], queryFn: api.workStatus, refetchInterval: 2_000 });
   const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 15_000 });
+  const stuckState = useQuery({
+    queryKey: ["stuck-state"],
+    queryFn: api.stuckState,
+    refetchInterval: tab === "manual" ? 15_000 : false,
+    enabled: tab === "manual",
+  });
 
   useEffect(() => {
     const n = malConfig.data?.mal_max_ids_per_run;
@@ -446,6 +459,139 @@ export function SyncQueuePage(): JSX.Element {
                 >
                   Reset MAL Data
                 </Button>
+                <div className="space-y-2 border-t border-white/10 pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    Long tasks (MAL ingest, Sonarr/Radarr syncs, and similar) run <strong className="text-foreground/90">inside the app
+                    process</strong>. A crash or kill can leave coordination rows in Postgres (locks) or
+                    &quot;running&quot; job rows. Use the controls below to clear that <strong className="text-foreground/90">DB
+                    state</strong> so new work can start. Failing live warehouse runs is off by default—only use it if you are
+                    sure nothing is really running.
+                  </p>
+                  {stuckState.isError ? (
+                    <p className="text-xs text-rose-200/80">Could not load stuck state.</p>
+                  ) : null}
+                  <ul className="list-inside list-disc text-xs text-muted-foreground">
+                    <li>
+                      Job lock rows: {stuckState.data?.job_locks?.length ?? (stuckState.isLoading ? "…" : 0)}
+                    </li>
+                    <li>Running MAL job rows: {stuckState.data?.mal_job_runs_running?.length ?? (stuckState.isLoading ? "…" : 0)}</li>
+                    <li>
+                      Running warehouse <code className="rounded bg-white/5 px-0.5">sync_run</code> rows:{" "}
+                      {stuckState.data?.warehouse_sync_runs_running?.length ?? (stuckState.isLoading ? "…" : 0)}
+                    </li>
+                    <li>
+                      Running Sonarr/Radarr <code className="rounded bg-white/5 px-0.5">job_run_summary</code> rows:{" "}
+                      {stuckState.data?.job_run_summary_running?.length ?? (stuckState.isLoading ? "…" : 0)}
+                    </li>
+                  </ul>
+                  {stuckState.data && stuckState.data.job_locks.length > 0 ? (
+                    <ul className="max-h-24 overflow-y-auto rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                      {stuckState.data.job_locks.map((l) => (
+                        <li key={l.lock_name} className="truncate">
+                          {l.lock_name}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="stuck-all-locks"
+                        checked={stuckClearAllLocks}
+                        onCheckedChange={(c) => {
+                          setStuckClearAllLocks(c === true);
+                        }}
+                      />
+                      <Label htmlFor="stuck-all-locks" className="text-xs text-muted-foreground">
+                        Remove <strong className="text-foreground/90">all</strong> rows in <code className="rounded bg-white/5 px-0.5">app.job_lock</code> (ignores
+                        granular lock options below)
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="stuck-mal-lock"
+                        disabled={stuckClearAllLocks}
+                        checked={stuckClearMalLock}
+                        onCheckedChange={(c) => setStuckClearMalLock(c === true)}
+                      />
+                      <Label htmlFor="stuck-mal-lock" className="text-xs text-muted-foreground">
+                        Remove <code className="rounded bg-white/5 px-0.5">mal:ingest</code> lock
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="stuck-mal-jobs"
+                        checked={stuckClearMalJobs}
+                        onCheckedChange={(c) => setStuckClearMalJobs(c === true)}
+                      />
+                      <Label htmlFor="stuck-mal-jobs" className="text-xs text-muted-foreground">
+                        Mark running MAL job rows as failed
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="stuck-wh-locks"
+                        disabled={stuckClearAllLocks}
+                        checked={stuckClearWhLocks}
+                        onCheckedChange={(c) => setStuckClearWhLocks(c === true)}
+                      />
+                      <Label htmlFor="stuck-wh-locks" className="text-xs text-muted-foreground">
+                        Clear Sonarr/Radarr sync job lock rows only (does not change warehouse data)
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="stuck-wh-fail"
+                        checked={stuckFailWhSync}
+                        onCheckedChange={(c) => setStuckFailWhSync(c === true)}
+                      />
+                      <Label htmlFor="stuck-wh-fail" className="text-xs text-amber-200/80">
+                        Mark &quot;running&quot; warehouse sync runs and Sonarr/Radarr job summary rows as failed (dangerous if a
+                        sync is still running)
+                      </Label>
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    className="w-fit"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          "Type CLEAR_STUCK in the next prompt. This may delete rows in app.job_lock, update app.mal_job_run, warehouse.sync_run, and app.job_run_summary.",
+                        )
+                      ) {
+                        return;
+                      }
+                      const typed = window.prompt("Type CLEAR_STUCK to confirm");
+                      if (typed?.trim().toUpperCase() !== "CLEAR_STUCK") return;
+                      void runAction(async () => {
+                        const r = await api.clearStuck(
+                          stuckClearAllLocks
+                            ? {
+                                clear_all_job_locks: true,
+                                fail_stuck_mal_job_runs: stuckClearMalJobs,
+                                fail_stuck_warehouse_sync_runs: stuckFailWhSync,
+                              }
+                            : {
+                                clear_mal_ingest_lock: stuckClearMalLock,
+                                fail_stuck_mal_job_runs: stuckClearMalJobs,
+                                clear_warehouse_sync_locks: stuckClearWhLocks,
+                                fail_stuck_warehouse_sync_runs: stuckFailWhSync,
+                              },
+                        );
+                        void queryClient.invalidateQueries({ queryKey: ["stuck-state"] });
+                        void queryClient.invalidateQueries({ queryKey: ["status"] });
+                        void queryClient.invalidateQueries({ queryKey: ["work-status"] });
+                        void queryClient.invalidateQueries({ queryKey: ["sync-activity"] });
+                        void queryClient.invalidateQueries({ queryKey: ["sync-progress"] });
+                        void queryClient.invalidateQueries({ queryKey: ["runs"] });
+                        return r;
+                      }, "clear stuck state");
+                    }}
+                  >
+                    Clear stuck state (DB)
+                  </Button>
+                </div>
               </CardContent>
             </GlassCard>
           </div>

@@ -722,3 +722,60 @@ def release_job_lock(session: Session, lock_name: str, owner_id: str) -> None:
         text("delete from app.job_lock where lock_name = :lock_name and owner_id = :owner_id"),
         {"lock_name": lock_name, "owner_id": owner_id},
     )
+
+
+def delete_warehouse_sync_job_locks(session: Session) -> int:
+    """Remove Sonarr/Radarr sync coordination locks (``{sonarr,radarr}:{mode}``) from ``app.job_lock``.
+
+    Use when a sync died without releasing the lock. Only clears lock rows, not ``warehouse.sync_run``.
+    """
+    result = session.execute(
+        text(
+            """
+            delete from app.job_lock
+            where lock_name like 'sonarr:%%' or lock_name like 'radarr:%%'
+            returning lock_name
+            """
+        )
+    )
+    return len(result.all())
+
+
+def delete_all_job_locks(session: Session) -> int:
+    """Remove every row from ``app.job_lock`` (MAL ingest, Sonarr/Radarr, and any future lock names)."""
+    result = session.execute(text("delete from app.job_lock returning lock_name"))
+    return len(result.all())
+
+
+def fail_stuck_running_warehouse_work(session: Session) -> dict[str, int]:
+    """Mark stuck ``running`` rows in ``warehouse.sync_run`` and ``app.job_run_summary`` as failed."""
+    r_sync = session.execute(
+        text(
+            """
+            update warehouse.sync_run
+            set status = 'failed',
+                finished_at = now(),
+                error_message = 'Cleared: stale running state (operator clear-stuck)',
+                details = coalesce(details, '{}'::jsonb) || jsonb_build_object('cleared_stuck', true)
+            where status = 'running'
+            returning id
+            """
+        )
+    )
+    r_sum = session.execute(
+        text(
+            """
+            update app.job_run_summary
+            set status = 'failed',
+                finished_at = now(),
+                error_message = 'Cleared: stale running state (operator clear-stuck)',
+                details = coalesce(details, '{}'::jsonb) || jsonb_build_object('cleared_stuck', true)
+            where status = 'running' and source in ('sonarr', 'radarr')
+            returning id
+            """
+        )
+    )
+    return {
+        "warehouse_sync_runs_marked_failed": len(r_sync.all()),
+        "job_run_summary_rows_marked_failed": len(r_sum.all()),
+    }

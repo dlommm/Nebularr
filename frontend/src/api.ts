@@ -20,6 +20,8 @@ import type {
   WebhookJobRow,
   WebhookQueueRow,
   WorkStatusResponse,
+  StuckStateResponse,
+  ClearStuckResponse,
 } from "./types";
 
 type HttpMethod = "GET" | "POST" | "PUT";
@@ -110,6 +112,18 @@ export const api = {
   resetMalData: () =>
     requestJson<{ status: string; message?: string }>("/api/mal/reset-data", "POST", {
       confirmation: "RESET_MAL",
+    }),
+  stuckState: () => requestJson<StuckStateResponse>("/api/operator/stuck-state"),
+  clearStuck: (payload: {
+    clear_all_job_locks?: boolean;
+    clear_mal_ingest_lock?: boolean;
+    fail_stuck_mal_job_runs?: boolean;
+    clear_warehouse_sync_locks?: boolean;
+    fail_stuck_warehouse_sync_runs?: boolean;
+  }) =>
+    requestJson<ClearStuckResponse>("/api/operator/clear-stuck", "POST", {
+      confirmation: "CLEAR_STUCK",
+      ...payload,
     }),
   saveSchedule: (mode: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/schedules/${mode}`, "PUT", payload),
