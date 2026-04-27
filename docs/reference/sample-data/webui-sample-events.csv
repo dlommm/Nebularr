@@ -1,0 +1,7 @@
+event_time,event_type,source,status,duration_ms,details
+2026-04-26T21:01:12Z,sync_full,radarr,ok,169231,"Imported 72 movie updates"
+2026-04-26T20:59:44Z,webhook_ingest,sonarr,ok,33,"EpisodeFile event accepted"
+2026-04-26T20:58:51Z,webhook_worker,sonarr,error,412,"Signature mismatch; job dead-lettered"
+2026-04-26T20:50:33Z,sync_incremental,sonarr,ok,31244,"Polled history since watermark 584212"
+2026-04-26T20:41:09Z,dead_letter_replay,system,warn,129,"Queued 12 jobs for replay"
+2026-04-26T20:30:17Z,health_probe,system,ok,15,"All dependencies healthy"

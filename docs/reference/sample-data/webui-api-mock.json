@@ -1,0 +1,94 @@
+{
+  "healthz": {
+    "status": "ok",
+    "version": "1.7.0",
+    "git_sha": "mocksha",
+    "time": "2026-04-27T02:27:00Z"
+  },
+  "setupStatusCompleted": {
+    "completed": true,
+    "has_webhook_secret": true,
+    "integrations": {
+      "sonarr": {
+        "configured": true,
+        "base_url": "http://sonarr:8989",
+        "api_key_set": true
+      },
+      "radarr": {
+        "configured": true,
+        "base_url": "http://radarr:7878",
+        "api_key_set": true
+      }
+    },
+    "schedules": [
+      { "mode": "incremental", "cron": "*/15 * * * *", "timezone": "America/New_York", "enabled": true },
+      { "mode": "reconcile", "cron": "0 */6 * * *", "timezone": "America/New_York", "enabled": true }
+    ],
+    "database": { "engine_ready": true, "runtime_url_persisted": true, "arrapp_role_exists": true }
+  },
+  "status": {
+    "jobs_total": 364,
+    "webhook_queue_open": 14,
+    "webhook_queue_dead_letter": 2,
+    "active_sync_count": 1,
+    "sync_lag_seconds": { "sonarr": 22.6, "radarr": 7.3 },
+    "arr_versions": { "sonarr": "4.0.1", "radarr": "5.7.0" },
+    "health_state": "ok",
+    "health_reasons": [],
+    "health_dimensions": { "webhooks": "ok", "sync": "ok", "integrations": "ok", "mal": "warning" }
+  },
+  "syncActivity": [
+    {
+      "run_id": 901,
+      "source": "sonarr",
+      "mode": "incremental",
+      "instance_name": "primary",
+      "status": "running",
+      "started_at": "2026-04-26T21:04:12Z",
+      "records_processed": 1342,
+      "trigger": "scheduler",
+      "stage": "history_poll",
+      "stage_note": "watermark=581220",
+      "elapsed_seconds": 192
+    }
+  ],
+  "recentRuns": [
+    {
+      "source": "radarr",
+      "mode": "full",
+      "instance_name": "primary",
+      "status": "success",
+      "started_at": "2026-04-26T20:51:00Z",
+      "finished_at": "2026-04-26T21:01:04Z",
+      "rows_written": 9456,
+      "error_message": null
+    }
+  ],
+  "webhookQueue": [
+    { "status": "queued", "count": 8 },
+    { "status": "retrying", "count": 4 },
+    { "status": "dead_letter", "count": 2 }
+  ],
+  "webhookJobs": [
+    {
+      "id": 1001,
+      "source": "sonarr",
+      "event_type": "EpisodeFile",
+      "status": "queued",
+      "attempts": 0,
+      "received_at": "2026-04-26T21:07:11Z",
+      "next_attempt_at": null,
+      "processed_at": null,
+      "error_message": null
+    }
+  ],
+  "reportingDashboard": {
+    "key": "library_overview",
+    "title": "Library Overview",
+    "description": "Collection-level KPIs and distributions",
+    "generated_at": "2026-04-26T21:12:00Z",
+    "panels": [
+      { "id": "total_titles", "title": "Total Titles", "kind": "stat", "value": 1422 }
+    ]
+  }
+}

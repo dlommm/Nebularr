@@ -239,6 +239,25 @@ For **Docker Hub** releases, prefer **`./scripts/docker-release-build.sh --push`
 
 - `docs/WEBUI_FRAMEWORK.md`: frontend architecture, contracts, and local workflows.
 - `docs/WEBUI_AGENT_WORKFLOW.md`: task tracker + quality guardian gates and completion criteria.
+- `docs/WEBUI_REFERENCE_ASSETS.md`: generated 1:1 page screenshots + sample API/demo data.
+
+## WebUI page references (top-down)
+
+Screenshots are generated from the current React app render and stored in `docs/reference/webui-pages/`.
+
+1. Setup: `docs/reference/webui-pages/setup.png`
+2. Home: `docs/reference/webui-pages/home.png`
+3. Dashboard: `docs/reference/webui-pages/dashboard.png`
+4. Reporting: `docs/reference/webui-pages/reporting.png`
+5. Library: `docs/reference/webui-pages/library.png`
+6. Sync & Queue (Overview): `docs/reference/webui-pages/sync-overview.png`
+7. Sync & Queue (Runs): `docs/reference/webui-pages/sync-runs.png`
+8. Sync & Queue (Webhooks): `docs/reference/webui-pages/sync-webhooks.png`
+9. Sync & Queue (Manual): `docs/reference/webui-pages/sync-manual.png`
+10. Integrations: `docs/reference/webui-pages/integrations.png`
+11. Schedules: `docs/reference/webui-pages/schedules.png`
+12. Logs: `docs/reference/webui-pages/logs.png`
+13. Not Found route: `docs/reference/webui-pages/not-found.png`
 
 ## GitHub wiki (optional)
 

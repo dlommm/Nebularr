@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "capture:reference": "node scripts/capture-webui-reference.mjs",
     "lint": "eslint src --ext ts,tsx --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",

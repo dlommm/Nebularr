@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-04-26T22:10:00Z",
+  "tenant": "demo-lab",
+  "shows": [
+    {
+      "id": "show_1001",
+      "title": "Nova Academy",
+      "status": "continuing",
+      "episodes_total": 18,
+      "episodes_downloaded": 14,
+      "quality_profile": "HD-1080p",
+      "last_sync_at": "2026-04-26T21:01:12Z"
+    },
+    {
+      "id": "show_1002",
+      "title": "Signal Drift",
+      "status": "ended",
+      "episodes_total": 10,
+      "episodes_downloaded": 10,
+      "quality_profile": "UHD-4K",
+      "last_sync_at": "2026-04-26T20:51:09Z"
+    }
+  ],
+  "movies": [
+    {
+      "id": "movie_2041",
+      "title": "The Last Orbit",
+      "year": 2026,
+      "status": "downloaded",
+      "size_gb": 18.7,
+      "quality_profile": "UHD-4K",
+      "last_sync_at": "2026-04-26T21:01:12Z"
+    },
+    {
+      "id": "movie_2042",
+      "title": "Arctic Frequency",
+      "year": 2025,
+      "status": "queued",
+      "size_gb": 9.2,
+      "quality_profile": "HD-1080p",
+      "last_sync_at": "2026-04-26T20:49:33Z"
+    }
+  ],
+  "kpis": {
+    "active_downloads": 27,
+    "queue_size": 114,
+    "failed_jobs_24h": 4,
+    "success_rate_percent": 78.4,
+    "api_latency_p95_ms": 187
+  }
+}
