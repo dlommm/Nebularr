@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from arrsync.log_buffer import get_recent_logs_parsed, ring_buffer_capacity
 from arrsync.logging import apply_root_log_level, normalize_log_level
+from arrsync.mal.ingest_service import MalIngestAlreadyRunningError
 from arrsync.mal import repository as mal_repo
 from arrsync.services import repository as repo
 from arrsync.services.alert_config_store import (
@@ -67,6 +68,7 @@ def build_router(app_state: Any) -> APIRouter:
     web_assets_dir = web_ui_dir.joinpath("assets")
     setup_sync_task: asyncio.Task[None] | None = None
     setup_sync_sources: list[str] = []
+    setup_sync_started_at: datetime | None = None
 
     def _bounded_limit(limit: int, default: int = 200, max_limit: int = 2000) -> int:
         if limit <= 0:
@@ -3096,7 +3098,7 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.post("/api/setup/initial-sync")
     async def setup_initial_sync(payload: dict[str, Any]) -> dict[str, Any]:
-        nonlocal setup_sync_task, setup_sync_sources
+        nonlocal setup_sync_task, setup_sync_sources, setup_sync_started_at
         if not app_state.session_factory.ready:
             raise HTTPException(
                 status_code=400,
@@ -3120,7 +3122,14 @@ def build_router(app_state: Any) -> APIRouter:
                 await app_state.sync_service.run_sync(source, "full", reason="setup")
 
         setup_sync_sources = deduped_sources
+        setup_sync_started_at = datetime.now(timezone.utc)
+
+        def _clear_setup_started(_task: asyncio.Task[None]) -> None:
+            nonlocal setup_sync_started_at
+            setup_sync_started_at = None
+
         setup_sync_task = asyncio.create_task(_run_setup_sync(deduped_sources))
+        setup_sync_task.add_done_callback(_clear_setup_started)
         return {"status": "queued", "running": True, "sources": deduped_sources}
 
     @router.get("/api/setup/initial-sync-status")
@@ -3163,6 +3172,7 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.get("/api/ui/sync-progress")
     async def sync_progress() -> dict[str, Any]:
+        """Primary running Sonarr/Radarr warehouse sync (any trigger: manual, scheduler, webhook, etc.)."""
         with app_state.session_scope() as session:
             active_run = session.execute(
                 text(
@@ -3176,12 +3186,12 @@ def build_router(app_state: Any) -> APIRouter:
                         coalesce(records_processed, 0) as records_processed,
                         coalesce(details ->> 'stage', 'starting') as stage,
                         coalesce(details ->> 'stage_note', '') as stage_note,
+                        coalesce(details ->> 'trigger', 'unknown') as trigger,
                         round(extract(epoch from (now() - started_at))::numeric, 1) as elapsed_seconds
                     from warehouse.sync_run
                     where status = 'running'
                       and source in ('sonarr', 'radarr')
                       and mode in ('full', 'incremental', 'reconcile')
-                      and coalesce(details ->> 'trigger', 'manual') = 'manual'
                     order by started_at desc
                     limit 1
                     """
@@ -3226,10 +3236,171 @@ def build_router(app_state: Any) -> APIRouter:
             "records_processed": int(active_run["records_processed"] or 0),
             "stage": active_run["stage"],
             "stage_note": active_run["stage_note"],
+            "trigger": str(active_run["trigger"] or "unknown"),
             "estimated_total_seconds": avg_seconds,
             "eta_seconds": eta_seconds,
             "progress_pct": progress_pct,
             "history_sample_size": int(baseline["sample_size"] or 0) if baseline else 0,
+        }
+
+    @router.get("/api/ui/work-status")
+    async def work_status() -> dict[str, Any]:
+        """Aggregated active work: warehouse syncs, MAL jobs, and setup-wizard initial sync."""
+        items: list[dict[str, Any]] = []
+        wh_running = False
+        with app_state.session_scope() as session:
+            wh_rows = session.execute(
+                text(
+                    """
+                    select
+                        id,
+                        source,
+                        mode,
+                        instance_name,
+                        started_at,
+                        coalesce(records_processed, 0) as records_processed,
+                        coalesce(details ->> 'stage', 'starting') as stage,
+                        coalesce(details ->> 'stage_note', '') as stage_note,
+                        coalesce(details ->> 'trigger', 'unknown') as trigger,
+                        round(extract(epoch from (now() - started_at))::numeric, 1) as elapsed_seconds
+                    from warehouse.sync_run
+                    where status = 'running'
+                      and source in ('sonarr', 'radarr')
+                      and mode in ('full', 'incremental', 'reconcile')
+                    order by started_at asc
+                    """
+                )
+            ).mappings().all()
+            for row in wh_rows:
+                wh_running = True
+                baseline = session.execute(
+                    text(
+                        """
+                        select
+                            round(avg(extract(epoch from (finished_at - started_at)))::numeric, 1) as avg_seconds,
+                            count(*)::int as sample_size
+                        from warehouse.sync_run
+                        where source = :source
+                          and mode = :mode
+                          and instance_name = :instance_name
+                          and status in ('success', 'failed')
+                          and finished_at is not null
+                        """
+                    ),
+                    {
+                        "source": row["source"],
+                        "mode": row["mode"],
+                        "instance_name": row["instance_name"],
+                    },
+                ).mappings().first()
+                elapsed_seconds = float(row["elapsed_seconds"] or 0)
+                avg_seconds = float(baseline["avg_seconds"]) if baseline and baseline["avg_seconds"] is not None else None
+                eta_seconds = max(avg_seconds - elapsed_seconds, 0.0) if avg_seconds is not None else None
+                progress_pct = (
+                    min(round((elapsed_seconds / avg_seconds) * 100.0, 1), 99.0) if avg_seconds and avg_seconds > 0 else None
+                )
+                items.append(
+                    {
+                        "kind": "warehouse",
+                        "run_id": int(row["id"]),
+                        "source": row["source"],
+                        "mode": row["mode"],
+                        "instance_name": row["instance_name"],
+                        "started_at": row["started_at"],
+                        "trigger": row["trigger"],
+                        "stage": row["stage"],
+                        "stage_note": row["stage_note"],
+                        "elapsed_seconds": elapsed_seconds,
+                        "records_processed": int(row["records_processed"] or 0),
+                        "estimated_total_seconds": avg_seconds,
+                        "eta_seconds": eta_seconds,
+                        "progress_pct": progress_pct,
+                        "history_sample_size": int(baseline["sample_size"] or 0) if baseline else 0,
+                    }
+                )
+
+            mal_rows = session.execute(
+                text(
+                    """
+                    select
+                        id,
+                        job_type,
+                        started_at,
+                        coalesce(details, '{}'::jsonb) as details,
+                        round(extract(epoch from (now() - started_at))::numeric, 1) as elapsed_seconds
+                    from app.mal_job_run
+                    where status = 'running'
+                    order by started_at asc
+                    """
+                )
+            ).mappings().all()
+            for row in mal_rows:
+                jt = str(row["job_type"])
+                baseline_mal = session.execute(
+                    text(
+                        """
+                        select
+                            round(avg(extract(epoch from (finished_at - started_at)))::numeric, 1) as avg_seconds,
+                            count(*)::int as sample_size
+                        from app.mal_job_run
+                        where job_type = :job_type
+                          and status in ('success', 'failed')
+                          and finished_at is not null
+                        """
+                    ),
+                    {"job_type": jt},
+                ).mappings().first()
+                elapsed_mal = float(row["elapsed_seconds"] or 0)
+                avg_mal = float(baseline_mal["avg_seconds"]) if baseline_mal and baseline_mal["avg_seconds"] is not None else None
+                eta_mal = max(avg_mal - elapsed_mal, 0.0) if avg_mal is not None else None
+                progress_mal = (
+                    min(round((elapsed_mal / avg_mal) * 100.0, 1), 99.0) if avg_mal and avg_mal > 0 else None
+                )
+                raw_details = row["details"]
+                details_obj: dict[str, Any]
+                if isinstance(raw_details, dict):
+                    details_obj = dict(raw_details)
+                else:
+                    details_obj = {}
+                items.append(
+                    {
+                        "kind": "mal",
+                        "run_id": int(row["id"]),
+                        "job_type": jt,
+                        "started_at": row["started_at"],
+                        "elapsed_seconds": elapsed_mal,
+                        "details": details_obj,
+                        "estimated_total_seconds": avg_mal,
+                        "eta_seconds": eta_mal,
+                        "progress_pct": progress_mal,
+                        "history_sample_size": int(baseline_mal["sample_size"] or 0) if baseline_mal else 0,
+                    }
+                )
+
+        if setup_sync_task and not setup_sync_task.done():
+            elapsed_setup: float | None = None
+            if setup_sync_started_at is not None:
+                elapsed_setup = max(
+                    0.0,
+                    (datetime.now(timezone.utc) - setup_sync_started_at).total_seconds(),
+                )
+            items.append(
+                {
+                    "kind": "setup",
+                    "running": True,
+                    "sources": list(setup_sync_sources),
+                    "elapsed_seconds": elapsed_setup,
+                    "stage": "setup wizard initial library sync",
+                    "stage_note": ", ".join(setup_sync_sources) if setup_sync_sources else "full library",
+                }
+            )
+
+        return {
+            "active": bool(items),
+            "items": items,
+            "warehouse_running": wh_running,
+            "mal_running": any(i.get("kind") == "mal" for i in items),
+            "setup_running": bool(setup_sync_task and not setup_sync_task.done()),
         }
 
     @router.get("/api/ui/sync-activity")
@@ -3518,6 +3689,11 @@ def build_router(app_state: Any) -> APIRouter:
             "matcher_enabled": bool(mal_flags["matcher_enabled"]),
             "tagging_enabled": bool(mal_flags["tagging_enabled"]),
             "allow_title_year_match": bool(mal_flags["allow_title_year_match"]),
+            "mal_max_ids_per_run": int(app_state.settings.mal_max_ids_per_run),
+            "mal_min_request_interval_seconds": float(app_state.settings.mal_min_request_interval_seconds),
+            "mal_jikan_min_request_interval_seconds": float(
+                app_state.settings.mal_jikan_min_request_interval_seconds
+            ),
         }
 
     @router.put("/api/config/mal")
@@ -3729,12 +3905,28 @@ def build_router(app_state: Any) -> APIRouter:
         }
 
     @router.post("/api/mal/ingest")
-    async def trigger_mal_ingest() -> dict[str, Any]:
+    async def trigger_mal_ingest(payload: dict[str, Any] | None = None) -> dict[str, Any]:
         svc = app_state.mal_ingest_service
         if svc is None:
             raise HTTPException(status_code=501, detail="MAL ingest service unavailable")
+        payload = payload or {}
+        raw_mid = payload.get("max_ids_per_run", None)
+        max_ids_per_run: int | None
+        if raw_mid is None or raw_mid == "":
+            max_ids_per_run = None
+        else:
+            try:
+                max_ids_per_run = int(raw_mid)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail="max_ids_per_run must be an integer") from e
+            if max_ids_per_run < 1 or max_ids_per_run > 500:
+                raise HTTPException(
+                    status_code=400, detail="max_ids_per_run must be between 1 and 500 (one batch per run)",
+                )
         try:
-            details = await svc.run(reason="manual")
+            details = await svc.run(reason="manual", max_ids_per_run=max_ids_per_run)
+        except MalIngestAlreadyRunningError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"mal ingest failed: {exc}") from exc
         return {"status": "ok", "details": details}
@@ -3745,26 +3937,69 @@ def build_router(app_state: Any) -> APIRouter:
         if svc is None:
             raise HTTPException(status_code=501, detail="MAL ingest service unavailable")
         payload = payload or {}
-        raw_cycles = payload.get("max_cycles", 25)
-        try:
-            max_cycles = max(1, min(int(raw_cycles), 200))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="max_cycles must be an integer") from None
+        import_all = _to_bool(payload.get("import_all", False), False)
+        raw_batch = payload.get("max_ids_per_run", None)
+        batch_for_run: int | None
+        if raw_batch is None or raw_batch == "":
+            batch_for_run = None
+        else:
+            try:
+                batch_for_run = int(raw_batch)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail="max_ids_per_run must be an integer") from e
+            if batch_for_run < 1 or batch_for_run > 500:
+                raise HTTPException(
+                    status_code=400, detail="max_ids_per_run must be between 1 and 500",
+                )
+
         raw_cycle_delay = payload.get("cycle_delay_seconds", 2.0)
         try:
             cycle_delay_seconds = max(0.0, min(float(raw_cycle_delay), 30.0))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="cycle_delay_seconds must be a number") from None
+        if import_all:
+            # Space out batch runs so we do not hammer MAL / Jikan between cycles.
+            cycle_delay_seconds = max(1.0, cycle_delay_seconds)
 
-        cycle_results: list[dict[str, Any]] = []
         with app_state.session_scope() as session:
             pending_before = mal_repo.count_anime_needing_mal_fetch(session)
+
+        batch_size_for_plan = max(
+            1,
+            min(
+                int(batch_for_run) if batch_for_run is not None else int(
+                    app_state.settings.mal_max_ids_per_run
+                ),
+                500,
+            ),
+        )
+        if import_all:
+            if pending_before <= 0:
+                max_cycles = 0
+            else:
+                # +2: small buffer if dub list shifts pending counts mid-run.
+                max_cycles = min(500, (pending_before + batch_size_for_plan - 1) // batch_size_for_plan + 2)
+        else:
+            raw_cycles = payload.get("max_cycles", 25)
+            try:
+                max_cycles = max(1, min(int(raw_cycles), 200))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="max_cycles must be an integer") from None
+
+        # Per run(): None means use MAL_MAX_IDS_PER_RUN from environment/settings.
+        eff_batch_arg: int | None = batch_for_run
+
+        cycle_results: list[dict[str, Any]] = []
         pending_after = pending_before
         for idx in range(max_cycles):
             if pending_after <= 0:
                 break
             try:
-                details = await svc.run(reason="manual_backlog")
+                details = await svc.run(
+                    reason="manual_backlog", max_ids_per_run=eff_batch_arg
+                )
+            except MalIngestAlreadyRunningError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             except Exception as exc:
                 raise HTTPException(status_code=502, detail=f"mal ingest-backlog failed: {exc}") from exc
             with app_state.session_scope() as session:
@@ -3776,6 +4011,7 @@ def build_router(app_state: Any) -> APIRouter:
                     "mal_api_calls": int(details.get("mal_api_calls", 0) or 0),
                     "jikan_calls": int(details.get("jikan_calls", 0) or 0),
                     "mal_fetch_pending_batch": int(details.get("mal_fetch_pending_batch", 0) or 0),
+                    "max_ids_per_run": int(details.get("max_ids_per_run", 0) or 0),
                 }
             )
             # Safety stop: if nothing was fetched in this cycle, further loops are unlikely to progress.
@@ -3797,6 +4033,8 @@ def build_router(app_state: Any) -> APIRouter:
                 "pending_after": pending_after,
                 "cycles_run": len(cycle_results),
                 "max_cycles": max_cycles,
+                "import_all": import_all,
+                "batch_size": batch_size_for_plan,
                 "cycle_delay_seconds": cycle_delay_seconds,
                 "fetched_success": fetched_success,
                 "dubbed_total": dubbed_total,
@@ -3825,6 +4063,22 @@ def build_router(app_state: Any) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"mal tag-sync failed: {exc}") from exc
         return {"status": "ok", "details": details}
+
+    @router.post("/api/mal/reset-data")
+    async def reset_mal_data(payload: dict[str, Any]) -> dict[str, Any]:
+        """Clear MAL dub list snapshots, anime rows, links, externals, checkpoints, and job history.
+
+        Does not modify Sonarr/Radarr warehouse tables, ``app.settings``, or integration credentials.
+        """
+        confirmation = str(payload.get("confirmation", "")).strip().upper()
+        if confirmation != "RESET_MAL":
+            raise HTTPException(status_code=400, detail="confirmation must be RESET_MAL")
+        with app_state.session_scope() as session:
+            mal_repo.clear_mal_synchronized_data(session)
+        return {
+            "status": "ok",
+            "message": "MAL synchronized data cleared (warehouse and app settings unchanged)",
+        }
 
     @router.post("/api/webhooks/replay-dead-letter/{source}")
     async def replay_dead_letter(source: str) -> dict[str, Any]:

@@ -19,6 +19,7 @@ import type {
   SetupStatus,
   WebhookJobRow,
   WebhookQueueRow,
+  WorkStatusResponse,
 } from "./types";
 
 type HttpMethod = "GET" | "POST" | "PUT";
@@ -73,6 +74,7 @@ export const api = {
     requestJson<{ running: boolean; sources: string[] }>("/api/setup/initial-sync-status"),
   syncActivity: () => requestJson<SyncActivityRow[]>("/api/ui/sync-activity"),
   syncProgress: () => requestJson<SyncProgress>("/api/ui/sync-progress"),
+  workStatus: () => requestJson<WorkStatusResponse>("/api/ui/work-status"),
   recentRuns: () => requestJson<RunRow[]>("/api/ui/recent-runs"),
   webhookQueue: () => requestJson<WebhookQueueRow[]>("/api/ui/webhook-queue"),
   webhookJobs: (status = "all", limit = 150) =>
@@ -95,11 +97,20 @@ export const api = {
   saveLoggingConfig: (payload: { level?: string; use_environment_default?: boolean }) =>
     requestJson<{ status: string; effective_level: string }>("/api/config/logging", "PUT", payload),
   uiLogs: (limit = 500) => requestJson<UiLogsResponse>(withParams("/api/ui/logs", { limit })),
-  triggerMalIngest: () => requestJson<{ status: string; details: unknown }>("/api/mal/ingest", "POST"),
-  triggerMalIngestBacklog: (payload?: { max_cycles?: number; cycle_delay_seconds?: number }) =>
-    requestJson<{ status: string; details: unknown }>("/api/mal/ingest-backlog", "POST", payload ?? {}),
+  triggerMalIngest: (payload?: { max_ids_per_run?: number }) =>
+    requestJson<{ status: string; details: unknown }>("/api/mal/ingest", "POST", payload ?? {}),
+  triggerMalIngestBacklog: (payload?: {
+    max_cycles?: number;
+    cycle_delay_seconds?: number;
+    import_all?: boolean;
+    max_ids_per_run?: number;
+  }) => requestJson<{ status: string; details: unknown }>("/api/mal/ingest-backlog", "POST", payload ?? {}),
   triggerMalMatchRefresh: () => requestJson<{ status: string; details: unknown }>("/api/mal/match-refresh", "POST"),
   triggerMalTagSync: () => requestJson<{ status: string; details: unknown }>("/api/mal/tag-sync", "POST"),
+  resetMalData: () =>
+    requestJson<{ status: string; message?: string }>("/api/mal/reset-data", "POST", {
+      confirmation: "RESET_MAL",
+    }),
   saveSchedule: (mode: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/schedules/${mode}`, "PUT", payload),
   webhookConfig: () => requestJson<{ secret_set: boolean }>("/api/config/webhook"),

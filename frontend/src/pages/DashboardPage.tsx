@@ -11,6 +11,7 @@ import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "
 import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
 import { MetricCard } from "../components/nebula/MetricCard";
 import { EmptyState } from "../components/nebula/EmptyState";
+import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -89,6 +90,8 @@ export function DashboardPage(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <WorkStatusPanel title="Sync &amp; pipeline status" />
 
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6">
         <MetricCard label="Total sync runs" value={status.data?.jobs_total ?? "—"} icon={GitBranch} />

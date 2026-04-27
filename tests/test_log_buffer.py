@@ -34,10 +34,10 @@ def test_reconfigure_clears_ring_buffer() -> None:
 
 def test_attach_ring_buffer_replaces_previous_handler() -> None:
     configure_logging("DEBUG")
-    arrsync = logging.getLogger("arrsync")
-    n = len(arrsync.handlers)
-    attach_ring_buffer_handler(JsonFormatter(), logging.DEBUG, arrsync)
-    assert len(arrsync.handlers) == n
+    root = logging.getLogger()
+    n = len(root.handlers)
+    attach_ring_buffer_handler(JsonFormatter(), logging.DEBUG, root)
+    assert len(root.handlers) == n
 
 
 def test_non_json_line_shows_parse_error() -> None:

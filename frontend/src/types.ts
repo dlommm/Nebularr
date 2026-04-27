@@ -64,6 +64,10 @@ export type MalConfigResponse = {
   matcher_enabled: boolean;
   tagging_enabled: boolean;
   allow_title_year_match: boolean;
+  /** One batch of MAL fetches per ingest run; default from server env `MAL_MAX_IDS_PER_RUN`. */
+  mal_max_ids_per_run: number;
+  mal_min_request_interval_seconds: number;
+  mal_jikan_min_request_interval_seconds: number;
 };
 
 export type LoggingConfigResponse = {
@@ -213,10 +217,62 @@ export type SyncProgress = {
   records_processed?: number;
   stage?: string;
   stage_note?: string;
+  /** manual, scheduler, webhook, setup, etc. */
+  trigger?: string;
   estimated_total_seconds?: number | null;
   eta_seconds?: number | null;
   progress_pct?: number | null;
   history_sample_size?: number;
+};
+
+export type WorkWarehouseItem = {
+  kind: "warehouse";
+  run_id: number;
+  source: string;
+  mode: string;
+  instance_name: string;
+  started_at: string;
+  trigger: string;
+  stage: string;
+  stage_note: string;
+  elapsed_seconds: number;
+  records_processed: number;
+  estimated_total_seconds: number | null;
+  eta_seconds: number | null;
+  progress_pct: number | null;
+  history_sample_size: number;
+};
+
+export type WorkMalItem = {
+  kind: "mal";
+  run_id: number;
+  job_type: string;
+  started_at: string;
+  elapsed_seconds: number;
+  details: Record<string, unknown> | null;
+  estimated_total_seconds: number | null;
+  eta_seconds: number | null;
+  progress_pct: number | null;
+  history_sample_size: number;
+};
+
+export type WorkSetupItem = {
+  kind: "setup";
+  running: true;
+  sources: string[];
+  elapsed_seconds: number | null;
+  stage: string;
+  stage_note: string;
+};
+
+export type WorkStatusItem = WorkWarehouseItem | WorkMalItem | WorkSetupItem;
+
+export type WorkStatusResponse = {
+  active: boolean;
+  items: WorkStatusItem[];
+  warehouse_running: boolean;
+  mal_running: boolean;
+  setup_running: boolean;
 };
 
 export type WebhookQueueRow = { status: string; count: number };

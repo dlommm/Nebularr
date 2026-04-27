@@ -49,15 +49,15 @@ def apply_root_log_level(level: str) -> str:
     root.setLevel(numeric)
     for handler in root.handlers:
         handler.setLevel(numeric)
-    # Web UI buffer listens on the ``arrsync`` logger tree so we always capture app logs regardless of
-    # uvicorn's dictConfig (uvicorn loggers use propagate=False). Re-attach if something stripped it.
+    # Web UI buffer on the root logger: captures arrsync.* (via propagation) and third-party loggers
+    # (httpx, sqlalchemy, etc.). Do not also attach to ``arrsync`` or lines would be duplicated.
     arrsync_log = logging.getLogger("arrsync")
     arrsync_log.setLevel(logging.DEBUG)
-    has_ring = any(isinstance(h, RingBufferHandler) for h in arrsync_log.handlers)
+    has_ring = any(isinstance(h, RingBufferHandler) for h in root.handlers)
     if not has_ring:
-        attach_ring_buffer_handler(JsonFormatter(), numeric, arrsync_log)
+        attach_ring_buffer_handler(JsonFormatter(), numeric, root)
     else:
-        for h in arrsync_log.handlers:
+        for h in root.handlers:
             if isinstance(h, RingBufferHandler):
                 h.setLevel(numeric)
     return normalized
@@ -78,5 +78,5 @@ def configure_logging(level: str) -> None:
     clear_ring_buffer()
     arrsync_log = logging.getLogger("arrsync")
     arrsync_log.setLevel(logging.DEBUG)
-    attach_ring_buffer_handler(formatter, numeric, arrsync_log)
+    attach_ring_buffer_handler(formatter, numeric, root)
     root.setLevel(numeric)

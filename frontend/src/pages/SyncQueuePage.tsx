@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
@@ -8,6 +8,7 @@ import { useActionError } from "../hooks/useActionError";
 import { StatusPill } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { ProgressBar } from "../components/nebula/ProgressBar";
+import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Activity, Inbox, ListOrdered, Wrench, Zap } from "lucide-react";
@@ -32,9 +33,12 @@ export function SyncQueuePage(): JSX.Element {
 
   const queryClient = useQueryClient();
   const { setError, runAction } = useActionError();
+  const malConfig = useQuery({ queryKey: ["mal-config"], queryFn: api.malConfig });
   const [malPipelineResult, setMalPipelineResult] = useState<string | null>(null);
   const [malBacklogCycles, setMalBacklogCycles] = useState(10);
   const [malCycleDelaySeconds, setMalCycleDelaySeconds] = useState(2);
+  const [malBatchSize, setMalBatchSize] = useState(200);
+  const [malImportAll, setMalImportAll] = useState(false);
 
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.recentRuns, refetchInterval: 15_000 });
   const webhookQueue = useQuery({ queryKey: ["webhook-queue"], queryFn: api.webhookQueue, refetchInterval: 15_000 });
@@ -44,7 +48,15 @@ export function SyncQueuePage(): JSX.Element {
     refetchInterval: 15_000,
   });
   const syncProgress = useQuery({ queryKey: ["sync-progress"], queryFn: api.syncProgress, refetchInterval: 2_000 });
+  const workStatus = useQuery({ queryKey: ["work-status"], queryFn: api.workStatus, refetchInterval: 2_000 });
   const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 15_000 });
+
+  useEffect(() => {
+    const n = malConfig.data?.mal_max_ids_per_run;
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      setMalBatchSize(Math.max(1, Math.min(500, n)));
+    }
+  }, [malConfig.data?.mal_max_ids_per_run]);
 
   const runFullSync = (source: "sonarr" | "radarr", actionLabel: string) => {
     const name = source === "sonarr" ? "Sonarr" : "Radarr";
@@ -70,6 +82,7 @@ export function SyncQueuePage(): JSX.Element {
       const ingestBacklog = await api.triggerMalIngestBacklog({
         max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
         cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
+        max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
       });
       const matcher = await api.triggerMalMatchRefresh();
       const tagSync = await api.triggerMalTagSync();
@@ -188,7 +201,7 @@ export function SyncQueuePage(): JSX.Element {
                   <>
                     <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
                       <span>
-                        {syncProgress.data.source}/{syncProgress.data.mode}
+                        {syncProgress.data.source}/{syncProgress.data.mode} · {syncProgress.data.trigger ?? "—"}
                       </span>
                       <span className="text-muted-foreground">
                         {syncProgress.data.stage}
@@ -377,9 +390,11 @@ export function SyncQueuePage(): JSX.Element {
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {syncProgress.data?.running
-                    ? `Running: ${syncProgress.data.source}/${syncProgress.data.mode} — ${fmtDuration(syncProgress.data.elapsed_seconds)}`
-                    : "Idle — no manual sync in progress."}
+                  {workStatus.data?.active
+                    ? `${workStatus.data.items.length} job(s) active (warehouse, MAL, and/or setup). See the status panel below.`
+                    : syncProgress.data?.running
+                      ? `Running: ${syncProgress.data.source}/${syncProgress.data.mode} (${syncProgress.data.trigger ?? "unknown"}) — ${fmtDuration(syncProgress.data.elapsed_seconds)}`
+                      : "Idle — no sync or MAL pipeline in progress."}
                 </p>
               </CardContent>
             </GlassCard>
@@ -410,6 +425,27 @@ export function SyncQueuePage(): JSX.Element {
                 >
                   Reset data
                 </Button>
+                <Button
+                  variant="outline"
+                  className="w-fit border-amber-500/50 text-amber-100 hover:bg-amber-500/10"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Reset MAL data only? This clears dub list history, MAL anime rows, warehouse links, external IDs, manual MAL links, ingest checkpoints, tag apply state, and MAL job history. Sonarr/Radarr warehouse and app settings (including your MAL client ID) are not changed.",
+                      )
+                    ) {
+                      const typed = window.prompt("Type RESET_MAL to confirm");
+                      if (typed?.trim().toUpperCase() === "RESET_MAL") {
+                        void runAction(async () => {
+                          await api.resetMalData();
+                          await queryClient.invalidateQueries({ queryKey: ["status"] });
+                        }, "reset MAL data");
+                      }
+                    }
+                  }}
+                >
+                  Reset MAL Data
+                </Button>
               </CardContent>
             </GlassCard>
           </div>
@@ -419,9 +455,32 @@ export function SyncQueuePage(): JSX.Element {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Large ingests can take several minutes. Requires MAL client id in Integrations or <code className="rounded bg-white/5 px-1">MAL_CLIENT_ID</code>.
+                Large ingests can take a long time. Requires MAL client id in Integrations or{" "}
+                <code className="rounded bg-white/5 px-1">MAL_CLIENT_ID</code>. Each run fetches at most one batch of IDs
+                (default from server: {malConfig.data?.mal_max_ids_per_run ?? "…"} per batch). MAL and Jikan requests are
+                throttled per server settings (
+                {malConfig.data ? `${malConfig.data.mal_min_request_interval_seconds}s` : "…"} /{" "}
+                {malConfig.data ? `${malConfig.data.mal_jikan_min_request_interval_seconds}s` : "…"} Jikan).
+              </p>
+              <p className="text-sm text-muted-foreground">
+                <strong className="text-foreground/90">Matching:</strong> links use TVDB/TMDB/IMDB when Jikan exposes them.
+                If you have few externals, enable <strong className="text-foreground/90">allow title+year</strong> under
+                Integrations → MyAnimeList, then run match refresh — the matcher uses main title, alternate titles
+                (including Jikan variants), and year (±1 year) against your Sonarr/Radarr warehouse titles.
               </p>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <label className="pill">
+                  IDs per batch
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={malBatchSize}
+                    onChange={(event) => setMalBatchSize(Math.max(1, Math.min(500, Number(event.target.value || 200))))}
+                    style={{ width: 72, marginLeft: 8 }}
+                    title="MAL_MAX_IDS_PER_RUN override for this action (1–500)"
+                  />
+                </label>
                 <label className="pill">
                   backlog cycles
                   <input
@@ -431,6 +490,7 @@ export function SyncQueuePage(): JSX.Element {
                     value={malBacklogCycles}
                     onChange={(event) => setMalBacklogCycles(Number(event.target.value || 10))}
                     style={{ width: 80, marginLeft: 8 }}
+                    disabled={malImportAll}
                   />
                 </label>
                 <label className="pill">
@@ -445,9 +505,25 @@ export function SyncQueuePage(): JSX.Element {
                     style={{ width: 80, marginLeft: 8 }}
                   />
                 </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={malImportAll}
+                    onChange={(event) => setMalImportAll(event.target.checked)}
+                  />
+                  import all pending (auto cycles)
+                </label>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalIngest(), "MAL ingest")}>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    void runMalPipeline(
+                      () => api.triggerMalIngest({ max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)) }),
+                      "MAL ingest",
+                    )
+                  }
+                >
                   Run MAL ingest
                 </Button>
                 <Button
@@ -456,14 +532,39 @@ export function SyncQueuePage(): JSX.Element {
                     void runMalPipeline(
                       () =>
                         api.triggerMalIngestBacklog({
+                          import_all: malImportAll,
                           max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
                           cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
+                          max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
                         }),
                       "MAL ingest backlog",
                     )
                   }
                 >
                   Process pending backlog
+                </Button>
+                <Button
+                  variant="default"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Import all pending MAL fetches? This runs many batches until the queue is empty (or cap). Keep the tab open; it can take a long time.",
+                      )
+                    ) {
+                      return;
+                    }
+                    void runMalPipeline(
+                      () =>
+                        api.triggerMalIngestBacklog({
+                          import_all: true,
+                          max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
+                          cycle_delay_seconds: Math.max(1, Math.min(30, malCycleDelaySeconds)),
+                        }),
+                      "MAL import all pending",
+                    );
+                  }}
+                >
+                  Import all pending
                 </Button>
                 <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalMatchRefresh(), "MAL match refresh")}>
                   Run match refresh
@@ -482,6 +583,12 @@ export function SyncQueuePage(): JSX.Element {
           </GlassCard>
         </TabsContent>
       </Tabs>
+
+      <WorkStatusPanel
+        title="Live status &amp; ETA"
+        description="All in-flight work: Sonarr/Radarr warehouse syncs (any trigger), MAL ingest/matcher/tag, and setup-wizard library import. Progress uses historical run times when available; MAL ingest shows batch position while running."
+        dense
+      />
     </div>
   );
 }

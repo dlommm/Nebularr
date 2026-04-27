@@ -82,6 +82,22 @@ def insert_mal_job_run(session: Session, job_type: str) -> int:
     return int(row)
 
 
+def merge_mal_job_run_details(session: Session, run_id: int, patch: dict[str, Any]) -> None:
+    """Merge *patch* into ``details`` for a running job (for live ingest progress in the Web UI)."""
+    if not patch:
+        return
+    session.execute(
+        text(
+            """
+            update app.mal_job_run
+            set details = coalesce(details, '{}'::jsonb) || cast(:patch as jsonb)
+            where id = :id and status = 'running'
+            """
+        ),
+        {"id": run_id, "patch": json.dumps(patch, default=str)},
+    )
+
+
 def finish_mal_job_run(
     session: Session,
     run_id: int,
@@ -173,6 +189,20 @@ def delete_links_for_undubbed(session: Session) -> None:
             """
         )
     )
+
+
+def clear_mal_synchronized_data(session: Session) -> None:
+    """Remove all MAL pipeline data. Does not touch warehouse.*, app.settings, or integrations.
+
+    Order: dub list first, then ``mal.anime`` (CASCADE removes links, externals, manual rows,
+    fetch queue), then auxiliary MAL tables and job bookkeeping.
+    """
+    session.execute(text("truncate table mal.dub_list_fetch restart identity cascade"))
+    session.execute(text("truncate table mal.anime restart identity cascade"))
+    session.execute(text("truncate table mal.ingest_checkpoint restart identity cascade"))
+    session.execute(text("truncate table mal.tag_apply_state restart identity cascade"))
+    session.execute(text("delete from app.mal_job_run"))
+    session.execute(text("delete from app.job_lock where lock_name = 'mal:ingest'"))
 
 
 def upsert_manual_warehouse_links(session: Session) -> int:

@@ -8,9 +8,20 @@ from arrsync.db import session_scope
 from arrsync.mal import repository as mal_repo
 from arrsync.mal.externals import externals_from_jikan_data
 from arrsync.mal.http_clients import DubInfoClient, JikanClient, MalApiClient
+from arrsync.services import repository as repo
 from arrsync.services.mal_config_store import read_mal_client_id
 
 log = logging.getLogger(__name__)
+
+
+class MalIngestAlreadyRunningError(RuntimeError):
+    """Raised when a MAL ingest job is already in progress."""
+
+
+def _ingest_batch_limit(settings: Settings, max_ids_per_run: int | None) -> int:
+    """Use request override or env default, clamp to a safe range for one run."""
+    raw = int(max_ids_per_run) if max_ids_per_run is not None else int(settings.mal_max_ids_per_run)
+    return max(1, min(raw, 500))
 
 
 class MalIngestService:
@@ -20,9 +31,25 @@ class MalIngestService:
         self.dub_client = DubInfoClient(settings)
         self.jikan_client = JikanClient(settings)
 
-    async def run(self, *, reason: str = "manual") -> dict[str, Any]:
-        details: dict[str, Any] = {"reason": reason, "dub_list_unchanged": False, "mal_api_calls": 0, "jikan_calls": 0}
+    async def run(
+        self,
+        *,
+        reason: str = "manual",
+        max_ids_per_run: int | None = None,
+    ) -> dict[str, Any]:
+        details: dict[str, Any] = {
+            "reason": reason,
+            "dub_list_unchanged": False,
+            "mal_api_calls": 0,
+            "jikan_calls": 0,
+        }
+        batch_size = _ingest_batch_limit(self.settings, max_ids_per_run)
+        details["max_ids_per_run"] = batch_size
+        lock_name = "mal:ingest"
+        owner_id = f"mal_ingest:{id(self)}"
         with session_scope(self.session_factory) as session:
+            if not repo.try_job_lock(session, lock_name=lock_name, owner_id=owner_id, lease_seconds=3600):
+                raise MalIngestAlreadyRunningError("MAL ingest is already running")
             run_id = mal_repo.insert_mal_job_run(session, "ingest")
             resolved_mal_client_id = read_mal_client_id(session, self.settings)
         mal_client = MalApiClient(self.settings, client_id=resolved_mal_client_id)
@@ -59,7 +86,7 @@ class MalIngestService:
                     details["dub_flags_cleared"] = cleared
                     details["dub_list_fetch_id"] = fetch_id
 
-                limit = max(1, int(self.settings.mal_max_ids_per_run))
+                limit = batch_size
                 pending = mal_repo.list_anime_needing_mal_fetch(session, limit)
                 details["mal_fetch_pending_batch"] = len(pending)
 
@@ -72,9 +99,22 @@ class MalIngestService:
                     mal_repo.finish_mal_job_run(session, run_id, "failed", details, err_msg)
                 raise ValueError(err_msg)
 
-            for mal_id in pending:
+            for idx, mal_id in enumerate(pending):
                 data, code, err = await mal_client.get_anime(mal_id)
                 details["mal_api_calls"] += 1
+                if idx % 5 == 0 or idx == len(pending) - 1:
+                    with session_scope(self.session_factory) as session:
+                        mal_repo.merge_mal_job_run_details(
+                            session,
+                            run_id,
+                            {
+                                "ingest_progress": {
+                                    "batch_index": idx + 1,
+                                    "batch_total": len(pending),
+                                    "current_mal_id": mal_id,
+                                }
+                            },
+                        )
                 with session_scope(self.session_factory) as session:
                     if err == "not_found" or code == 404:
                         mal_repo.upsert_anime_from_mal_api(
@@ -107,4 +147,7 @@ class MalIngestService:
             with session_scope(self.session_factory) as session:
                 mal_repo.finish_mal_job_run(session, run_id, "failed", details, str(exc))
             raise
+        finally:
+            with session_scope(self.session_factory) as session:
+                repo.release_job_lock(session, lock_name=lock_name, owner_id=owner_id)
         return details

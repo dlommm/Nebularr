@@ -30,23 +30,32 @@ def extract_ids_from_url(url: str) -> list[tuple[str, str]]:
     return out
 
 
+def _collect_urls(value: Any) -> list[str]:
+    urls: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {"url", "link"} and isinstance(nested, str):
+                s = nested.strip()
+                if s:
+                    urls.append(s)
+            else:
+                urls.extend(_collect_urls(nested))
+    elif isinstance(value, list):
+        for item in value:
+            urls.extend(_collect_urls(item))
+    elif isinstance(value, str):
+        s = value.strip()
+        if s.startswith("http://") or s.startswith("https://"):
+            urls.append(s)
+    return urls
+
+
 def externals_from_jikan_data(data: dict[str, Any]) -> list[tuple[str, str]]:
-    """Parse Jikan v4 anime `data` (full resource) for tvdb/tmdb/imdb."""
+    """Parse Jikan v4 anime payload for tvdb/tmdb/imdb IDs from any URL-bearing fields."""
     found: list[tuple[str, str]] = []
-    externals = data.get("external") or data.get("externals") or []
-    if not isinstance(externals, list):
-        return found
-    for item in externals:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name", "")).lower()
-        url = str(item.get("url", ""))
+    for url in _collect_urls(data):
         pairs = extract_ids_from_url(url)
         if pairs:
-            found.extend(pairs)
-            continue
-        if "imdb" in name and url:
-            pairs = extract_ids_from_url(url)
             found.extend(pairs)
     # de-dupe by site keeping first
     seen: set[str] = set()

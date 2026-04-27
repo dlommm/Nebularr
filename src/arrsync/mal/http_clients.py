@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -61,38 +62,87 @@ class MalApiClient:
                 await asyncio.sleep(wait)
             self._last_at = loop.time()
 
+    def _mal_response_is_api_error(self, resp: httpx.Response, data: Any) -> bool:
+        if "/error.json" in str(resp.url):
+            return True
+        # Some error payloads are JSON 200 bodies without staying on error.json in the URL.
+        if isinstance(data, dict) and isinstance(data.get("message"), str) and data.get("code") is not None:
+            return True
+        return False
+
     async def get_anime(self, mal_id: int) -> tuple[dict[str, Any] | None, int, str | None]:
         if not self.client_id:
             raise RuntimeError("MAL_CLIENT_ID is not configured")
         url = f"{MAL_API_BASE}/anime/{mal_id}"
         headers = {"X-MAL-CLIENT-ID": self.client_id}
-        params = {"fields": MAL_ANIME_DETAIL_FIELDS}
+        # Try progressively smaller field sets, then no fields (MAL default payload).
+        field_variants: list[str | None] = [
+            MAL_ANIME_DETAIL_FIELDS,
+            "id,title,alternative_titles,start_date,media_type,status,num_episodes,mean,nsfw",
+            "id,title,start_date,media_type,status,num_episodes",
+            None,
+        ]
         last_err: Exception | None = None
-        for attempt in range(1, self.retry + 1):
-            try:
-                await self._throttle()
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.get(url, headers=headers, params=params)
-                    code = resp.status_code
-                    if code == 404:
-                        return None, code, "not_found"
-                    if code in {429, 500, 502, 503, 504} and attempt < self.retry:
-                        await asyncio.sleep(0.5 * attempt)
-                        continue
-                    resp.raise_for_status()
-                    return resp.json(), code, None
-            except httpx.HTTPStatusError as exc:
-                last_err = exc
-                if exc.response.status_code == 404:
-                    return None, 404, "not_found"
-                if attempt >= self.retry:
-                    break
-                await asyncio.sleep(0.5 * attempt)
-            except Exception as exc:
-                last_err = exc
-                if attempt >= self.retry:
-                    break
-                await asyncio.sleep(0.5 * attempt)
+        for fields in field_variants:
+            for attempt in range(1, self.retry + 1):
+                try:
+                    await self._throttle()
+                    params = {"fields": fields} if fields else {}
+                    async with httpx.AsyncClient(
+                        timeout=self.timeout,
+                        follow_redirects=True,
+                    ) as client:
+                        resp = await client.get(url, headers=headers, params=params)
+                        code = resp.status_code
+                        if code == 404:
+                            return None, code, "not_found"
+                        if code in {429, 500, 502, 503, 504} and attempt < self.retry:
+                            await asyncio.sleep(0.5 * attempt)
+                            continue
+                        try:
+                            resp.raise_for_status()
+                        except httpx.HTTPStatusError as exc:
+                            last_err = exc
+                            if exc.response.status_code == 404:
+                                return None, 404, "not_found"
+                            if exc.response.status_code in {400, 401, 403, 422}:
+                                text_snippet = re.sub(r"\s+", " ", (exc.response.text or ""))[:240]
+                                log.warning(
+                                    "mal api request rejected",
+                                    extra={
+                                        "mal_id": mal_id,
+                                        "status_code": exc.response.status_code,
+                                        "response_text": text_snippet,
+                                        "fields": fields or "",
+                                    },
+                                )
+                            if attempt >= self.retry:
+                                break
+                            await asyncio.sleep(0.5 * attempt)
+                            continue
+                        data: Any = resp.json()
+                        if self._mal_response_is_api_error(resp, data):
+                            log.debug(
+                                "mal api fields rejected, trying next variant",
+                                extra={"mal_id": mal_id, "fields": fields or "(none)"},
+                            )
+                            break
+                        if not isinstance(data, dict):
+                            last_err = ValueError("mal response is not an object")
+                            break
+                        return data, code, None
+                except httpx.HTTPStatusError as exc:
+                    last_err = exc
+                    if exc.response.status_code == 404:
+                        return None, 404, "not_found"
+                    if attempt >= self.retry:
+                        break
+                    await asyncio.sleep(0.5 * attempt)
+                except Exception as exc:
+                    last_err = exc
+                    if attempt >= self.retry:
+                        break
+                    await asyncio.sleep(0.5 * attempt)
         return None, 0, str(last_err) if last_err else "error"
 
 

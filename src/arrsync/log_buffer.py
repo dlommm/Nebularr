@@ -32,7 +32,9 @@ def clear_ring_buffer() -> None:
 
 
 def attach_ring_buffer_handler(formatter: logging.Formatter, level: int, target: logging.Logger) -> None:
-    """Register (or replace) the ring-buffer handler on *target* (use the ``arrsync`` logger for app logs)."""
+    """Register (or replace) the ring-buffer handler on *target* (use the **root** logger to capture
+    httpx, SQLAlchemy, and other app-adjacent libraries that log outside ``arrsync.*``).
+    """
     global _attached_handler, _ring_target
     with _lock:
         if _attached_handler is not None and _ring_target is not None:

@@ -31,8 +31,12 @@ export function LogsPage(): JSX.Element {
       <CardHeader>
         <CardTitle className="text-lg">Application logs</CardTitle>
         <CardDescription>
-          In-memory lines on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"}). arrsync.* loggers — not
-          uvicorn access. tune level under Integrations → application logging.
+          In-memory lines on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"}) at the effective level
+          below. The buffer attaches to the root logger, so you should see the same <strong className="text-foreground/90">application
+          and library</strong> log lines (for example <code className="rounded bg-white/5 px-1">httpx</code>,{" "}
+          <code className="rounded bg-white/5 px-1">sqlalchemy</code>, <code className="rounded bg-white/5 px-1">arrsync</code>) that
+          appear in the process stdout. <strong className="text-foreground/90">Uvicorn access logs</strong> may still be stdout-only
+          if their loggers do not propagate. Tune level under Integrations → application logging.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
