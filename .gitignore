@@ -26,7 +26,6 @@ htmlcov/
 
 *.log
 Backlog/
-# Editor/agent config (ignore by default; track shared Cursor skills for the team)
-.cursor/*
-!.cursor/skills/
-!.cursor/skills/**
+
+# Cursor IDE/agent — entire tree stays local-only (never GitHub/Git remotes).
+.cursor/

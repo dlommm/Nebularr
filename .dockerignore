@@ -1,5 +1,7 @@
 .git
 .github
+
+# Cursor / IDE — excluded from Docker context (.cursor excluded from repo remotes via .gitignore).
 .cursor/
 .venv
 __pycache__
