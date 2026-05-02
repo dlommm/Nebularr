@@ -66,6 +66,19 @@ def test_summarize_http_status_error_truncates_body() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ensure_tag_id_matches_existing_tag_case_insensitively() -> None:
+    client = ArrClient(_settings(), "sonarr")
+    label = "English-Dubbed-Anime"
+
+    async def fake_request(method: str, path: str, params: dict | None = None, json: dict | None = None):  # type: ignore[no-untyped-def]
+        assert method == "GET" and path == "/api/v3/tag"
+        return [{"id": 77, "label": "english-dubbed-anime"}]
+
+    client._request = fake_request  # type: ignore[assignment]
+    assert await client.ensure_tag_id(label) == 77
+
+
+@pytest.mark.asyncio
 async def test_ensure_tag_id_relists_when_post_fails_but_tag_exists() -> None:
     client = ArrClient(_settings(), "sonarr")
     label = "English-Dubbed-Anime"

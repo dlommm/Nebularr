@@ -180,9 +180,18 @@ class ArrClient:
         return payload if isinstance(payload, list) else []
 
     async def ensure_tag_id(self, label: str) -> int:
+        """Resolve tag id by label. Matching is case-insensitive (Sonarr/Radarr SQLite UNIQUE on Label is)."""
+        want = label.strip()
+        if not want:
+            raise ValueError("tag label must be non-empty after stripping whitespace")
+        want_key = want.casefold()
+
+        def _row_label_key(row: dict[str, Any]) -> str:
+            return str(row.get("label", "")).strip().casefold()
+
         def _find_tag_id(rows: list[dict[str, Any]]) -> int | None:
             for row in rows:
-                if str(row.get("label", "")).strip() == label:
+                if _row_label_key(row) == want_key:
                     return int(row["id"])
             return None
 
@@ -194,7 +203,7 @@ class ArrClient:
             created = await self._request(
                 "POST",
                 "/api/v3/tag",
-                json={"label": label},
+                json={"label": want},
             )
             return int(created["id"])
         except Exception:
