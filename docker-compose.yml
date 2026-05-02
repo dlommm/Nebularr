@@ -23,7 +23,7 @@ services:
     build:
       context: .
       args:
-        APP_VERSION: ${APP_VERSION:-1.9.2}
+        APP_VERSION: ${APP_VERSION:-1.9.3}
         GIT_SHA: ${APP_GIT_SHA:-release}
     user: "1001:1001"
     read_only: true

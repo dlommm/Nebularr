@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # Multi-stage: wheel build (no repo dev junk), minimal runtime, non-root.
+# Base: Python 3.14 slim (matches official refresh on Debian trixie; aligns with Scout base-image bumps).
 
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -18,9 +19,9 @@ COPY alembic ./alembic
 RUN pip install --no-cache-dir pip==26.1 setuptools==82.0.1 wheel==0.47.0 \
     && pip wheel --no-cache-dir --wheel-dir /wheels .
 
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
-ARG APP_VERSION=1.9.2
+ARG APP_VERSION=1.9.3
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -32,7 +33,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Trixie's libcap2 is still vulnerable (CVE-2026-4878); sid ships fixed 1:2.78-1. Sources list is transient; omit sid once trixie packages reach that revision.
+# Refresh OS + pull fixed libcap2 from sid until trixie catalog carries >= 1:2.78-1 (CVE-2026-4878 upstream fix path).
 RUN apt-get update \
     && apt-get upgrade -y -o Dpkg::Options::="--force-confold" \
     && echo deb http://deb.debian.org/debian sid main > /etc/apt/sources.list.d/debian-sid.list \

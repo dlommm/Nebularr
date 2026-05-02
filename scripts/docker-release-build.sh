@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Build the Nebularr app image with Buildx and **no** SLSA provenance / SBOM attestations.
-# That matches what we recommend for `docker push` in docs/skills: fewer spurious
-# package rows in Docker Hub Scout (e.g. Go stdlib) that come from attestation metadata,
-# not the runtime root filesystem. Trade-off: less supply-chain attestation on the image.
+# Multi-platform Hub release builds (default: SBOM + SLSA provenance for Docker Scout policies).
 #
-# **--push** always builds a **multi-platform manifest** (default: linux/amd64 + linux/arm64)
-# so Docker Hub serves the right image for both Intel/AMD and ARM64 (e.g. Apple Silicon,
-# many NAS devices). Override with PLATFORMS=... if you need a different set.
+# **Attestations (default ON for `--push`):** attaches BuildKit SBOM and provenance (mode=max) to
+# the registry manifest so Docker Scout "Missing supply chain attestation(s)" policies can clear.
+# Opt out noisy/experimental scanners: `DOCKER_ATTESTATIONS=0 ./scripts/docker-release-build.sh --push`
 #
-# **--load** uses a **single** platform (native) because Buildx cannot --load a manifest list.
+# If push fails with attestation/driver errors on self-hosted builders, switch the builder driver:
+#   docker buildx create --name nb --driver docker-container --use --bootstrap
+# or disable attestations with DOCKER_ATTESTATIONS=0 above.
+#
+# **--push** builds a manifest list (linux/amd64 + linux/arm64 default).
+#
+# **--load** stays single-arch and keeps attestations off (manifest index + `--load` is unsupported).
 #
 # Prereq: `cd frontend && npm run build` so src/arrsync/web/dist is current.
-# Usage:
-#   ./scripts/docker-release-build.sh --load
-#   ./scripts/docker-release-build.sh --push
-#   IMAGE=yourname/nebularr ./scripts/docker-release-build.sh --load
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,12 +29,17 @@ PY_GET_VER='import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject
 APP_VERSION="$(python3 -c "$PY_GET_VER")"
 GIT_SHA="$(git rev-parse --short HEAD)"
 IMAGE="${IMAGE:-dendlomm/nebularr}"
-# Docker Hub: publish amd64 + arm64 so pulls work on all common hosts.
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 
+DO_ATTEST="${DOCKER_ATTESTATIONS:-1}"
+
+attestation_flags=(--provenance=false --sbom=false)
+if [[ "$mode" == "--push" && "$DO_ATTEST" == "1" ]]; then
+  attestation_flags=(--provenance=mode=max --sbom=true)
+fi
+
 common_flags=(
-  --provenance=false
-  --sbom=false
+  "${attestation_flags[@]}"
   -f Dockerfile
   --build-arg "APP_VERSION=${APP_VERSION}"
   --build-arg "GIT_SHA=${GIT_SHA}"
@@ -43,18 +47,19 @@ common_flags=(
   -t "${IMAGE}:${APP_VERSION}"
 )
 
-# --provenance / --sbom: omit attestations to keep Hub Scout closer to runtime content.
 if [[ "$mode" == "--push" ]]; then
   docker buildx build \
     "${common_flags[@]}" \
     --platform "${PLATFORMS}" \
     --push \
     .
-  echo "Pushed ${IMAGE}:latest and ${IMAGE}:${APP_VERSION} (platforms: ${PLATFORMS}, git ${GIT_SHA}, app ${APP_VERSION})"
+  echo "Pushed ${IMAGE}:latest and ${IMAGE}:${APP_VERSION}" \
+    "(platforms: ${PLATFORMS}, git ${GIT_SHA}, app ${APP_VERSION}, attestations: ${DO_ATTEST})"
 else
   docker buildx build \
     "${common_flags[@]}" \
     --load \
     .
-  echo "Loaded ${IMAGE}:latest and ${IMAGE}:${APP_VERSION} (local single-arch, git ${GIT_SHA}, app ${APP_VERSION})"
+  echo "Loaded ${IMAGE}:latest and ${IMAGE}:${APP_VERSION}" \
+    "(local single-arch, git ${GIT_SHA}, app ${APP_VERSION}; attestations off for --load)"
 fi

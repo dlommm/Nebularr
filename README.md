@@ -8,6 +8,8 @@ Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into 
 
 **Repositories and images:** `.cursor/` stays local-only (not for Git remotes or Docker layers); see **[AGENTS.md](./AGENTS.md)**. After cloning, run **`./scripts/configure-git-hooks.sh`** so **`Co-authored-by: Cursor`** lines are stripped automatically at commit time.
 
+**Supply chain:** Hub releases built with **`./scripts/docker-release-build.sh --push`** attach **SBOM + provenance (mode=max)** by default (`DOCKER_ATTESTATIONS=1`) so **[Docker Scout](https://scout.docker.com/)** policy checks such as attestations pass. Locally **`--load`** skips attestations. Image base **`python:3.14-slim`** tracks current slim refresh; distro CVE rows without patches must wait on Debian/Python image updates (`DOCKER_ATTESTATIONS=0` opts out).
+
 ## What it does
 
 - Runs **first full sync** and **incremental sync** (history polling).
