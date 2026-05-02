@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir pip==26.0.1 setuptools==82.0.1 wheel==0.47.0 \
 
 FROM python:3.13-slim AS runtime
 
-ARG APP_VERSION=1.9.0
+ARG APP_VERSION=1.9.1
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
