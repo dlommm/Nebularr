@@ -13,6 +13,17 @@ from arrsync.models import CapabilitySet
 log = logging.getLogger(__name__)
 
 
+def _summarize_arr_http_error(exc: BaseException) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        body = (exc.response.text or "").strip()
+        if len(body) > 400:
+            body = body[:400] + "..."
+        if body:
+            return f"HTTP {exc.response.status_code} {body}"
+        return f"HTTP {exc.response.status_code} {exc.response.reason_phrase}"
+    return str(exc) or type(exc).__name__
+
+
 class ArrClient:
     def __init__(
         self,
@@ -84,7 +95,9 @@ class ArrClient:
                 if attempt >= self.retry_attempts:
                     break
                 await asyncio.sleep(0.5 * attempt)
-        raise RuntimeError(f"{self.source} request failed: {method} {path}") from last_err
+        assert last_err is not None
+        detail = _summarize_arr_http_error(last_err)
+        raise RuntimeError(f"{self.source} request failed: {method} {path}: {detail}") from last_err
 
     async def system_status(self) -> dict[str, Any]:
         return await self._request("GET", "/api/v3/system/status")
@@ -167,16 +180,30 @@ class ArrClient:
         return payload if isinstance(payload, list) else []
 
     async def ensure_tag_id(self, label: str) -> int:
+        def _find_tag_id(rows: list[dict[str, Any]]) -> int | None:
+            for row in rows:
+                if str(row.get("label", "")).strip() == label:
+                    return int(row["id"])
+            return None
+
         tags = await self.list_tags()
-        for row in tags:
-            if str(row.get("label", "")).strip() == label:
-                return int(row["id"])
-        created = await self._request(
-            "POST",
-            "/api/v3/tag",
-            json={"label": label},
-        )
-        return int(created["id"])
+        existing = _find_tag_id(tags)
+        if existing is not None:
+            return existing
+        try:
+            created = await self._request(
+                "POST",
+                "/api/v3/tag",
+                json={"label": label},
+            )
+            return int(created["id"])
+        except Exception:
+            # Duplicate label, race with another writer, or list_tags shape mismatch on first pass.
+            tags = await self.list_tags()
+            existing = _find_tag_id(tags)
+            if existing is not None:
+                return existing
+            raise
 
     async def put_series(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.source != "sonarr":

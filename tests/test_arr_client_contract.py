@@ -1,7 +1,8 @@
+import httpx
 import pytest
 
 from arrsync.config import Settings
-from arrsync.services.arr_client import ArrClient
+from arrsync.services.arr_client import ArrClient, _summarize_arr_http_error
 
 
 def _settings() -> Settings:
@@ -51,6 +52,42 @@ async def test_list_history_since_reads_records_payload_shape() -> None:
     client._request = fake_request  # type: ignore[assignment]
     records = await client.list_history_since("2026-04-01T00:00:00Z")
     assert records == [{"id": 1}, {"id": 2}]
+
+
+def test_summarize_http_status_error_truncates_body() -> None:
+    request = httpx.Request("POST", "http://sonarr.local/api/v3/tag")
+    long_body = "x" * 500
+    response = httpx.Response(400, request=request, text=long_body)
+    err = httpx.HTTPStatusError("bad", request=request, response=response)
+    summary = _summarize_arr_http_error(err)
+    assert summary.startswith("HTTP 400")
+    assert len(summary) < len(long_body) + 50
+    assert summary.endswith("...")
+
+
+@pytest.mark.asyncio
+async def test_ensure_tag_id_relists_when_post_fails_but_tag_exists() -> None:
+    client = ArrClient(_settings(), "sonarr")
+    label = "English-Dubbed-Anime"
+    calls: list[tuple[str, str]] = []
+    get_tag_calls = 0
+
+    async def fake_request(method: str, path: str, params: dict | None = None, json: dict | None = None):  # type: ignore[no-untyped-def]
+        nonlocal get_tag_calls
+        calls.append((method, path))
+        if method == "GET" and path == "/api/v3/tag":
+            get_tag_calls += 1
+            if get_tag_calls == 1:
+                return []
+            return [{"id": 42, "label": label}]
+        if method == "POST" and path == "/api/v3/tag":
+            raise RuntimeError("duplicate tag")
+        raise AssertionError((method, path))
+
+    client._request = fake_request  # type: ignore[assignment]
+    assert await client.ensure_tag_id(label) == 42
+    assert get_tag_calls == 2
+    assert ("POST", "/api/v3/tag") in calls
 
 
 @pytest.mark.asyncio
