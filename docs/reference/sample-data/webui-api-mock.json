@@ -1,7 +1,7 @@
 {
   "healthz": {
     "status": "ok",
-    "version": "1.9.1",
+    "version": "1.9.2",
     "git_sha": "mocksha",
     "time": "2026-04-27T02:27:00Z"
   },

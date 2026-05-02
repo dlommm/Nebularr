@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8080
     app_timezone: str = "UTC"
-    app_version: str = "1.9.1"
+    app_version: str = "1.9.2"
     app_git_sha: str = "release"
 
     database_url: str = Field(

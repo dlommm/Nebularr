@@ -2,3 +2,6 @@
 # Re-scan after base image updates; remove entries when Trivy reports fixed versions.
 CVE-2025-69720
 CVE-2026-29111
+# Debian security-tracker: libcap2 CVE-2026-4878 fixed in sid/forky as 1:2.78-1; Dockerfile installs that from sid.
+# Trivy/AVD still reports 1:2.78-1 as affected with no Fixed Version (DB lag vs Debian). Drop this line when scans clear.
+CVE-2026-4878
