@@ -40,3 +40,14 @@ fi
 ```
 
 If there is any match: **rewrite** those commits (`git rebase -i …` / `--reword`, `git commit --amend`, etc.) until the trailer is gone. Do not “fix forward” while leaving polluted history unless the branch was never pushed.
+
+## Automated strip (recommended for each clone)
+
+This repository ships **`.githooks/commit-msg`**, which removes forbidden Cursor attribution lines whenever Git records a commit. Point Git at it once:
+
+```bash
+./scripts/configure-git-hooks.sh
+# or: git config core.hooksPath .githooks && chmod +x .githooks/commit-msg
+```
+
+`core.hooksPath` is **local** (never committed); run the script again after cloning on a new machine.

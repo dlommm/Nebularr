@@ -6,7 +6,7 @@
 
 Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into PostgreSQL for analytics and the built-in Web UI.
 
-**Repositories and images:** `.cursor/` is local-only (not for Git remotes or OCI layers) — see **[AGENTS.md](./AGENTS.md)** for staging rules and forbidden **`Co-authored-by: Cursor`** trailers when publishing.
+**Repositories and images:** `.cursor/` stays local-only (not for Git remotes or Docker layers); see **[AGENTS.md](./AGENTS.md)**. After cloning, run **`./scripts/configure-git-hooks.sh`** so **`Co-authored-by: Cursor`** lines are stripped automatically at commit time.
 
 ## What it does
 

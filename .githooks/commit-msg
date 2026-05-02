@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Rejects or strips forbidden Cursor attribution (see AGENTS.md).
+# Enable: git config core.hooksPath .githooks
+set -euo pipefail
+msg_file="${1:?}"
+[ -f "$msg_file" ] || exit 0
+
+python3 - "$msg_file" <<'PY'
+import pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+
+def strip_cursor_trailers(s: str) -> str:
+    out: list[str] = []
+    for line in s.splitlines(keepends=True):
+        stripped = line.strip().lower()
+        if stripped.startswith("co-authored-by:") and ("cursor" in stripped or "cursoragent" in stripped):
+            continue
+        if "cursoragent" in stripped:
+            continue
+        out.append(line)
+    return "".join(out)
+
+
+path.write_text(strip_cursor_trailers(text), encoding="utf-8")
+PY
