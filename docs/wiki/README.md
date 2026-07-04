@@ -2,6 +2,10 @@
 
 This folder contains markdown prepared for the **[GitHub wiki](https://docs.github.com/en/communities/documenting-your-project-with-wikis/about-wikis)**. Wikis are stored in a **separate Git repository** (`<repo>.wiki.git`), not on the default branch. Keep these files in the main repo so they are versioned with the project; **publish** them to the wiki with the steps below.
 
+> **Canonical source:** the files in [`docs/`](../) plus the root `README.md` / `SECURITY.md` /
+> `CONTRIBUTING.md` are authoritative. Pages here are a synthesis snapshot and may lag behind;
+> when they disagree, `docs/` wins. Re-sync after significant releases.
+
 ## Enable the wiki
 
 1. On GitHub: **Repository → Settings → General → Features** → enable **Wikis**.

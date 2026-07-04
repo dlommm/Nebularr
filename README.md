@@ -6,9 +6,9 @@
 
 Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into PostgreSQL for analytics and the built-in Web UI.
 
-**Repositories and images:** `.cursor/` stays local-only (not for Git remotes or Docker layers); see **[AGENTS.md](./AGENTS.md)**. After cloning, run **`./scripts/configure-git-hooks.sh`** so **`Co-authored-by: Cursor`** lines are stripped automatically at commit time.
+**Security:** built-in login (session cookie + optional bearer API token), secrets encrypted at rest with an auto-provisioned key, egress policy for outbound URLs, hardened non-root container. Details, threat model, and vulnerability reporting: **[SECURITY.md](./SECURITY.md)**.
 
-**Supply chain:** Hub releases built with **`./scripts/docker-release-build.sh --push`** attach **SBOM + provenance (mode=max)** by default (`DOCKER_ATTESTATIONS=1`) so **[Docker Scout](https://scout.docker.com/)** policy checks such as attestations pass. Locally **`--load`** skips attestations. Image base **`python:3.14-slim`** tracks current slim refresh; distro CVE rows without patches must wait on Debian/Python image updates (`DOCKER_ATTESTATIONS=0` opts out).
+**Supply chain:** releases are cut by the tag-driven **`release.yml`** workflow (multi-arch buildx push with **SBOM + provenance (mode=max)**, so **[Docker Scout](https://scout.docker.com/)** attestation policies pass); `./scripts/docker-release-build.sh --push` is the manual fallback. Image base **`python:3.14-slim`** is digest-pinned; distro CVE rows without patches must wait on Debian/Python image updates. Changes per release: **[CHANGELOG.md](./CHANGELOG.md)**.
 
 ## What it does
 
@@ -136,7 +136,7 @@ sequenceDiagram
   Y->>L: Release on completion
 ```
 
-More diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/ORIGINAL_PLAN_REFERENCE.md`](docs/ORIGINAL_PLAN_REFERENCE.md).
+More diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quickstart
 
@@ -185,7 +185,7 @@ docker compose up --build
 ./scripts/smoke.sh
 ```
 
-4. Open the Web UI at `http://localhost:8080`. If you did not set `DATABASE_URL`, the first step collects Postgres host, database name, and credentials (for bundled Postgres, match your `POSTGRES_*`; for external DB, use that server’s host and credentials), waits until Postgres accepts connections, runs Alembic migrations, then continues with integrations, webhook secret, and schedules. Then trigger initial full sync if you have not already:
+4. Open the Web UI at `http://localhost:8080`. If you did not set `DATABASE_URL`, the first step collects Postgres host, database name, and credentials (for bundled Postgres, match your `POSTGRES_*`; for external DB, use that server’s host and credentials), waits until Postgres accepts connections, runs Alembic migrations, then continues with integrations, webhook secret, **admin password (recommended — protects the whole API)**, and schedules. Then trigger initial full sync if you have not already (add `-H "Authorization: Bearer <token>"` when authentication is enabled; generate a token under Integrations → Authentication):
 
 ```bash
 curl -X POST "http://localhost:8080/api/sync/sonarr/full"
@@ -208,11 +208,14 @@ Configure Sonarr/Radarr webhook target:
 
 ## Project layout
 
-- `src/arrsync/`: app code, clients, sync logic, scheduler.
+- `src/arrsync/`: app code — API routers (`routers/`), services, clients, sync logic, scheduler.
+  (Naming note: the distribution/package is `nebularr`; the Python module stays `arrsync`
+  so deployed `uvicorn arrsync.main:app` entrypoints keep working. A rename is planned for
+  a future major release.)
 - `alembic/`: DB migrations.
 - `docker/`: Postgres bootstrap.
-- `docs/`: architecture, operations, backup/restore.
-  - `ARCHITECTURE.md`, `REPORTING_ARCHITECTURE.md`, `BRANDING.md`, `LOCKING_AND_DLQ.md`, `MIGRATIONS.md`, `POOLING_AND_TIMEOUTS.md`, `ALERTS_AND_SLOS.md`, `DB_BOOTSTRAP.md`, `BACKUP_RESTORE.md`, `OPERATIONS_RUNBOOK.md`, `COMPOSE_RESOURCE_HINTS.md`, `PERF_INDEXING_PLAN.md`, `SCHEDULER_TIMEZONE.md`, `SECRETS.md`, `WEBUI_FRAMEWORK.md`, `WEBUI_AGENT_WORKFLOW.md`, `ORIGINAL_PLAN_REFERENCE.md`, `V2_BACKLOG.md`
+- `docs/`: architecture, operations, backup/restore (canonical; `docs/wiki/` is a synced snapshot for the GitHub wiki).
+  - `ARCHITECTURE.md`, `REPORTING_ARCHITECTURE.md`, `BRANDING.md`, `LOCKING_AND_DLQ.md`, `MIGRATIONS.md`, `POOLING_AND_TIMEOUTS.md`, `ALERTS_AND_SLOS.md`, `DB_BOOTSTRAP.md`, `BACKUP_RESTORE.md`, `OPERATIONS_RUNBOOK.md`, `COMPOSE_RESOURCE_HINTS.md`, `PERF_INDEXING_PLAN.md`, `SCHEDULER_TIMEZONE.md`, `SECRETS.md`, `WEBUI_FRAMEWORK.md`, `WEBUI_AGENT_WORKFLOW.md`
 
 ## Development
 

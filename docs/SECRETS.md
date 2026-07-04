@@ -12,7 +12,7 @@ flowchart TB
   end
   subgraph runtime [Nebularr runtime]
     app[App process]
-    enc[Fernet encrypt optional]
+    enc[Fernet encrypt default-on]
     hash[One-way hash webhook shared secret]
   end
   subgraph at_rest [Database at rest]
@@ -50,6 +50,20 @@ Use environment variables or Docker secrets for:
 - Do not log raw webhook payloads at info level.
 - Do not log API keys, DB passwords, or webhook secrets.
 - Structured logs should include operational metadata (for example `sync_run_id`, request id), not credentials.
+
+## Encryption key (2.0+)
+
+- Stored secrets (integration API keys, MAL client ID, alert webhook URLs) are Fernet-encrypted.
+- If `APP_ENCRYPTION_KEY` is unset, Nebularr **generates a key on first start** and persists it
+  (mode 0600) as `.nebularr_app_encryption_key` under `NEBULARR_RUNTIME_DIR`. An explicit env
+  value always wins.
+- Values written before a key existed (pre-2.0 plaintext) keep working and are encrypted the
+  next time they are saved.
+- **Back up the runtime volume with the database.** If the key is lost, encrypted values cannot
+  be decrypted; `/healthz` reports `"encryption"` status. Re-enter the affected API keys to recover.
+- Admin auth uses separate primitives: the password is a salted scrypt hash and the web session
+  signing key lives next to the encryption key (`.nebularr_session_key`); API tokens and webhook
+  secrets are stored as one-way hashes.
 
 ## Storage notes
 
