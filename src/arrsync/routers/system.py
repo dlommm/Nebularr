@@ -1,0 +1,60 @@
+"""Health, metrics, and status endpoints."""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import APIRouter
+from fastapi.responses import PlainTextResponse
+from sqlalchemy import text
+
+from arrsync.auth import (
+    auth_required,
+)
+from arrsync.runtime_secrets import encryption_at_rest_active
+from arrsync.services.health_service import compute_health_status
+from arrsync.services.settings_store import get_setting
+
+log = logging.getLogger(__name__)
+
+
+def build_system_router(app_state: Any) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/healthz")
+    async def healthz() -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "version": app_state.settings.app_version,
+            "git_sha": app_state.settings.app_git_sha,
+            "time": datetime.now(timezone.utc).isoformat(),
+            "encryption": "ok" if encryption_at_rest_active() else "plaintext",
+        }
+        if not app_state.session_factory.ready:
+            payload["database"] = "not_configured"
+            payload["auth"] = "disabled"
+            return payload
+        with app_state.session_scope() as session:
+            session.execute(text("select 1"))
+            stored_webhook_hash = get_setting(session, "app.webhook_secret_hash", "")
+        payload["database"] = "ok"
+        payload["auth"] = "enabled" if auth_required(app_state) else "disabled"
+        if not stored_webhook_hash and app_state.settings.webhook_shared_secret == "changeme":
+            payload["webhook_secret"] = "default"
+        return payload
+
+    @router.get("/metrics")
+    async def metrics() -> PlainTextResponse:
+        return PlainTextResponse(app_state.metrics.render_prometheus(), media_type="text/plain")
+
+    @router.get("/api/status")
+    async def status() -> dict[str, Any]:
+        # Health alerts fire from the background loop in database_lifecycle (every 60s);
+        # kicking one off per status poll duplicated alerts and leaked untracked tasks.
+        with app_state.session_scope() as session:
+            status_payload = compute_health_status(session, app_state.settings, app_state.metrics)
+        return status_payload
+
+    return router
