@@ -16,4 +16,6 @@ def run_migrations(settings: Settings) -> None:
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    # The app configures logging itself; see alembic/env.py.
+    cfg.attributes["configure_logger"] = False
     command.upgrade(cfg, "head")

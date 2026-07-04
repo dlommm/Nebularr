@@ -60,7 +60,7 @@ test("authenticated navigation renders the key views", async ({ page, baseURL })
   await expect(page.getByText("On-demand sync")).toBeVisible();
 
   await page.goto(`${root}/reporting`);
-  await expect(page.getByText("Overview")).toBeVisible();
+  await expect(page.getByText("Overview").first()).toBeVisible();
 });
 
 test("healthz reports ok with auth enabled", async ({ request, baseURL }) => {

@@ -7,8 +7,11 @@ from sqlalchemy import engine_from_config, pool
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# When the app runs migrations programmatically (arrsync.migrations.run_migrations),
+# it owns logging: fileConfig would otherwise disable the app's and uvicorn's loggers
+# and replace the JSON stdout handler, silencing all logs after startup.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = None
 

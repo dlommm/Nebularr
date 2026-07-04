@@ -47,6 +47,9 @@ config changes. The major bump reflects the scale of the security and internal c
   when the placeholder default is detected.
 
 ### Fixed
+- **All application and uvicorn logging silently stopped after startup migrations**:
+  Alembic's `fileConfig` disabled every existing logger and replaced the JSON stdout
+  handler. Migrations no longer touch logging when run by the app.
 - Webhook body-size limit is enforced on received bytes (previously bypassable via
   chunked transfer; malformed `Content-Length` caused a 500).
 - `ops-overview` reporting dashboard crashed (HTTP 500) on fresh installs and
