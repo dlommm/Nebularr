@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -621,8 +622,6 @@ def prune_old_rows(session: Session, keep_days: int = 30) -> None:
 
 
 def _to_json(value: Any) -> str:
-    import json
-
     return json.dumps(value, default=str)
 
 

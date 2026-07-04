@@ -18,6 +18,7 @@ from arrsync.migrations import run_migrations
 from arrsync.runtime_database_url import apply_runtime_database_url_to_environ
 from arrsync.services import repository as repo
 from arrsync.services.alert_config_store import read_alert_webhook_config
+from arrsync.services.health_service import compute_health_status
 from arrsync.services.log_level_store import effective_log_level
 from arrsync.validation import validate_settings
 
@@ -125,8 +126,6 @@ async def finalize_application_services(app_state: Any) -> None:
         while not stop_event.is_set():
             try:
                 with session_scope(app_state.session_factory) as session:  # type: ignore[arg-type]
-                    from arrsync.services.health_service import compute_health_status
-
                     status_payload = compute_health_status(session, app_state.settings, app_state.metrics)
                 await app_state.alert_notifier.maybe_send_health_alert(status_payload)
             except Exception:

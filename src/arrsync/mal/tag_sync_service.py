@@ -74,46 +74,49 @@ class MalTagSyncService:
                     api_key=str(inst_row["api_key"]),
                 )
                 try:
-                    tag_id = await client.ensure_tag_id(label)
-                except Exception as exc:
-                    details["errors"].append({"instance": instance_name, "source": "sonarr", "phase": "ensure_tag", "error": str(exc)})
-                    log.warning("sonarr ensure_tag failed instance=%s: %s", instance_name, exc)
-                    continue
-                want = sonarr_targets.get(instance_name, set())
-                with session_scope(self.session_factory) as session:
-                    series_rows = session.execute(
-                        text(
-                            """
-                            select source_id, payload
-                            from warehouse.series
-                            where instance_name = :instance_name and deleted = false
-                            """
-                        ),
-                        {"instance_name": instance_name},
-                    ).mappings()
-                for sr in series_rows:
-                    sid = int(sr["source_id"])
-                    payload = copy.deepcopy(dict(sr["payload"] or {}))
-                    tags = [int(t) for t in (payload.get("tags") or []) if t is not None]
-                    if sid in want:
-                        if tag_id not in tags:
-                            tags.append(tag_id)
-                            payload["tags"] = tags
-                            try:
-                                await client.put_series(payload)
-                                details["sonarr_tagged"] += 1
-                            except Exception as exc:
-                                details["errors"].append({"instance": instance_name, "series_id": sid, "error": str(exc)})
-                                log.warning("sonarr put_series %s: %s", sid, exc)
-                    else:
-                        if tag_id in tags:
-                            payload["tags"] = [t for t in tags if t != tag_id]
-                            try:
-                                await client.put_series(payload)
-                                details["sonarr_untagged"] += 1
-                            except Exception as exc:
-                                details["errors"].append({"instance": instance_name, "series_id": sid, "error": str(exc)})
-                                log.warning("sonarr untag %s: %s", sid, exc)
+                    try:
+                        tag_id = await client.ensure_tag_id(label)
+                    except Exception as exc:
+                        details["errors"].append({"instance": instance_name, "source": "sonarr", "phase": "ensure_tag", "error": str(exc)})
+                        log.warning("sonarr ensure_tag failed instance=%s: %s", instance_name, exc)
+                        continue
+                    want = sonarr_targets.get(instance_name, set())
+                    with session_scope(self.session_factory) as session:
+                        series_rows = session.execute(
+                            text(
+                                """
+                                select source_id, payload
+                                from warehouse.series
+                                where instance_name = :instance_name and deleted = false
+                                """
+                            ),
+                            {"instance_name": instance_name},
+                        ).mappings()
+                    for sr in series_rows:
+                        sid = int(sr["source_id"])
+                        payload = copy.deepcopy(dict(sr["payload"] or {}))
+                        tags = [int(t) for t in (payload.get("tags") or []) if t is not None]
+                        if sid in want:
+                            if tag_id not in tags:
+                                tags.append(tag_id)
+                                payload["tags"] = tags
+                                try:
+                                    await client.put_series(payload)
+                                    details["sonarr_tagged"] += 1
+                                except Exception as exc:
+                                    details["errors"].append({"instance": instance_name, "series_id": sid, "error": str(exc)})
+                                    log.warning("sonarr put_series %s: %s", sid, exc)
+                        else:
+                            if tag_id in tags:
+                                payload["tags"] = [t for t in tags if t != tag_id]
+                                try:
+                                    await client.put_series(payload)
+                                    details["sonarr_untagged"] += 1
+                                except Exception as exc:
+                                    details["errors"].append({"instance": instance_name, "series_id": sid, "error": str(exc)})
+                                    log.warning("sonarr untag %s: %s", sid, exc)
+                finally:
+                    await client.aclose()
 
             for inst_row in radarr_integrations:
                 instance_name = str(inst_row["name"])
@@ -125,46 +128,49 @@ class MalTagSyncService:
                     api_key=str(inst_row["api_key"]),
                 )
                 try:
-                    tag_id = await client.ensure_tag_id(label)
-                except Exception as exc:
-                    details["errors"].append({"instance": instance_name, "source": "radarr", "phase": "ensure_tag", "error": str(exc)})
-                    log.warning("radarr ensure_tag failed instance=%s: %s", instance_name, exc)
-                    continue
-                want = radarr_targets.get(instance_name, set())
-                with session_scope(self.session_factory) as session:
-                    movie_rows = session.execute(
-                        text(
-                            """
-                            select source_id, payload
-                            from warehouse.movie
-                            where instance_name = :instance_name and deleted = false
-                            """
-                        ),
-                        {"instance_name": instance_name},
-                    ).mappings()
-                for mr in movie_rows:
-                    mid = int(mr["source_id"])
-                    payload = copy.deepcopy(dict(mr["payload"] or {}))
-                    tags = [int(t) for t in (payload.get("tags") or []) if t is not None]
-                    if mid in want:
-                        if tag_id not in tags:
-                            tags.append(tag_id)
-                            payload["tags"] = tags
-                            try:
-                                await client.put_movie(payload)
-                                details["radarr_tagged"] += 1
-                            except Exception as exc:
-                                details["errors"].append({"instance": instance_name, "movie_id": mid, "error": str(exc)})
-                                log.warning("radarr put_movie %s: %s", mid, exc)
-                    else:
-                        if tag_id in tags:
-                            payload["tags"] = [t for t in tags if t != tag_id]
-                            try:
-                                await client.put_movie(payload)
-                                details["radarr_untagged"] += 1
-                            except Exception as exc:
-                                details["errors"].append({"instance": instance_name, "movie_id": mid, "error": str(exc)})
-                                log.warning("radarr untag %s: %s", mid, exc)
+                    try:
+                        tag_id = await client.ensure_tag_id(label)
+                    except Exception as exc:
+                        details["errors"].append({"instance": instance_name, "source": "radarr", "phase": "ensure_tag", "error": str(exc)})
+                        log.warning("radarr ensure_tag failed instance=%s: %s", instance_name, exc)
+                        continue
+                    want = radarr_targets.get(instance_name, set())
+                    with session_scope(self.session_factory) as session:
+                        movie_rows = session.execute(
+                            text(
+                                """
+                                select source_id, payload
+                                from warehouse.movie
+                                where instance_name = :instance_name and deleted = false
+                                """
+                            ),
+                            {"instance_name": instance_name},
+                        ).mappings()
+                    for mr in movie_rows:
+                        mid = int(mr["source_id"])
+                        payload = copy.deepcopy(dict(mr["payload"] or {}))
+                        tags = [int(t) for t in (payload.get("tags") or []) if t is not None]
+                        if mid in want:
+                            if tag_id not in tags:
+                                tags.append(tag_id)
+                                payload["tags"] = tags
+                                try:
+                                    await client.put_movie(payload)
+                                    details["radarr_tagged"] += 1
+                                except Exception as exc:
+                                    details["errors"].append({"instance": instance_name, "movie_id": mid, "error": str(exc)})
+                                    log.warning("radarr put_movie %s: %s", mid, exc)
+                        else:
+                            if tag_id in tags:
+                                payload["tags"] = [t for t in tags if t != tag_id]
+                                try:
+                                    await client.put_movie(payload)
+                                    details["radarr_untagged"] += 1
+                                except Exception as exc:
+                                    details["errors"].append({"instance": instance_name, "movie_id": mid, "error": str(exc)})
+                                    log.warning("radarr untag %s: %s", mid, exc)
+                finally:
+                    await client.aclose()
 
             with session_scope(self.session_factory) as session:
                 mal_repo.finish_mal_job_run(session, run_id, "success", details, None)

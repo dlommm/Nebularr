@@ -2841,11 +2841,10 @@ def build_router(app_state: Any) -> APIRouter:
 
     @router.get("/api/status")
     async def status() -> dict[str, Any]:
+        # Health alerts fire from the background loop in database_lifecycle (every 60s);
+        # kicking one off per status poll duplicated alerts and leaked untracked tasks.
         with app_state.session_scope() as session:
             status_payload = compute_health_status(session, app_state.settings, app_state.metrics)
-        alert_notifier = getattr(app_state, "alert_notifier", None)
-        if alert_notifier is not None:
-            asyncio.create_task(alert_notifier.maybe_send_health_alert(status_payload))
         return status_payload
 
     @router.get("/api/reporting/dashboards")

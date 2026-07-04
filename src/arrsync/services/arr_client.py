@@ -46,6 +46,7 @@ class ArrClient:
         self.timeout = settings.http_timeout_seconds
         self.retry_attempts = settings.http_retry_attempts
         self.semaphore = asyncio.Semaphore(settings.http_max_parallel_requests)
+        self._client: httpx.AsyncClient | None = None
         self.capabilities = CapabilitySet(
             source=source,
             app_version="unknown",
@@ -53,6 +54,17 @@ class ArrClient:
             supports_episode_include_files=True,
             raw={},
         )
+
+    def _http_client(self) -> httpx.AsyncClient:
+        """Reuse one pooled client per ArrClient so a full library sync keeps its
+        connections alive instead of handshaking per request."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def _request(
         self,
@@ -67,8 +79,7 @@ class ArrClient:
         for attempt in range(1, self.retry_attempts + 1):
             try:
                 async with self.semaphore:
-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
-                        resp = await client.request(method, url, headers=headers, params=params, json=json)
+                    resp = await self._http_client().request(method, url, headers=headers, params=params, json=json)
                 log.debug(
                     "arr http response",
                     extra={

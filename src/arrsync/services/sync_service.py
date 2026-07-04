@@ -74,6 +74,8 @@ class SyncService:
                         supports_episode_include_files=False,
                         raw={"error": str(exc)},
                     )
+                finally:
+                    await client.aclose()
                 with session_scope(self.session_factory) as session:
                     repo.record_capabilities(session, caps, instance_name=integration["name"])
                     repo.update_watermark_for_instance(session, source, integration["name"], None, None)
@@ -183,6 +185,8 @@ class SyncService:
                             instance_name=instance_name,
                         )
                     raise
+                finally:
+                    await client.aclose()
                 total_records += records_processed
                 if self._should_stop():
                     break
@@ -381,8 +385,22 @@ class SyncService:
                 records += 1
                 date_str = event.get("date")
                 if date_str:
-                    parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                    latest_time = max(latest_time, parsed) if latest_time else parsed
+                    try:
+                        parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                    except ValueError:
+                        # One malformed date from the Arr API must not fail the whole
+                        # incremental run; the id watermark still advances below.
+                        log.warning(
+                            "skipping unparsable history event date",
+                            extra={
+                                "source": source,
+                                "instance_name": instance_name,
+                                "event_id": event_id,
+                                "date": str(date_str)[:64],
+                            },
+                        )
+                    else:
+                        latest_time = max(latest_time, parsed) if latest_time else parsed
                 latest_id = max(latest_id, event_id) if latest_id else event_id
                 if records % 100 == 0:
                     self._report_progress(
@@ -417,6 +435,7 @@ class SyncService:
             for job in jobs:
                 if self._should_stop():
                     break
+                client: ArrClient | None = None
                 try:
                     payload = job["payload"] or {}
                     event_type = str(job.get("event_type", "unknown"))
@@ -528,6 +547,9 @@ class SyncService:
                             error_message=str(exc),
                         )
                     failed += 1
+                finally:
+                    if client is not None:
+                        await client.aclose()
         with session_scope(self.session_factory) as session:
             repo.prune_old_rows(session)
         log.info(

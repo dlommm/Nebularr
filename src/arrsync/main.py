@@ -5,9 +5,9 @@ import logging
 import signal
 import time
 import uuid
-from contextlib import contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 from fastapi import FastAPI
 from fastapi import Request
@@ -118,7 +118,14 @@ app_state = AppState(
     mal_tag_sync_service=mal_tag_sync_service,
 )
 
-app = FastAPI(title="Nebularr Sync", version=settings.app_version)
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await _startup()
+    yield
+    await _shutdown()
+
+
+app = FastAPI(title="Nebularr Sync", version=settings.app_version, lifespan=_lifespan)
 
 
 @app.middleware("http")
@@ -222,13 +229,13 @@ def _log_security_posture() -> None:
         )
 
 
-@app.on_event("startup")
-async def startup_event() -> None:
+async def _startup() -> None:
     _register_signal_handlers()
     if not settings.database_url:
         validate_settings(settings, require_database_url=False)
         apply_root_log_level(settings.log_level)
         log.warning("DATABASE_URL not configured; Web UI setup will connect to Postgres and run migrations")
+        _log_security_posture()
         return
     validate_settings(settings)
     app_state._engine = bind_database_engine(settings, app_state.session_factory)
@@ -238,8 +245,7 @@ async def startup_event() -> None:
     log.info("startup complete")
 
 
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
+async def _shutdown() -> None:
     stop_event.set()
     scheduler.shutdown()
     if app_state.capability_task and not app_state.capability_task.done():
@@ -250,5 +256,7 @@ async def shutdown_event() -> None:
         app_state.health_alert_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.health_alert_task
+    await sonarr_client.aclose()
+    await radarr_client.aclose()
     dispose_bound_engine(app_state)
     log.info("shutdown complete")
