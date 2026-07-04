@@ -33,7 +33,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -81,7 +81,7 @@ jobs:
       GRYPE_IMAGE: anchore/grype:v0.115.0
       HADOLINT_IMAGE: hadolint/hadolint:v2.14.0
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Hadolint (app Dockerfile)
         run: docker run --rm -i "$HADOLINT_IMAGE" < Dockerfile
       - name: Trivy filesystem + secret + vuln
@@ -108,7 +108,7 @@ jobs:
   lint_shell:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Shellcheck scripts and git hooks
         run: |
           docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0 \
@@ -117,7 +117,7 @@ jobs:
   version_sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: All hardcoded version strings match pyproject.toml
         run: ./scripts/check-version-sync.sh
 
@@ -125,7 +125,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
