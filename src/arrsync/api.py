@@ -1923,11 +1923,13 @@ def build_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
                 or 0
             )
+            # max() aggregates always yield exactly one row: zero sync_state rows on a
+            # fresh install (or several with multiple instances) must not 500 here.
             sonarr_lag_seconds = float(
                 session.execute(
                     text(
                         """
-                        select coalesce(extract(epoch from (now() - coalesce(last_history_time, now()))), 0)
+                        select coalesce(max(extract(epoch from (now() - coalesce(last_history_time, now())))), 0)
                         from app.sync_state where source = 'sonarr'
                         """
                     )
@@ -1938,7 +1940,7 @@ def build_router(app_state: Any) -> APIRouter:
                 session.execute(
                     text(
                         """
-                        select coalesce(extract(epoch from (now() - coalesce(last_history_time, now()))), 0)
+                        select coalesce(max(extract(epoch from (now() - coalesce(last_history_time, now())))), 0)
                         from app.sync_state where source = 'radarr'
                         """
                     )

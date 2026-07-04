@@ -14,7 +14,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from arrsync.api import build_router
-from arrsync.auth import auth_required, request_is_authenticated
+from arrsync.auth import auth_required, enforce_auth
 from arrsync.config import Settings, get_settings
 from arrsync.runtime_secrets import encryption_at_rest_active
 from arrsync.services.auth_store import read_setting
@@ -162,30 +162,9 @@ async def database_ready_gate(request: Request, call_next: Any) -> Any:
     return JSONResponse({"detail": "database not configured"}, status_code=503)
 
 
-_AUTH_EXEMPT_EXACT = {"/api/auth/login", "/api/auth/status"}
-_AUTH_PROTECTED_EXACT = {"/docs", "/redoc", "/openapi.json"}
-
-
-def _auth_protected_path(path: str) -> bool:
-    """Only the JSON API and API docs are gated; SPA shell pages and static assets
-    stay public (the SPA redirects to /login on the first 401), and /hooks/* has
-    its own shared-secret check."""
-    if path in _AUTH_EXEMPT_EXACT:
-        return False
-    if path in _AUTH_PROTECTED_EXACT:
-        return True
-    return path.startswith("/api/")
-
-
 @app.middleware("http")
 async def authentication_gate(request: Request, call_next: Any) -> Any:
-    if not _auth_protected_path(request.url.path):
-        return await call_next(request)
-    if not auth_required(app_state):
-        return await call_next(request)
-    if request_is_authenticated(request, app_state):
-        return await call_next(request)
-    return JSONResponse({"detail": "authentication required"}, status_code=401)
+    return await enforce_auth(request, call_next, app_state)
 
 
 app.include_router(build_router(app_state))
