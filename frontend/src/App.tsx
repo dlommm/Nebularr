@@ -16,12 +16,21 @@ const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) 
 const SchedulesPage = lazy(() => import("./pages/SchedulesPage").then((m) => ({ default: m.SchedulesPage })));
 const LogsPage = lazy(() => import("./pages/LogsPage").then((m) => ({ default: m.LogsPage })));
 const NotFoundPage = lazy(() => import("./components/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
+const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 
 export function App(): JSX.Element {
   return (
     <ActionErrorProvider>
       <Routes>
         <Route path={PATHS.setup} element={<SetupPage />} />
+        <Route
+          path="/login"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <LoginPage />
+            </Suspense>
+          }
+        />
         <Route element={<RequireSetup />}>
           <Route
             path="/"

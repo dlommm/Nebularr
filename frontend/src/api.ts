@@ -1,5 +1,7 @@
 import type {
   AlertWebhookConfig,
+  AuthConfigResponse,
+  AuthStatusResponse,
   EpisodeRow,
   HealthzResponse,
   IntegrationRow,
@@ -26,6 +28,15 @@ import type {
 
 type HttpMethod = "GET" | "POST" | "PUT";
 
+const AUTH_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/status"]);
+
+function redirectToLogin(): void {
+  if (window.location.pathname !== "/login") {
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.assign(`/login?next=${next}`);
+  }
+}
+
 async function requestJson<T>(path: string, method: HttpMethod = "GET", body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
@@ -33,6 +44,10 @@ async function requestJson<T>(path: string, method: HttpMethod = "GET", body?: u
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) {
+    const apiPath = path.split("?")[0];
+    if (response.status === 401 && !AUTH_EXEMPT_PATHS.has(apiPath)) {
+      redirectToLogin();
+    }
     throw new Error(await response.text());
   }
   return (await response.json()) as T;
@@ -52,6 +67,15 @@ function withParams(path: string, params: Record<string, string | number | boole
 export const api = {
   healthz: () => requestJson<HealthzResponse>("/healthz"),
   status: () => requestJson<StatusResponse>("/api/status"),
+  authStatus: () => requestJson<AuthStatusResponse>("/api/auth/status"),
+  authLogin: (password: string) => requestJson<{ status: string }>("/api/auth/login", "POST", { password }),
+  authLogout: () => requestJson<{ status: string }>("/api/auth/logout", "POST"),
+  saveAuthConfig: (payload: {
+    password?: string;
+    enabled?: boolean;
+    rotate_api_token?: boolean;
+    revoke_api_token?: boolean;
+  }) => requestJson<AuthConfigResponse>("/api/auth/config", "PUT", payload),
   setupStatus: () => requestJson<SetupStatus>("/api/setup/status"),
   setupSkip: () => requestJson<{ status: string; completed: boolean }>("/api/setup/skip", "POST"),
   setupInitializePostgres: (payload: {

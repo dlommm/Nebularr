@@ -55,6 +55,23 @@ export type HealthzResponse = {
   version: string;
   git_sha: string;
   time: string;
+  encryption?: "ok" | "plaintext";
+  auth?: "enabled" | "disabled";
+  webhook_secret?: "default";
+};
+
+export type AuthStatusResponse = {
+  enabled: boolean;
+  password_set: boolean;
+  api_token_set: boolean;
+  authenticated: boolean;
+};
+
+export type AuthConfigResponse = {
+  enabled: boolean;
+  password_set: boolean;
+  api_token_set: boolean;
+  api_token?: string;
 };
 
 export type MalConfigResponse = {
