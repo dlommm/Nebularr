@@ -94,12 +94,15 @@ jobs:
             --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Docker build (image scan input)
         run: docker build -t nebularr:ci .
-      - name: Trivy image (HIGH/CRITICAL)
+      - name: Trivy image (HIGH/CRITICAL, fixable only)
+        # --ignore-unfixed: unpatched Debian base CVEs churn constantly and are not
+        # actionable here (same policy as the Grype step's --only-fixed). Once Debian
+        # ships a fix, Trivy flags it again and the base image digest gets bumped.
         run: |
           docker save nebularr:ci -o /tmp/nebularr-ci.tar
           docker run --rm -v "$PWD:/src" -v /tmp:/tmp "$TRIVY_IMAGE" image \
             --input /tmp/nebularr-ci.tar --severity HIGH,CRITICAL --exit-code 1 \
-            --ignorefile /src/.trivyignore.image
+            --ignore-unfixed --ignorefile /src/.trivyignore.image
       - name: Grype image (fixed issues only; avoids unfixed distro noise)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$GRYPE_IMAGE" \
