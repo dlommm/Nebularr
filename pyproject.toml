@@ -46,6 +46,9 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "integration: exercises a real Postgres via NEBULARR_TEST_DATABASE_URL (skipped when unset)",
+]
 
 [tool.mypy]
 python_version = "3.11"

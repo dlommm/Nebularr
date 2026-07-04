@@ -16,6 +16,8 @@ import secrets
 import time
 from typing import Any
 
+from fastapi.responses import JSONResponse
+
 from arrsync.runtime_secrets import session_signing_key
 from arrsync.security import verify_secret_hash
 from arrsync.services.auth_store import AuthConfig, read_auth_config
@@ -23,6 +25,8 @@ from arrsync.services.auth_store import AuthConfig, read_auth_config
 log = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "nebularr_session"
+AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/status"}
+AUTH_PROTECTED_DOC_PATHS = {"/docs", "/redoc", "/openapi.json"}
 
 _SCRYPT_N = 2**15
 _SCRYPT_R = 8
@@ -165,3 +169,25 @@ def request_is_authenticated(request: Any, app_state: Any) -> bool:
         if config is not None and config.api_token_hash and verify_secret_hash(bearer, config.api_token_hash):
             return True
     return False
+
+
+def is_auth_protected_path(path: str) -> bool:
+    """Only the JSON API and API docs are gated; SPA shell pages and static assets
+    stay public (the SPA redirects to /login on the first 401), and /hooks/* has
+    its own shared-secret check."""
+    if path in AUTH_EXEMPT_PATHS:
+        return False
+    if path in AUTH_PROTECTED_DOC_PATHS:
+        return True
+    return path.startswith("/api/")
+
+
+async def enforce_auth(request: Any, call_next: Any, app_state: Any) -> Any:
+    """HTTP middleware body shared by the app and tests."""
+    if not is_auth_protected_path(request.url.path):
+        return await call_next(request)
+    if not auth_required(app_state):
+        return await call_next(request)
+    if request_is_authenticated(request, app_state):
+        return await call_next(request)
+    return JSONResponse({"detail": "authentication required"}, status_code=401)
