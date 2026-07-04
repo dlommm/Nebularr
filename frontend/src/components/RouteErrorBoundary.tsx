@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { PATHS } from "../routes/paths";
+import { Button } from "@/components/ui/button";
 
 type Props = { children: ReactNode };
 type State = { error: Error | null };
@@ -25,19 +26,22 @@ export class RouteErrorBoundary extends Component<Props, State> {
   override render(): ReactNode {
     if (this.state.error) {
       return (
-        <div className="card error-card span-12" role="alert">
-          <h2>Something went wrong</h2>
-          <p className="muted">{this.state.error.message}</p>
-          <div className="row mt8">
-            <button type="button" onClick={() => window.location.reload()}>
+        <div
+          role="alert"
+          className="rounded-2xl border border-destructive/40 bg-destructive/10 p-5 backdrop-blur-xl"
+        >
+          <h2 className="font-heading text-lg font-semibold">Something went wrong</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{this.state.error.message}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button type="button" onClick={() => window.location.reload()}>
               Reload
-            </button>
-            <Link to={PATHS.home} className="secondary" style={{ display: "inline-block", textDecoration: "none" }}>
+            </Button>
+            <Button variant="secondary" render={<Link to={PATHS.home} />}>
               Go home
-            </Link>
-            <button type="button" className="secondary" onClick={() => this.setState({ error: null })}>
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => this.setState({ error: null })}>
               Dismiss
-            </button>
+            </Button>
           </div>
         </div>
       );

@@ -163,7 +163,7 @@ export function LibraryPage(): JSX.Element {
           <td>
             <button
               type="button"
-              className="secondary"
+              className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
               onClick={(event) => {
                 event.stopPropagation();
                 setCompareRows((existing) => {

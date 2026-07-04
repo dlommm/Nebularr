@@ -404,7 +404,7 @@ export function SyncQueuePage(): JSX.Element {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {workStatus.data?.active
-                    ? `${workStatus.data.items.length} job(s) active (warehouse, MAL, and/or setup). See the status panel below.`
+                    ? `${workStatus.data.items?.length ?? 0} job(s) active (warehouse, MAL, and/or setup). See the status panel below.`
                     : syncProgress.data?.running
                       ? `Running: ${syncProgress.data.source}/${syncProgress.data.mode} (${syncProgress.data.trigger ?? "unknown"}) — ${fmtDuration(syncProgress.data.elapsed_seconds)}`
                       : "Idle — no sync or MAL pipeline in progress."}
@@ -484,7 +484,7 @@ export function SyncQueuePage(): JSX.Element {
                       {stuckState.data?.job_run_summary_running?.length ?? (stuckState.isLoading ? "…" : 0)}
                     </li>
                   </ul>
-                  {stuckState.data && stuckState.data.job_locks.length > 0 ? (
+                  {stuckState.data?.job_locks?.length ? (
                     <ul className="max-h-24 overflow-y-auto rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[10px] text-muted-foreground">
                       {stuckState.data.job_locks.map((l) => (
                         <li key={l.lock_name} className="truncate">
@@ -615,40 +615,40 @@ export function SyncQueuePage(): JSX.Element {
                 (including Jikan variants), and year (±1 year) against your Sonarr/Radarr warehouse titles.
               </p>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <label className="pill">
+                <label className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
                   IDs per batch
                   <input
                     type="number"
                     min={1}
                     max={500}
+                    className="w-[72px] rounded border border-white/10 bg-white/5 px-1.5 py-0.5"
                     value={malBatchSize}
                     onChange={(event) => setMalBatchSize(Math.max(1, Math.min(500, Number(event.target.value || 200))))}
-                    style={{ width: 72, marginLeft: 8 }}
                     title="MAL_MAX_IDS_PER_RUN override for this action (1–500)"
                   />
                 </label>
-                <label className="pill">
+                <label className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
                   backlog cycles
                   <input
                     type="number"
                     min={1}
                     max={200}
+                    className="w-20 rounded border border-white/10 bg-white/5 px-1.5 py-0.5"
                     value={malBacklogCycles}
                     onChange={(event) => setMalBacklogCycles(Number(event.target.value || 10))}
-                    style={{ width: 80, marginLeft: 8 }}
                     disabled={malImportAll}
                   />
                 </label>
-                <label className="pill">
+                <label className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
                   delay between cycles (sec)
                   <input
                     type="number"
                     min={0}
                     max={30}
                     step={0.5}
+                    className="w-20 rounded border border-white/10 bg-white/5 px-1.5 py-0.5"
                     value={malCycleDelaySeconds}
                     onChange={(event) => setMalCycleDelaySeconds(Number(event.target.value || 0))}
-                    style={{ width: 80, marginLeft: 8 }}
                   />
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">

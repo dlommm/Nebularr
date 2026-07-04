@@ -1,3 +1,6 @@
+/* Component CSS for the reporting dashboards, log viewer, and page fallback.
+   Everything else in the app is styled with Tailwind + shadcn (src/index.css). */
+
 :root {
   /* z-index scale: sidebar < drawer < modal < skip focus */
   --z-sidebar: 30;
@@ -35,12 +38,6 @@ body {
   min-height: 100vh;
 }
 
-.app-shell {
-  display: flex;
-  min-height: 100vh;
-  position: relative;
-}
-
 .sidebar {
   width: 250px;
   padding: 16px;
@@ -55,49 +52,10 @@ body {
   z-index: var(--z-sidebar);
 }
 
-.brand-wrap {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 14px;
-}
-
-.brand-mark {
-  width: 40px;
-  height: 40px;
-  border: 1px solid rgba(84, 168, 255, 0.3);
-  border-radius: 8px;
-  padding: 2px;
-  background: #0e1630;
-}
-
-.brand {
-  margin: 0;
-  font-size: 20px;
-}
-
 .main {
   flex: 1;
   min-width: 0;
   padding: 18px;
-}
-
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 14px;
-  gap: 12px;
-}
-
-.view-title {
-  margin: 0;
-  font-size: clamp(24px, 2.6vw, 32px);
-}
-
-.subtitle {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .row {
@@ -107,12 +65,6 @@ body {
   flex-wrap: wrap;
 }
 
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 /* Legacy 12-column shell — do not use the global name `grid` (conflicts with Tailwind `grid` utility). */
 .grid-12 {
   display: grid;
@@ -120,20 +72,8 @@ body {
   gap: 12px;
 }
 
-.span-3 {
-  grid-column: span 3;
-}
-
-.span-4 {
-  grid-column: span 4;
-}
-
 .span-6 {
   grid-column: span 6;
-}
-
-.span-8 {
-  grid-column: span 8;
 }
 
 .span-12 {
@@ -149,112 +89,6 @@ body {
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   padding: 12px;
-}
-
-.inner-card {
-  background: rgba(20, 32, 55, 0.65);
-}
-
-.kpi-label {
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-}
-
-.kpi-value {
-  font-size: clamp(22px, 2.2vw, 30px);
-  font-weight: 700;
-}
-
-.welcome-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.welcome-brand {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.welcome-banner {
-  max-width: min(640px, 100%);
-  width: 100%;
-  height: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #0e1630;
-}
-
-.welcome-icon {
-  width: 120px;
-  height: 120px;
-  border-radius: 14px;
-  border: 1px solid rgba(84, 168, 255, 0.3);
-  background: #0e1630;
-}
-
-.welcome-copy {
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.nav-btn {
-  width: 100%;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  margin-bottom: 7px;
-}
-
-.nav-btn.active {
-  background: linear-gradient(135deg, #2a3d7d, #2a235f);
-  border-color: var(--border);
-}
-
-.side-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Router nav links (replace tab buttons) */
-a.nav-link {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  color: var(--text);
-  text-align: left;
-  text-decoration: none;
-  font: inherit;
-  background: transparent;
-  cursor: pointer;
-  box-sizing: border-box;
-}
-a.nav-link:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: var(--glass-border);
-}
-a.nav-link.active,
-a.nav-link[aria-current="page"] {
-  background: linear-gradient(135deg, rgba(100, 80, 200, 0.4), rgba(40, 50, 120, 0.55));
-  border-color: rgba(124, 110, 247, 0.45);
-  color: #fff;
-}
-.nav-link-icon {
-  flex-shrink: 0;
-  opacity: 0.9;
 }
 
 .skip-to-main {
@@ -305,59 +139,6 @@ a.nav-link[aria-current="page"] {
   }
 }
 
-.home-hero h1 {
-  font-size: clamp(26px, 3vw, 40px);
-  margin: 0.35rem 0 0.25rem;
-}
-.home-map h2 {
-  margin-top: 0;
-}
-.app-map-list {
-  list-style: none;
-  padding: 0;
-  margin: 12px 0 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
-}
-.app-map-item {
-  margin: 0;
-}
-.app-map-link {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--glass-border);
-  text-decoration: none;
-  color: inherit;
-  background: rgba(0, 0, 0, 0.18);
-  min-height: 100%;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-.app-map-link:hover {
-  border-color: var(--primary);
-  background: rgba(124, 110, 247, 0.08);
-}
-.app-map-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.app-map-title {
-  font-weight: 600;
-}
-.app-map-blurb {
-  font-size: 12px;
-  line-height: 1.4;
-}
-.app-map-icon {
-  color: var(--primary);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
 @media (prefers-reduced-transparency: reduce) {
   .sidebar,
   .card,
@@ -371,8 +152,7 @@ a.nav-link[aria-current="page"] {
   .card,
   .inner-card {
     background: linear-gradient(180deg, var(--panel), #0f1530);
-  }
-}
+  }}
 
 button,
 input,
@@ -388,11 +168,6 @@ button {
   border: none;
   background: linear-gradient(135deg, var(--primary), #36c48b);
   cursor: pointer;
-}
-
-button.secondary {
-  background: #27365d;
-  border: 1px solid var(--border);
 }
 
 .table-wrap {
@@ -487,14 +262,6 @@ tbody tr:nth-child(even) {
   border-color: rgba(255, 107, 107, 0.4);
 }
 
-.mt8 {
-  margin-top: 8px;
-}
-
-.mt16 {
-  margin-top: 16px;
-}
-
 .pager {
   display: flex;
   gap: 8px;
@@ -507,124 +274,6 @@ tbody tr:nth-child(even) {
   position: sticky;
   top: 10px;
   z-index: 10;
-}
-
-.mobile-only {
-  display: none;
-}
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 10vh;
-  z-index: var(--z-modal);
-}
-
-.modal-card {
-  width: min(560px, 92vw);
-  background: var(--glass-bg-strong);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.wizard-backdrop {
-  z-index: 60;
-}
-
-.wizard-card {
-  width: min(920px, 95vw);
-  max-height: 88vh;
-  overflow: auto;
-}
-
-.setup-page {
-  min-height: 100vh;
-  padding: 28px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-}
-
-.standalone-wizard {
-  width: min(920px, 100%);
-}
-
-.wizard-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.wizard-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.wizard-step-pill {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
-  color: var(--muted);
-  background: rgba(20, 29, 51, 0.9);
-}
-
-.wizard-step-pill.active {
-  color: #e9f2ff;
-  border-color: #4575ff;
-  background: rgba(69, 117, 255, 0.22);
-}
-
-.wizard-step-pill.done {
-  color: #c8f7e6;
-  border-color: #2f8f6a;
-}
-
-.detail-drawer {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: min(520px, 100vw);
-  background: var(--glass-bg-strong);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-left: 1px solid var(--glass-border);
-  padding: 12px;
-  overflow: auto;
-  z-index: var(--z-drawer);
-}
-
-.detail-drawer pre,
-.error-card pre {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  color: #d4e4ff;
-}
-
-.compare-card {
-  margin-bottom: 12px;
-}
-
-.compare-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
 }
 
 /* ——— Reporting dashboards ——— */
@@ -1111,8 +760,7 @@ tbody tr:nth-child(even) {
 
   .sidebar {
     width: 210px;
-  }
-}
+  }}
 
 @media (max-width: 860px) {
   .sidebar {
@@ -1128,16 +776,7 @@ tbody tr:nth-child(even) {
 
   .sidebar.open {
     transform: translateX(0);
-  }
-
-  .mobile-only {
-    display: inline-flex;
-  }
-
-  .view-title {
-    font-size: 22px;
-  }
-}
+  }}
 
 .log-viewport {
   max-height: min(70vh, 720px);
