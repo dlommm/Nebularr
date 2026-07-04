@@ -13,9 +13,9 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-const SELECT_CLASS = "h-9 rounded-md border border-white/10 bg-white/5 px-2 text-sm";
+const SELECT_CLASS = "h-9 rounded-md border border-input bg-background px-2 text-sm";
 const TEXTAREA_CLASS =
-  "w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+  "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 type IntegrationDraft = { base_url: string; api_key: string; enabled: boolean; webhook_enabled: boolean };
 
@@ -370,7 +370,7 @@ export function IntegrationsPage(): JSX.Element {
           ) : null}
         </div>
         {issuedApiToken ? (
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <div className="rounded-lg border border-warn/35 bg-warn/10 px-4 py-3 text-sm">
             <p className="text-muted-foreground">
               Copy this token now — it is shown only once. Send it as <code>Authorization: Bearer …</code>
             </p>
@@ -393,7 +393,7 @@ export function IntegrationsPage(): JSX.Element {
             webhook_enabled: row.webhook_enabled,
           };
           return (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4" key={key}>
+            <div className="rounded-xl border border-border bg-muted/40 p-4" key={key}>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">
                   {row.source}/{row.name}

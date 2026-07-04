@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-07-04
+
+Web UI redesign. No API, schema, or configuration changes; existing stacks
+upgrade with zero config changes.
+
+### Added
+- **Light theme**: the UI now fully supports light mode — every component reads
+  from the shared design tokens, so the existing theme toggle produces a usable
+  light UI instead of dark-hardcoded fragments.
+- Screenshot capture script options: `WEBUI_CAPTURE_THEME`,
+  `WEBUI_CAPTURE_OUTPUT_DIR` (and documented `WEBUI_CAPTURE_BASE_URL`).
+
+### Changed
+- **Design system rebuilt on one token set** (`index.css`): restrained indigo
+  accent, flat card surfaces, semantic `ok`/`warn`/`critical` status colors, and
+  consistent radii/typography across light and dark.
+- **App chrome**: single-row 56px header (page title, compact health pill with
+  per-subsystem detail on hover, scoped library search, icon actions) replaces
+  the stacked title + status-chip rows + full-width search bar; sidebar uses a
+  solid surface with a primary-tint active state; command palette restyled with
+  grouped sections.
+- **Pages**: hero banners on Home/Dashboard replaced with compact action bars;
+  proper button hierarchy (primary/secondary/outline/ghost/destructive) now that
+  the legacy global gradient no longer repaints every control; Library show
+  cards, episode tables, Reporting toolbar/stat cards/tabs, and Sync & Queue
+  panels restyled on tokens.
+- Legacy `styles.css` no longer styles bare `button`/`input`/`select`/`table`
+  elements globally; remaining reporting/log-viewer classes consume the design
+  tokens.
+
+### Fixed
+- Reporting toolbar no longer overlaps the dashboard header content below it
+  (sticky offset removed).
+- Status badges, health pills, security banner, and diagnostics panel are
+  readable in both themes (previously dark-only hardcoded colors).
+
 ## [2.0.0] - 2026-07-03
 
 Backwards compatible with 1.9.x deployments: an existing stack upgrades with zero

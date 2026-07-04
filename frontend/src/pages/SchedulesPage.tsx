@@ -77,7 +77,7 @@ export function SchedulesPage(): JSX.Element {
           </div>
         ) : null}
         {sortScheduleRows(schedules.data ?? []).map((row) => (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4" key={row.mode}>
+          <div className="rounded-xl border border-border bg-muted/40 p-4" key={row.mode}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">{SCHEDULE_MODE_LABELS[row.mode] ?? row.mode}</span>
               <Badge variant="outline">{row.mode}</Badge>

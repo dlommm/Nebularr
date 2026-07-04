@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Film, GitBranch, HeartPulse, Inbox, LayoutList, ListVideo, Server } from "lucide-react";
+import { ArrowRight, Film, GitBranch, HeartPulse, Inbox, LayoutList, ListVideo, Server } from "lucide-react";
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
@@ -37,57 +37,44 @@ export function DashboardPage(): JSX.Element {
   const healthOk = status.data?.health_state === "ok";
 
   return (
-    <div className="space-y-8">
-      <div className="relative overflow-hidden rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-[#0e1630] to-violet-600/20 p-6 nebula-glow sm:p-8">
-        <div className="absolute -right-20 -top-20 size-64 rounded-full bg-violet-500/20 blur-3xl" aria-hidden />
-        <div className="absolute -bottom-16 -left-10 size-56 rounded-full bg-cyan-500/15 blur-3xl" aria-hidden />
-        <div className="relative z-[1] flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold tracking-[0.2em] text-cyan-200/80 uppercase">Overview</p>
-            <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight sm:text-3xl">Mission control</h2>
-            <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-              Live sync telemetry, health, and queue pressure. Data refreshes every few seconds.
-            </p>
-          </div>
-          <div className="flex w-full min-w-0 flex-shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:items-end">
-            <div className="flex flex-wrap items-stretch justify-start gap-2 sm:justify-end">
-              <Button className="min-w-0" size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr")}>
-                Sonarr incremental
-              </Button>
-              <Button className="min-w-0" size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr")}>
-                Radarr incremental
-              </Button>
-              <Button type="button" className="min-w-0" size="sm" variant="outline" onClick={() => navigate(PATHS.sync)}>
-                Open sync &amp; queue
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-stretch justify-start gap-2 sm:justify-end">
-              <Button
-                className="min-w-0"
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  if (window.confirm("Run Sonarr full sync? This re-fetches the full library and may run for a long time.")) {
-                    void runAction(() => api.runSync("sonarr", "full"), "dashboard sonarr full");
-                  }
-                }}
-              >
-                Sonarr full
-              </Button>
-              <Button
-                className="min-w-0"
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  if (window.confirm("Run Radarr full sync? This re-fetches the full library and may run for a long time.")) {
-                    void runAction(() => api.runSync("radarr", "full"), "dashboard radarr full");
-                  }
-                }}
-              >
-                Radarr full
-              </Button>
-            </div>
-          </div>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted-foreground">
+          Live sync telemetry, health, and queue pressure. Data refreshes every few seconds.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr")}>
+            Sonarr incremental
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr")}>
+            Radarr incremental
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              if (window.confirm("Run Sonarr full sync? This re-fetches the full library and may run for a long time.")) {
+                void runAction(() => api.runSync("sonarr", "full"), "dashboard sonarr full");
+              }
+            }}
+          >
+            Sonarr full
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              if (window.confirm("Run Radarr full sync? This re-fetches the full library and may run for a long time.")) {
+                void runAction(() => api.runSync("radarr", "full"), "dashboard radarr full");
+              }
+            }}
+          >
+            Radarr full
+          </Button>
+          <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => navigate(PATHS.sync)}>
+            Sync &amp; queue
+            <ArrowRight className="size-3.5" aria-hidden />
+          </Button>
         </div>
       </div>
 
@@ -121,17 +108,17 @@ export function DashboardPage(): JSX.Element {
       </div>
 
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-        <GlassCard className="border-white/10">
+        <GlassCard>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <HeartPulse className="size-4 text-emerald-300/80" strokeWidth={1.75} aria-hidden />
+              <HeartPulse className="size-4 text-ok" strokeWidth={1.75} aria-hidden />
               Health
             </CardTitle>
             <CardDescription>Control-plane + subsystem breakdown (queues, lag, Sonarr/Radarr, MAL)</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {status.isLoading ? (
-              <Skeleton className="h-10 w-full bg-white/10" />
+              <Skeleton className="h-10 w-full" />
             ) : status.data ? (
               <>
                 <div className="flex flex-wrap items-center gap-2">
@@ -140,10 +127,10 @@ export function DashboardPage(): JSX.Element {
                     className={cn(
                       "border",
                       healthOk
-                        ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200"
+                        ? "border-ok/35 bg-ok/10 text-ok"
                         : status.data.health_state === "critical"
-                          ? "border-rose-500/50 bg-rose-500/10 text-rose-200"
-                          : "border-amber-500/50 bg-amber-500/10 text-amber-200",
+                          ? "border-critical/40 bg-critical/10 text-critical"
+                          : "border-warn/35 bg-warn/10 text-warn",
                     )}
                   >
                     {status.data.health_state}
@@ -163,14 +150,14 @@ export function DashboardPage(): JSX.Element {
                   </div>
                 ) : null}
                 {status.data.health_state !== "ok" ? (
-                  <p className="text-sm text-amber-100/90">{status.data.health_reasons?.join(", ") || "No reason codes"}</p>
+                  <p className="text-sm text-warn">{status.data.health_reasons?.join(", ") || "No reason codes"}</p>
                 ) : (
                   <p className="text-sm text-muted-foreground">All checks nominal for the current thresholds.</p>
                 )}
                 <p className="text-xs text-muted-foreground/90 leading-relaxed">
-                  <code className="rounded bg-white/5 px-1">Queues</code> = webhook queue backlog + dead-letter.{" "}
-                  <code className="rounded bg-white/5 px-1">Sync</code> = history lag. <code className="rounded bg-white/5 px-1">Arr</code> = known app
-                  versions. <code className="rounded bg-white/5 px-1">MAL</code> = client + last job results when MAL is enabled.
+                  <code className="rounded bg-muted px-1">Queues</code> = webhook queue backlog + dead-letter.{" "}
+                  <code className="rounded bg-muted px-1">Sync</code> = history lag. <code className="rounded bg-muted px-1">Arr</code> = known app
+                  versions. <code className="rounded bg-muted px-1">MAL</code> = client + last job results when MAL is enabled.
                 </p>
               </>
             ) : (
@@ -180,7 +167,7 @@ export function DashboardPage(): JSX.Element {
         </GlassCard>
 
         {malSync ? (
-          <GlassCard className="border-violet-500/20" id="mal">
+          <GlassCard id="mal">
             <CardHeader>
               <CardTitle className="text-base">MyAnimeList sync</CardTitle>
               <CardDescription>
@@ -198,7 +185,7 @@ export function DashboardPage(): JSX.Element {
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-white/10 hover:bg-transparent">
+                    <TableRow className="hover:bg-transparent">
                       <TableHead>Job</TableHead>
                       <TableHead>Scheduler</TableHead>
                       <TableHead>Last finished</TableHead>
@@ -217,7 +204,7 @@ export function DashboardPage(): JSX.Element {
                       const running = malSync.running.find((r) => r.job_type === jobType);
                       const label = jobType === "tag_sync" ? "tag sync" : jobType;
                       return (
-                        <TableRow key={jobType} className="border-white/5">
+                        <TableRow key={jobType}>
                           <TableCell className="font-medium">{label}</TableCell>
                           <TableCell>{enabled ? <Badge variant="outline">on</Badge> : <span className="text-muted-foreground">off</span>}</TableCell>
                           <TableCell>
@@ -228,7 +215,7 @@ export function DashboardPage(): JSX.Element {
                                   <span className="text-xs text-muted-foreground">{fmtDate(last.finished_at)}</span>
                                 </div>
                                 {last.error_message ? (
-                                  <p className="text-xs text-rose-200/80">{String(last.error_message)}</p>
+                                  <p className="text-xs text-critical">{String(last.error_message)}</p>
                                 ) : null}
                               </div>
                             ) : (
@@ -265,7 +252,7 @@ export function DashboardPage(): JSX.Element {
           {syncActivity.isLoading ? (
             <div className="space-y-2 px-4">
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full bg-white/10" />
+                <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
           ) : (syncActivity.data?.length ?? 0) === 0 ? (
@@ -274,7 +261,7 @@ export function DashboardPage(): JSX.Element {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-white/10 hover:bg-transparent">
+                  <TableRow className="hover:bg-transparent">
                     <TableHead>Source</TableHead>
                     <TableHead>Mode</TableHead>
                     <TableHead>Status</TableHead>
@@ -287,7 +274,7 @@ export function DashboardPage(): JSX.Element {
                 </TableHeader>
                 <TableBody>
                   {(syncActivity.data ?? []).map((row) => (
-                    <TableRow key={row.run_id} className="border-white/5">
+                    <TableRow key={row.run_id}>
                       <TableCell className="font-mono text-xs">{row.source}</TableCell>
                       <TableCell className="font-mono text-xs">{row.mode}</TableCell>
                       <TableCell>

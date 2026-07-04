@@ -171,7 +171,7 @@ export function ReportingPage(): JSX.Element {
           </div>
         </div>
         {pieData.length > 0 ? (
-          <div className="mb-4 h-56 w-full rounded-xl border border-cyan-500/15 bg-[#0a1020]/80 px-1 py-2">
+          <div className="mb-4 h-56 w-full rounded-xl border border-border bg-muted/30 px-1 py-2">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={44} outerRadius={72} paddingAngle={2}>

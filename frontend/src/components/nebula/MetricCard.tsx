@@ -17,13 +17,13 @@ export function MetricCard({
   className?: string;
 }): JSX.Element {
   return (
-    <GlassCard glow="cyan" className={cn("min-h-[112px] min-w-0 border-cyan-500/15", className)} size="sm">
+    <GlassCard className={cn("min-h-[104px] min-w-0", className)} size="sm">
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-1">
-        <CardTitle className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</CardTitle>
-        {Icon ? <Icon className="size-4 text-cyan-300/80" strokeWidth={1.75} aria-hidden /> : null}
+        <CardTitle className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</CardTitle>
+        {Icon ? <Icon className="size-4 text-muted-foreground/70" strokeWidth={1.75} aria-hidden /> : null}
       </CardHeader>
       <CardContent className="pt-0">
-        <div className="font-heading text-2xl font-semibold tabular-nums text-foreground">{value}</div>
+        <div className="text-2xl font-semibold tracking-tight tabular-nums text-foreground">{value}</div>
         {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
       </CardContent>
     </GlassCard>

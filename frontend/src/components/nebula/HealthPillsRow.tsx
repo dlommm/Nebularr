@@ -10,9 +10,9 @@ const DIM_LABELS: Record<keyof HealthDimensions, string> = {
 
 function pillClass(s: HealthState | undefined): string {
   const v = s ?? "ok";
-  if (v === "ok") return "border-emerald-500/50 bg-emerald-500/10 text-emerald-200";
-  if (v === "warning") return "border-amber-500/50 bg-amber-500/10 text-amber-200";
-  return "border-rose-500/50 bg-rose-500/10 text-rose-200";
+  if (v === "ok") return "border-ok/30 bg-ok/10 text-ok";
+  if (v === "warning") return "border-warn/30 bg-warn/10 text-warn";
+  return "border-critical/30 bg-critical/10 text-critical";
 }
 
 type HealthPillsRowProps = {
@@ -40,7 +40,7 @@ export function HealthPillsRow({ dimensions, reasonMap, className, size = "sm" }
             key={k}
             title={titleParts.join(" — ")}
             className={cn(
-              "inline-flex items-center rounded-full border px-1.5 py-0.5 font-medium",
+              "inline-flex items-center rounded-full border px-2 py-0.5 font-medium",
               text,
               pillClass(st),
             )}

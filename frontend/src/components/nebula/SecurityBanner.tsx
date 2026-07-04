@@ -29,9 +29,9 @@ export function SecurityBanner(): JSX.Element | null {
   return (
     <div
       role="alert"
-      className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+      className="mb-4 flex items-start gap-3 rounded-lg border border-warn/35 bg-warn/10 px-4 py-3 text-sm text-foreground"
     >
-      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden />
+      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
       <div className="flex-1">
         {warnings.map((warning) => (
           <p key={warning}>{warning}</p>
@@ -47,7 +47,7 @@ export function SecurityBanner(): JSX.Element | null {
       <Button
         variant="ghost"
         size="icon"
-        className="h-6 w-6 shrink-0 text-amber-200"
+        className="h-6 w-6 shrink-0 text-warn"
         aria-label="Dismiss security warning for this session"
         onClick={() => {
           sessionStorage.setItem(DISMISS_KEY, "true");

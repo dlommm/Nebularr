@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 
 function safeNextPath(raw: string | null): string {
   // Only same-origin path redirects; anything absolute or protocol-relative falls back to home.
@@ -46,6 +47,7 @@ export function LoginPage(): JSX.Element {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <GlassCard className="w-full max-w-sm">
         <CardHeader>
+          <img src={nebularrIcon} alt="" className="mb-2 size-10 rounded-lg" />
           <CardTitle>Nebularr</CardTitle>
           <CardDescription>Enter the admin password to continue.</CardDescription>
         </CardHeader>

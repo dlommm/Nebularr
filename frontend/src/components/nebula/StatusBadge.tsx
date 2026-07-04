@@ -5,19 +5,16 @@ const known = new Set(["running", "success", "failed", "ok", "warning", "critica
 
 function tone(status: string): string {
   const s = status.toLowerCase();
-  if (s === "running" || s === "pending" || s === "queued" || s === "retrying") {
-    return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+  if (s === "running" || s === "pending" || s === "queued" || s === "retrying" || s === "warning") {
+    return "border-warn/35 bg-warn/10 text-warn";
   }
   if (s === "success" || s === "ok" || s === "idle") {
-    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+    return "border-ok/35 bg-ok/10 text-ok";
   }
   if (s === "failed" || s === "critical" || s === "dead_letter") {
-    return "border-rose-500/45 bg-rose-500/10 text-rose-200";
+    return "border-critical/40 bg-critical/10 text-critical";
   }
-  if (s === "warning") {
-    return "border-amber-400/45 bg-amber-400/10 text-amber-100";
-  }
-  return "border-white/15 bg-white/5 text-muted-foreground";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 export function StatusBadge({ status, className }: { status: string; className?: string }): JSX.Element {

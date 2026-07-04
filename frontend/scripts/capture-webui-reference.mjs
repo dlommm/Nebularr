@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..");
-const outputDir = join(repoRoot, "docs", "reference", "webui-pages");
+const outputDir = process.env.WEBUI_CAPTURE_OUTPUT_DIR ?? join(repoRoot, "docs", "reference", "webui-pages");
 const baseUrl = process.env.WEBUI_CAPTURE_BASE_URL ?? "http://127.0.0.1:4173";
 
 const mockData = {
@@ -382,7 +382,7 @@ function routeResponse(pathname, referer) {
 
 const captures = [
   { path: "/", file: "home.png", waitFor: "h1" },
-  { path: "/dashboard", file: "dashboard.png", waitFor: "text=Mission control" },
+  { path: "/dashboard", file: "dashboard.png", waitFor: "text=Live sync activity" },
   { path: "/reporting", file: "reporting.png", waitFor: "text=Library Overview" },
   { path: "/library", file: "library.png", waitFor: "text=Nova Academy" },
   { path: "/sync", file: "sync-overview.png", waitFor: "text=Sync progress" },
@@ -400,6 +400,11 @@ async function main() {
   await mkdir(outputDir, { recursive: true });
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1720, height: 1080 } });
+
+  const theme = process.env.WEBUI_CAPTURE_THEME;
+  if (theme === "light" || theme === "dark") {
+    await page.addInitScript((t) => window.localStorage.setItem("nebularr-ui-theme", t), theme);
+  }
 
   await page.route("**/*", async (route) => {
     const req = route.request();

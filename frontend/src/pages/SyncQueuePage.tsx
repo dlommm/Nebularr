@@ -125,56 +125,56 @@ export function SyncQueuePage(): JSX.Element {
   return (
     <div className="space-y-6">
       <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <GlassCard glow="cyan" className="min-w-0 border-cyan-500/20" size="sm">
+        <GlassCard className="min-w-0" size="sm">
           <CardHeader className="pb-1">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Zap className="size-4 text-cyan-300/80" strokeWidth={1.75} aria-hidden />
+              <Zap className="size-4 text-muted-foreground/70" strokeWidth={1.75} aria-hidden />
               Active syncs
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="font-heading text-2xl font-semibold tabular-nums">{status.data?.active_sync_count ?? "—"}</p>
+            <p className="text-2xl font-semibold tabular-nums">{status.data?.active_sync_count ?? "—"}</p>
             <p className="text-xs text-muted-foreground">from /api/status</p>
           </CardContent>
         </GlassCard>
-        <GlassCard glow="violet" className="min-w-0 border-violet-500/20" size="sm">
+        <GlassCard className="min-w-0" size="sm">
           <CardHeader className="pb-1">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Inbox className="size-4 text-violet-300/80" strokeWidth={1.75} aria-hidden />
+              <Inbox className="size-4 text-muted-foreground/70" strokeWidth={1.75} aria-hidden />
               Webhook queue
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="font-heading text-2xl font-semibold tabular-nums">{status.data?.webhook_queue_open ?? "—"}</p>
+            <p className="text-2xl font-semibold tabular-nums">{status.data?.webhook_queue_open ?? "—"}</p>
             <p className="text-xs text-muted-foreground">queued + retrying</p>
           </CardContent>
         </GlassCard>
-        <GlassCard className="min-w-0 border-white/10" size="sm">
+        <GlassCard className="min-w-0" size="sm">
           <CardHeader className="pb-1">
             <CardTitle className="text-sm font-medium text-muted-foreground">Sonarr lag</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="font-heading text-2xl font-semibold tabular-nums">
+            <p className="text-2xl font-semibold tabular-nums">
               {status.data ? `${Math.round((status.data.sync_lag_seconds.sonarr ?? 0) * 10) / 10}s` : "—"}
             </p>
           </CardContent>
         </GlassCard>
-        <GlassCard className="min-w-0 border-white/10" size="sm">
+        <GlassCard className="min-w-0" size="sm">
           <CardHeader className="pb-1">
             <CardTitle className="text-sm font-medium text-muted-foreground">Radarr lag</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="font-heading text-2xl font-semibold tabular-nums">
+            <p className="text-2xl font-semibold tabular-nums">
               {status.data ? `${Math.round((status.data.sync_lag_seconds.radarr ?? 0) * 10) / 10}s` : "—"}
             </p>
           </CardContent>
         </GlassCard>
-        <GlassCard glow="violet" className="min-w-0 border-violet-500/20" size="sm">
+        <GlassCard className="min-w-0" size="sm">
           <CardHeader className="pb-1">
             <CardTitle className="text-sm font-medium text-muted-foreground">MAL processing</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="font-heading text-2xl font-semibold tabular-nums">
+            <p className="text-2xl font-semibold tabular-nums">
               {status.data?.mal_sync?.fetched_success_count ?? 0}/{status.data?.mal_sync?.dubbed_total ?? 0}
             </p>
             <p className="text-xs text-muted-foreground">completed / total dubbed</p>
@@ -184,20 +184,20 @@ export function SyncQueuePage(): JSX.Element {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="grid h-auto w-full min-w-0 min-h-9 max-w-full grid-cols-2 gap-0.5 bg-white/[0.04] p-1 sm:max-w-2xl sm:grid-cols-4">
-          <TabsTrigger value="overview" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+        <TabsList className="grid h-auto w-full min-w-0 min-h-9 max-w-full grid-cols-2 gap-0.5 sm:max-w-2xl sm:grid-cols-4">
+          <TabsTrigger value="overview" className="min-w-0 gap-1.5">
             <Activity className="size-3.5" aria-hidden />
             <span className="hidden sm:inline">Overview</span>
           </TabsTrigger>
-          <TabsTrigger value="runs" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+          <TabsTrigger value="runs" className="min-w-0 gap-1.5">
             <ListOrdered className="size-3.5" aria-hidden />
             <span className="hidden sm:inline">Runs</span>
           </TabsTrigger>
-          <TabsTrigger value="webhooks" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+          <TabsTrigger value="webhooks" className="min-w-0 gap-1.5">
             <Inbox className="size-3.5" aria-hidden />
             <span className="hidden sm:inline">Webhooks</span>
           </TabsTrigger>
-          <TabsTrigger value="manual" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+          <TabsTrigger value="manual" className="min-w-0 gap-1.5">
             <Wrench className="size-3.5" aria-hidden />
             <span className="hidden sm:inline">Manual</span>
           </TabsTrigger>
@@ -230,7 +230,7 @@ export function SyncQueuePage(): JSX.Element {
                 ) : (
                   <p className="text-sm text-muted-foreground">No active sync job reported by /api/ui/sync-progress.</p>
                 )}
-                <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-xs text-muted-foreground">
+                <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   MAL fetched: <strong>{status.data?.mal_sync?.fetched_success_count ?? 0}</strong> /{" "}
                   <strong>{status.data?.mal_sync?.dubbed_total ?? 0}</strong> · pending{" "}
                   <strong>{status.data?.mal_sync?.pending_fetch_count ?? 0}</strong>
@@ -264,7 +264,7 @@ export function SyncQueuePage(): JSX.Element {
               <CardContent>
                 <ul className="space-y-2 text-sm">
                   {(webhookQueue.data ?? []).map((row) => (
-                    <li key={row.status} className="flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                    <li key={row.status} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
                       <span className="text-muted-foreground">{row.status}</span>
                       <span className="font-mono tabular-nums font-medium">{row.count}</span>
                     </li>
@@ -285,7 +285,7 @@ export function SyncQueuePage(): JSX.Element {
               <div className="overflow-x-auto rounded-b-xl">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
-                    <tr className="border-b border-white/10 text-left text-xs text-muted-foreground">
+                    <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                       <th className="p-3 font-medium">Source</th>
                       <th className="p-3 font-medium">Mode</th>
                       <th className="p-3 font-medium">Status</th>
@@ -297,7 +297,7 @@ export function SyncQueuePage(): JSX.Element {
                   </thead>
                   <tbody>
                     {(runs.data ?? []).map((run, idx) => (
-                      <tr key={`${run.source}-${run.started_at}-${idx}`} className="border-b border-white/5 hover:bg-white/[0.04]">
+                      <tr key={`${run.source}-${run.started_at}-${idx}`} className="border-b border-border/60 last:border-0 hover:bg-muted/50">
                         <td className="p-3">{run.source}</td>
                         <td className="p-3 font-mono text-xs">{run.mode}</td>
                         <td className="p-3">
@@ -306,7 +306,7 @@ export function SyncQueuePage(): JSX.Element {
                         <td className="p-3 text-xs text-muted-foreground">{fmtDate(run.started_at)}</td>
                         <td className="p-3 text-xs text-muted-foreground">{fmtDate(run.finished_at)}</td>
                         <td className="p-3 font-mono tabular-nums">{run.rows_written ?? "—"}</td>
-                        <td className="p-3 text-xs text-rose-200/80">{run.error_message ?? "—"}</td>
+                        <td className="p-3 text-xs text-critical">{run.error_message ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -341,7 +341,7 @@ export function SyncQueuePage(): JSX.Element {
                 <div className="overflow-x-auto rounded-b-xl">
                   <table className="w-full min-w-[720px] text-sm">
                     <thead>
-                      <tr className="border-b border-white/10 text-left text-xs text-muted-foreground">
+                      <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                         <th className="p-3 font-medium">ID</th>
                         <th className="p-3 font-medium">Source</th>
                         <th className="p-3 font-medium">Type</th>
@@ -353,7 +353,7 @@ export function SyncQueuePage(): JSX.Element {
                     </thead>
                     <tbody>
                       {(webhookJobs.data ?? []).map((row) => (
-                        <tr key={row.id} className="border-b border-white/5 hover:bg-white/[0.04]">
+                        <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/50">
                           <td className="p-3 font-mono text-xs">{row.id}</td>
                           <td className="p-3">{row.source}</td>
                           <td className="p-3 text-xs text-muted-foreground">{row.event_type ?? "—"}</td>
@@ -362,7 +362,7 @@ export function SyncQueuePage(): JSX.Element {
                           </td>
                           <td className="p-3 font-mono tabular-nums">{row.attempts}</td>
                           <td className="p-3 text-xs text-muted-foreground">{fmtDate(row.received_at)}</td>
-                          <td className="p-3 text-xs text-rose-200/80">{row.error_message ?? "—"}</td>
+                          <td className="p-3 text-xs text-critical">{row.error_message ?? "—"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -440,7 +440,7 @@ export function SyncQueuePage(): JSX.Element {
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-fit border-amber-500/50 text-amber-100 hover:bg-amber-500/10"
+                  className="w-fit border-warn/40 text-warn hover:bg-warn/10"
                   onClick={() => {
                     if (
                       window.confirm(
@@ -459,7 +459,7 @@ export function SyncQueuePage(): JSX.Element {
                 >
                   Reset MAL Data
                 </Button>
-                <div className="space-y-2 border-t border-white/10 pt-3">
+                <div className="space-y-2 border-t border-border pt-3">
                   <p className="text-xs text-muted-foreground">
                     Long tasks (MAL ingest, Sonarr/Radarr syncs, and similar) run <strong className="text-foreground/90">inside the app
                     process</strong>. A crash or kill can leave coordination rows in Postgres (locks) or
@@ -468,7 +468,7 @@ export function SyncQueuePage(): JSX.Element {
                     sure nothing is really running.
                   </p>
                   {stuckState.isError ? (
-                    <p className="text-xs text-rose-200/80">Could not load stuck state.</p>
+                    <p className="text-xs text-critical">Could not load stuck state.</p>
                   ) : null}
                   <ul className="list-inside list-disc text-xs text-muted-foreground">
                     <li>
@@ -476,16 +476,16 @@ export function SyncQueuePage(): JSX.Element {
                     </li>
                     <li>Running MAL job rows: {stuckState.data?.mal_job_runs_running?.length ?? (stuckState.isLoading ? "…" : 0)}</li>
                     <li>
-                      Running warehouse <code className="rounded bg-white/5 px-0.5">sync_run</code> rows:{" "}
+                      Running warehouse <code className="rounded bg-muted px-0.5">sync_run</code> rows:{" "}
                       {stuckState.data?.warehouse_sync_runs_running?.length ?? (stuckState.isLoading ? "…" : 0)}
                     </li>
                     <li>
-                      Running Sonarr/Radarr <code className="rounded bg-white/5 px-0.5">job_run_summary</code> rows:{" "}
+                      Running Sonarr/Radarr <code className="rounded bg-muted px-0.5">job_run_summary</code> rows:{" "}
                       {stuckState.data?.job_run_summary_running?.length ?? (stuckState.isLoading ? "…" : 0)}
                     </li>
                   </ul>
                   {stuckState.data?.job_locks?.length ? (
-                    <ul className="max-h-24 overflow-y-auto rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                    <ul className="max-h-24 overflow-y-auto rounded border border-border bg-muted/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
                       {stuckState.data.job_locks.map((l) => (
                         <li key={l.lock_name} className="truncate">
                           {l.lock_name}
@@ -503,7 +503,7 @@ export function SyncQueuePage(): JSX.Element {
                         }}
                       />
                       <Label htmlFor="stuck-all-locks" className="text-xs text-muted-foreground">
-                        Remove <strong className="text-foreground/90">all</strong> rows in <code className="rounded bg-white/5 px-0.5">app.job_lock</code> (ignores
+                        Remove <strong className="text-foreground/90">all</strong> rows in <code className="rounded bg-muted px-0.5">app.job_lock</code> (ignores
                         granular lock options below)
                       </Label>
                     </div>
@@ -515,7 +515,7 @@ export function SyncQueuePage(): JSX.Element {
                         onCheckedChange={(c) => setStuckClearMalLock(c === true)}
                       />
                       <Label htmlFor="stuck-mal-lock" className="text-xs text-muted-foreground">
-                        Remove <code className="rounded bg-white/5 px-0.5">mal:ingest</code> lock
+                        Remove <code className="rounded bg-muted px-0.5">mal:ingest</code> lock
                       </Label>
                     </div>
                     <div className="flex items-center gap-2">
@@ -545,7 +545,7 @@ export function SyncQueuePage(): JSX.Element {
                         checked={stuckFailWhSync}
                         onCheckedChange={(c) => setStuckFailWhSync(c === true)}
                       />
-                      <Label htmlFor="stuck-wh-fail" className="text-xs text-amber-200/80">
+                      <Label htmlFor="stuck-wh-fail" className="text-xs text-warn">
                         Mark &quot;running&quot; warehouse sync runs and Sonarr/Radarr job summary rows as failed (dangerous if a
                         sync is still running)
                       </Label>
@@ -602,7 +602,7 @@ export function SyncQueuePage(): JSX.Element {
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 Large ingests can take a long time. Requires MAL client id in Integrations or{" "}
-                <code className="rounded bg-white/5 px-1">MAL_CLIENT_ID</code>. Each run fetches at most one batch of IDs
+                <code className="rounded bg-muted px-1">MAL_CLIENT_ID</code>. Each run fetches at most one batch of IDs
                 (default from server: {malConfig.data?.mal_max_ids_per_run ?? "…"} per batch). MAL and Jikan requests are
                 throttled per server settings (
                 {malConfig.data ? `${malConfig.data.mal_min_request_interval_seconds}s` : "…"} /{" "}
@@ -615,43 +615,43 @@ export function SyncQueuePage(): JSX.Element {
                 (including Jikan variants), and year (±1 year) against your Sonarr/Radarr warehouse titles.
               </p>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <label className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
+                <label className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
                   IDs per batch
                   <input
                     type="number"
                     min={1}
                     max={500}
-                    className="w-[72px] rounded border border-white/10 bg-white/5 px-1.5 py-0.5"
+                    className="w-[72px] rounded border border-input bg-background px-1.5 py-0.5"
                     value={malBatchSize}
                     onChange={(event) => setMalBatchSize(Math.max(1, Math.min(500, Number(event.target.value || 200))))}
                     title="MAL_MAX_IDS_PER_RUN override for this action (1–500)"
                   />
                 </label>
-                <label className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
+                <label className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
                   backlog cycles
                   <input
                     type="number"
                     min={1}
                     max={200}
-                    className="w-20 rounded border border-white/10 bg-white/5 px-1.5 py-0.5"
+                    className="w-20 rounded border border-input bg-background px-1.5 py-0.5"
                     value={malBacklogCycles}
                     onChange={(event) => setMalBacklogCycles(Number(event.target.value || 10))}
                     disabled={malImportAll}
                   />
                 </label>
-                <label className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
+                <label className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
                   delay between cycles (sec)
                   <input
                     type="number"
                     min={0}
                     max={30}
                     step={0.5}
-                    className="w-20 rounded border border-white/10 bg-white/5 px-1.5 py-0.5"
+                    className="w-20 rounded border border-input bg-background px-1.5 py-0.5"
                     value={malCycleDelaySeconds}
                     onChange={(event) => setMalCycleDelaySeconds(Number(event.target.value || 0))}
                   />
                 </label>
-                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/10 px-2 py-1 text-xs">
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
                   <input
                     type="checkbox"
                     checked={malImportAll}
@@ -723,7 +723,7 @@ export function SyncQueuePage(): JSX.Element {
                 </Button>
               </div>
               {malPipelineResult ? (
-                <pre className="max-h-52 overflow-auto rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-cyan-100/90">{malPipelineResult}</pre>
+                <pre className="max-h-52 overflow-auto rounded-lg border border-border bg-muted/50 p-3 text-xs text-foreground/90">{malPipelineResult}</pre>
               ) : null}
             </CardContent>
           </GlassCard>

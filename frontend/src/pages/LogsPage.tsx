@@ -33,8 +33,8 @@ export function LogsPage(): JSX.Element {
         <CardDescription>
           In-memory lines on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"}) at the effective level
           below. The buffer attaches to the root logger, so you should see the same <strong className="text-foreground/90">application
-          and library</strong> log lines (for example <code className="rounded bg-white/5 px-1">httpx</code>,{" "}
-          <code className="rounded bg-white/5 px-1">sqlalchemy</code>, <code className="rounded bg-white/5 px-1">arrsync</code>) that
+          and library</strong> log lines (for example <code className="rounded bg-muted px-1">httpx</code>,{" "}
+          <code className="rounded bg-muted px-1">sqlalchemy</code>, <code className="rounded bg-muted px-1">arrsync</code>) that
           appear in the process stdout. <strong className="text-foreground/90">Uvicorn access logs</strong> may still be stdout-only
           if their loggers do not propagate. Tune level under Integrations → application logging.
         </CardDescription>
@@ -55,9 +55,9 @@ export function LogsPage(): JSX.Element {
           </span>
         </div>
         {uiLogs.isError ? (
-          <p className="text-sm text-rose-300/90">Could not load logs: {String(uiLogs.error)}</p>
+          <p className="text-sm text-critical">Could not load logs: {String(uiLogs.error)}</p>
         ) : null}
-        <div className="log-viewport max-h-[min(70vh,720px)] overflow-y-auto rounded-xl border border-white/10 bg-[#0a0e18] p-2 font-mono text-xs text-foreground">
+        <div className="log-viewport">
           {uiLogs.isLoading && items.length === 0 ? (
             <p className="m-0 px-1 py-2 text-sm text-muted-foreground">Loading…</p>
           ) : null}

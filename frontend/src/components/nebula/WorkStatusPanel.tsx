@@ -63,7 +63,7 @@ export function WorkStatusPanel({
   const items = q.data?.items ?? [];
 
   return (
-    <GlassCard className={cn("border-white/10", className)} glow="mixed">
+    <GlassCard className={className}>
       <CardHeader className={dense ? "pb-2" : undefined}>
         <CardTitle className="text-base">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
@@ -71,12 +71,12 @@ export function WorkStatusPanel({
       <CardContent className={cn("space-y-4", dense ? "pt-0" : undefined)}>
         {q.isLoading && !q.data ? (
           <div className="space-y-2">
-            <Skeleton className="h-16 w-full bg-white/10" />
-            <Skeleton className="h-16 w-full bg-white/10" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
           </div>
         ) : null}
         {q.isError ? (
-          <p className="text-sm text-rose-300/90">Could not load work status: {String(q.error)}</p>
+          <p className="text-sm text-critical">Could not load work status: {String(q.error)}</p>
         ) : null}
         {!q.isLoading && items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Idle — no warehouse sync, MAL job, or setup import running.</p>
@@ -93,7 +93,7 @@ export function WorkStatusPanel({
             return (
               <div
                 key={key}
-                className="space-y-2 rounded-xl border border-cyan-500/15 bg-gradient-to-br from-cyan-500/5 to-transparent px-3 py-3"
+                className="space-y-2 rounded-xl border border-border bg-muted/40 px-3 py-3"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
                   <span className="font-medium text-foreground/95">{warehouseTitle(item)}</span>
@@ -114,13 +114,13 @@ export function WorkStatusPanel({
             return (
               <div
                 key={key}
-                className="space-y-2 rounded-xl border border-violet-500/15 bg-gradient-to-br from-violet-500/5 to-transparent px-3 py-3"
+                className="space-y-2 rounded-xl border border-border bg-muted/40 px-3 py-3"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
                   <span className="font-medium text-foreground/95">MAL {item.job_type}</span>
                   <span className="text-xs text-muted-foreground">run #{item.run_id}</span>
                 </div>
-                {extra ? <p className="text-xs text-cyan-100/90">{extra}</p> : null}
+                {extra ? <p className="text-xs text-muted-foreground">{extra}</p> : null}
                 <ProgressBar value={pct} label="Estimated completion (from past jobs)" />
                 <p className="text-xs text-muted-foreground">
                   Elapsed {fmtDuration(item.elapsed_seconds)}
@@ -133,7 +133,7 @@ export function WorkStatusPanel({
           return (
             <div
               key={key}
-              className="space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
+              className="space-y-2 rounded-xl border border-warn/25 bg-warn/5 px-3 py-3"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
                 <span className="font-medium text-foreground/95">{item.stage}</span>

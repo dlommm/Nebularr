@@ -40,3 +40,9 @@ npm run capture:reference
 Capture script location:
 
 - `frontend/scripts/capture-webui-reference.mjs`
+
+Optional environment variables:
+
+- `WEBUI_CAPTURE_BASE_URL` — server to capture against (default `http://127.0.0.1:4173`).
+- `WEBUI_CAPTURE_OUTPUT_DIR` — where PNGs are written (default `docs/reference/webui-pages`).
+- `WEBUI_CAPTURE_THEME` — `light` or `dark` to force a theme (default: app default, dark).

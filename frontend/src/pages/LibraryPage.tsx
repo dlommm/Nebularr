@@ -148,22 +148,26 @@ export function LibraryPage(): JSX.Element {
 
   const renderLibraryRows = (rows: EpisodeRow[]) =>
     rows.map((row) => (
-      <tr key={row.episode_id} onClick={() => setDetailDrawer(row)}>
-        <td>{row.series_title}</td>
-        <td>{row.instance_name}</td>
-        <td>{row.season_number}</td>
-        <td>{row.episode_number}</td>
-        <td>{row.episode_title}</td>
-        <td>{fmtDate(row.air_date)}</td>
-        <td>{fmtSize(row.size_bytes)}</td>
-        <td>{row.video_codec ?? "-"}</td>
-        <td>{row.audio_codec ?? "-"}</td>
-        <td>{row.has_file ? "downloaded" : row.series_status ?? "-"}</td>
+      <tr
+        key={row.episode_id}
+        onClick={() => setDetailDrawer(row)}
+        className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/50"
+      >
+        <td className="p-2">{row.series_title}</td>
+        <td className="p-2">{row.instance_name}</td>
+        <td className="p-2 tabular-nums">{row.season_number}</td>
+        <td className="p-2 tabular-nums">{row.episode_number}</td>
+        <td className="p-2">{row.episode_title}</td>
+        <td className="p-2">{fmtDate(row.air_date)}</td>
+        <td className="p-2 tabular-nums">{fmtSize(row.size_bytes)}</td>
+        <td className="p-2">{row.video_codec ?? "-"}</td>
+        <td className="p-2">{row.audio_codec ?? "-"}</td>
+        <td className="p-2">{row.has_file ? "downloaded" : row.series_status ?? "-"}</td>
         {compareMode ? (
-          <td>
+          <td className="p-2">
             <button
               type="button"
-              className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
+              className="rounded-md border border-border bg-secondary px-2 py-1 text-xs text-secondary-foreground hover:bg-secondary/80"
               onClick={(event) => {
                 event.stopPropagation();
                 setCompareRows((existing) => {
@@ -183,20 +187,20 @@ export function LibraryPage(): JSX.Element {
 
   const compareSummary =
     compareMode && compareRows.length === 2 ? (
-      <GlassCard className="border-cyan-500/20">
+      <GlassCard>
         <CardHeader>
           <CardTitle className="text-base">Compare mode</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
               <p className="font-medium">A: {compareRows[0].series_title}</p>
               <p className="text-xs text-muted-foreground">
                 S{compareRows[0].season_number}E{compareRows[0].episode_number} · {compareRows[0].video_codec} / {compareRows[0].audio_codec} /{" "}
                 {fmtSize(compareRows[0].size_bytes)}
               </p>
             </div>
-            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
               <p className="font-medium">B: {compareRows[1].series_title}</p>
               <p className="text-xs text-muted-foreground">
                 S{compareRows[1].season_number}E{compareRows[1].episode_number} · {compareRows[1].video_codec} / {compareRows[1].audio_codec} /{" "}
@@ -214,19 +218,19 @@ export function LibraryPage(): JSX.Element {
         {compareSummary}
 
         <Tabs value={libraryMode} onValueChange={(v) => setLibraryMode(v as LibraryMode)} className="w-full">
-          <GlassCard className="sticky top-0 z-10 border-white/10">
+          <GlassCard>
             <CardHeader className="space-y-4 pb-4">
               <div className="flex w-full min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <TabsList className="grid h-auto w-full min-w-0 min-h-9 max-w-full grid-cols-3 gap-0.5 bg-white/[0.06] p-1 sm:max-w-xl">
-                  <TabsTrigger value="drilldown" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+                <TabsList className="grid h-auto w-full min-w-0 min-h-9 max-w-full grid-cols-3 gap-0.5 sm:max-w-xl">
+                  <TabsTrigger value="drilldown" className="min-w-0 gap-1.5">
                     <Clapperboard className="size-3.5" aria-hidden />
                     <span className="hidden sm:inline">TV shows</span>
                   </TabsTrigger>
-                  <TabsTrigger value="all-episodes" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+                  <TabsTrigger value="all-episodes" className="min-w-0 gap-1.5">
                     <ListVideo className="size-3.5" aria-hidden />
                     <span className="hidden sm:inline">All eps</span>
                   </TabsTrigger>
-                  <TabsTrigger value="movies" className="min-w-0 gap-1.5 data-[state=active]:bg-white/10">
+                  <TabsTrigger value="movies" className="min-w-0 gap-1.5">
                     <Film className="size-3.5" aria-hidden />
                     <span className="hidden sm:inline">Movies</span>
                   </TabsTrigger>
@@ -244,7 +248,7 @@ export function LibraryPage(): JSX.Element {
                   </div>
                   <Label className="text-xs text-muted-foreground">Sort by</Label>
                   <select
-                    className="h-9 rounded-md border border-white/10 bg-white/5 px-2 text-sm"
+                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                     value={libraryFilters.sortBy}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, sortBy: event.target.value, offset: 0 })}
                   >
@@ -265,7 +269,7 @@ export function LibraryPage(): JSX.Element {
                     placeholder="Titles, paths, metadata…"
                     value={libraryFilters.search}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, search: event.target.value, offset: 0 })}
-                    className="h-9 border-white/10 bg-white/5"
+                    className="h-9"
                   />
                 </div>
                 <div className="grid w-full gap-2 sm:max-w-[200px]">
@@ -274,12 +278,12 @@ export function LibraryPage(): JSX.Element {
                     placeholder="Filter instance"
                     value={libraryFilters.instance}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, instance: event.target.value, offset: 0 })}
-                    className="h-9 border-white/10 bg-white/5"
+                    className="h-9"
                   />
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <select
-                    className="h-9 rounded-md border border-white/10 bg-white/5 px-2 text-sm"
+                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                     value={libraryFilters.sortDir}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, sortDir: event.target.value as "asc" | "desc" })}
                   >
@@ -287,7 +291,7 @@ export function LibraryPage(): JSX.Element {
                     <option value="desc">Descending</option>
                   </select>
                   <select
-                    className="h-9 rounded-md border border-white/10 bg-white/5 px-2 text-sm"
+                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                     value={libraryFilters.limit}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, limit: Number(event.target.value), offset: 0 })}
                   >
@@ -345,13 +349,13 @@ export function LibraryPage(): JSX.Element {
                             setLibraryFilters({ ...libraryFilters, offset: 0 });
                           }}
                           className={cn(
-                            "text-left transition-transform hover:scale-[1.01] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl",
                           )}
                         >
                           <GlassCard
                             className={cn(
-                              "h-full border-white/10 p-0",
-                              selected ? "ring-2 ring-cyan-500/50" : "",
+                              "h-full p-0 transition-colors",
+                              selected ? "border-primary/50 ring-2 ring-primary/40" : "hover:border-primary/30",
                             )}
                             size="sm"
                           >
@@ -384,7 +388,7 @@ export function LibraryPage(): JSX.Element {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <select
-                    className="h-9 w-full max-w-xs rounded-md border border-white/10 bg-white/5 px-2 text-sm sm:w-auto"
+                    className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-2 text-sm sm:w-auto"
                     value={libraryFilters.showSeason ?? "all"}
                     onChange={(event) =>
                       setLibraryFilters({
@@ -401,10 +405,10 @@ export function LibraryPage(): JSX.Element {
                       </option>
                     ))}
                   </select>
-                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <div className="overflow-x-auto rounded-xl border border-border">
                     <table className="w-full min-w-[720px] text-sm">
                       <thead>
-                        <tr className="border-b border-white/10 text-left text-xs text-muted-foreground">
+                        <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                           <th className="p-2 font-medium">Series</th>
                           <th className="p-2 font-medium">Instance</th>
                           <th className="p-2 font-medium">S</th>
@@ -439,10 +443,10 @@ export function LibraryPage(): JSX.Element {
                 <CardTitle className="text-base">All episodes</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto rounded-xl border border-white/10">
+                <div className="overflow-x-auto rounded-xl border border-border">
                   <table className="w-full min-w-[900px] text-sm">
                     <thead>
-                      <tr className="border-b border-white/10 text-left text-xs text-muted-foreground">
+                      <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                         <th className="p-2 font-medium">Series</th>
                         <th className="p-2 font-medium">Instance</th>
                         <th className="p-2 font-medium">S</th>
@@ -482,10 +486,9 @@ export function LibraryPage(): JSX.Element {
                     type="button"
                     key={`${row.instance_name}-${row.movie_id}`}
                     onClick={() => setDetailDrawer(row)}
-                    className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl"
                   >
-                    <GlassCard className="h-full border-white/10" size="sm">
-                      <div className="h-2 rounded-t-lg bg-gradient-to-r from-cyan-500/40 to-violet-500/50" />
+                    <GlassCard className="h-full transition-colors hover:border-primary/30" size="sm">
                       <CardHeader className="p-3 pb-1">
                         <CardTitle className="line-clamp-2 text-sm font-semibold">{row.title}</CardTitle>
                         <p className="text-xs text-muted-foreground">
@@ -495,7 +498,7 @@ export function LibraryPage(): JSX.Element {
                       <CardContent className="space-y-2 px-3 pb-3">
                         <div className="flex flex-wrap gap-1.5">
                           <StatusBadge status={row.status} className="text-[0.6rem]" />
-                          {row.monitored ? <span className="text-[0.6rem] uppercase text-cyan-200/80">monitored</span> : null}
+                          {row.monitored ? <span className="text-[0.6rem] font-medium uppercase text-primary">monitored</span> : null}
                         </div>
                         <p className="text-[11px] text-muted-foreground">
                           {fmtSize(row.size_bytes)} · {row.video_codec ?? "—"} / {row.audio_codec ?? "—"}
@@ -518,14 +521,14 @@ export function LibraryPage(): JSX.Element {
       </div>
 
       {detailDrawer ? (
-        <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-md border-l border-white/10 glass-panel-strong p-4 shadow-2xl">
+        <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-md border-l border-border glass-panel-strong p-4 shadow-2xl">
           <div className="mb-3 flex items-center justify-between gap-2">
             <strong className="text-sm">Details</strong>
             <Button type="button" variant="secondary" size="sm" onClick={() => setDetailDrawer(null)}>
               Close
             </Button>
           </div>
-          <pre className="max-h-[calc(100vh-6rem)] overflow-auto text-xs text-cyan-100/90">{JSON.stringify(detailDrawer, null, 2)}</pre>
+          <pre className="max-h-[calc(100vh-6rem)] overflow-auto rounded-lg bg-muted/50 p-3 text-xs text-foreground/90">{JSON.stringify(detailDrawer, null, 2)}</pre>
         </aside>
       ) : null}
     </>

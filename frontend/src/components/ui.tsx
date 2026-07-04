@@ -44,7 +44,7 @@ export function LogViewerRow({ entry }: { entry: Record<string, unknown> }): JSX
       <div className="log-row-main">
         <span className="log-ts text-muted-foreground">{String(entry.ts ?? "")}</span>
         <span className="log-level-badge">{lvl}</span>
-        <span className="log-logger text-cyan-200/80">{String(entry.logger ?? "")}</span>
+        <span className="log-logger">{String(entry.logger ?? "")}</span>
         <span className="log-message text-foreground">{String(entry.message ?? "")}</span>
       </div>
       {extra ? <pre className="log-row-extra text-muted-foreground">{extra}</pre> : null}
@@ -63,16 +63,16 @@ export function DiagnosticsPanel({
 }): JSX.Element | null {
   if (!message) return null;
   return (
-    <GlassCard className="mb-4 border-rose-500/40 bg-rose-950/20" glow="none">
+    <GlassCard className="mb-4 border-critical/40 bg-critical/5">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm text-rose-100">Diagnostics</CardTitle>
+        <CardTitle className="text-sm text-critical">Diagnostics</CardTitle>
         <Button type="button" variant="secondary" size="sm" onClick={clear}>
           Dismiss
         </Button>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-rose-100/90">{message}</p>
-        {context ? <pre className="mt-2 max-h-40 overflow-auto text-xs text-rose-200/80">{context}</pre> : null}
+        <p className="text-sm text-foreground/90">{message}</p>
+        {context ? <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">{context}</pre> : null}
       </CardContent>
     </GlassCard>
   );
