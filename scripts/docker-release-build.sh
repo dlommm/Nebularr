@@ -21,7 +21,7 @@ cd "$ROOT"
 
 mode="${1:-}"
 if [[ "$mode" != "--load" && "$mode" != "--push" ]]; then
-  echo "Usage: $0 --load| --push" >&2
+  echo "Usage: $0 --load | --push" >&2
   exit 1
 fi
 

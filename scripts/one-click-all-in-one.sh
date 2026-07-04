@@ -7,10 +7,19 @@ if [[ ! -f ".env" ]]; then
   exit 1
 fi
 
-if [[ -f ".env" ]]; then
-  _helper="$(cd "$(dirname "$0")" && pwd)/export-compose-relevant-env.sh"
-  eval "$("$_helper")"
+# New installs should not run with the documented default Postgres password:
+# replace the placeholder with a generated one before the database first initializes.
+if grep -qE '^POSTGRES_PASSWORD=(arradmin)?$' .env; then
+  generated_pw="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
+  tmp_env="$(mktemp)"
+  sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${generated_pw}/" .env > "$tmp_env"
+  mv "$tmp_env" .env
+  echo "POSTGRES_PASSWORD was the default placeholder; generated a random one in .env."
+  echo "Use it in the setup wizard's PostgreSQL step (it is stored only in your local .env)."
 fi
+
+_helper="$(cd "$(dirname "$0")" && pwd)/export-compose-relevant-env.sh"
+eval "$("$_helper")"
 
 bundled=true
 case "${NEBULARR_BUNDLED_POSTGRES:-true}" in

@@ -73,30 +73,53 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    # Scanner images are version-pinned (not :latest) so the supply-chain jobs are
+    # themselves reproducible; Dependabot's docker ecosystem does not track `docker run`
+    # images, so bump these alongside base-image updates.
+    env:
+      TRIVY_IMAGE: aquasec/trivy:0.72.0
+      GRYPE_IMAGE: anchore/grype:v0.115.0
+      HADOLINT_IMAGE: hadolint/hadolint:v2.14.0
     steps:
       - uses: actions/checkout@v6
       - name: Hadolint (app Dockerfile)
-        run: docker run --rm -i hadolint/hadolint < Dockerfile
+        run: docker run --rm -i "$HADOLINT_IMAGE" < Dockerfile
       - name: Trivy filesystem + secret + vuln
         run: |
-          docker run --rm -v "$PWD:/src" aquasec/trivy:latest fs \
+          docker run --rm -v "$PWD:/src" "$TRIVY_IMAGE" fs \
             --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Trivy Dockerfile / compose misconfig
         run: |
-          docker run --rm -v "$PWD:/src" aquasec/trivy:latest config \
+          docker run --rm -v "$PWD:/src" "$TRIVY_IMAGE" config \
             --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Docker build (image scan input)
         run: docker build -t nebularr:ci .
       - name: Trivy image (HIGH/CRITICAL)
         run: |
           docker save nebularr:ci -o /tmp/nebularr-ci.tar
-          docker run --rm -v "$PWD:/src" -v /tmp:/tmp aquasec/trivy:latest image \
+          docker run --rm -v "$PWD:/src" -v /tmp:/tmp "$TRIVY_IMAGE" image \
             --input /tmp/nebularr-ci.tar --severity HIGH,CRITICAL --exit-code 1 \
             --ignorefile /src/.trivyignore.image
       - name: Grype image (fixed issues only; avoids unfixed distro noise)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/grype:latest \
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$GRYPE_IMAGE" \
             nebularr:ci --only-fixed --fail-on high -o table
+
+  lint_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Shellcheck scripts and git hooks
+        run: |
+          docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0 \
+            scripts/*.sh .githooks/commit-msg
+
+  version_sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: All hardcoded version strings match pyproject.toml
+        run: ./scripts/check-version-sync.sh
 
   smoke_optional:
     if: github.event_name == 'workflow_dispatch'
