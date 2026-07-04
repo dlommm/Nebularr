@@ -50,6 +50,7 @@ class FakeSettings:
     alert_webhook_min_state: str = "warning"
     alert_webhook_notify_recovery: bool = True
     scheduler_timezone: str = "UTC"
+    egress_policy: str = "open"
 
 
 class FakeMetrics:

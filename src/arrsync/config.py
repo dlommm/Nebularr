@@ -7,6 +7,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from arrsync.runtime_database_url import apply_runtime_database_url_to_environ
+from arrsync.runtime_secrets import apply_runtime_encryption_key_to_environ
 
 
 def _allow_settings_without_dotenv_file() -> bool:
@@ -54,6 +55,17 @@ class Settings(BaseSettings):
     webhook_shared_secret: str = "changeme"
     webhook_max_body_bytes: int = 262144
 
+    # Tri-state override for web/API auth: "" defers to the app.settings value
+    # managed from the UI; "false" is the lockout escape hatch; "true" forces it on.
+    auth_enabled: str = ""
+    auth_recovery_password: str = ""
+    auth_session_ttl_hours: int = 168
+
+    # Egress policy for user-configured outbound URLs (integrations, alert webhooks).
+    # "lan" blocks link-local/metadata ranges only; "strict" allows public hosts only;
+    # "open" restores the pre-2.0 scheme/netloc-only validation.
+    egress_policy: Literal["open", "lan", "strict"] = "lan"
+
     http_timeout_seconds: float = 15.0
     http_retry_attempts: int = 3
     http_max_parallel_requests: int = 4
@@ -90,6 +102,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     apply_runtime_database_url_to_environ()
+    apply_runtime_encryption_key_to_environ()
     db_url = os.getenv("DATABASE_URL", "").strip()
     dotenv_path = Path(".env")
     if dotenv_path.is_file():

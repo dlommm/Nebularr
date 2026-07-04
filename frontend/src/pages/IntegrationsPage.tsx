@@ -15,11 +15,15 @@ export function IntegrationsPage(): JSX.Element {
   const loggingConfig = useQuery({ queryKey: ["logging-config"], queryFn: api.loggingConfig });
   const webhookConfig = useQuery({ queryKey: ["webhook-config"], queryFn: api.webhookConfig });
   const alertWebhookConfig = useQuery({ queryKey: ["alert-webhook-config"], queryFn: api.alertWebhookConfig });
+  const authStatus = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus });
 
   const [integrationDrafts, setIntegrationDrafts] = useState<
     Record<string, { base_url: string; api_key: string; enabled: boolean; webhook_enabled: boolean }>
   >({});
   const [webhookSecretInput, setWebhookSecretInput] = useState("");
+  const [authPasswordInput, setAuthPasswordInput] = useState("");
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
+  const [issuedApiToken, setIssuedApiToken] = useState("");
   const [malClientIdInput, setMalClientIdInput] = useState("");
   const [malClearClientId, setMalClearClientId] = useState(false);
   const [malIngestEnabled, setMalIngestEnabled] = useState(false);
@@ -152,6 +156,61 @@ export function IntegrationsPage(): JSX.Element {
     );
   };
 
+  const savePassword = async (): Promise<void> => {
+    if (authPasswordInput.length < 8) {
+      setError("Password must be at least 8 characters", "save admin password");
+      return;
+    }
+    if (authPasswordInput !== authPasswordConfirm) {
+      setError("Passwords do not match", "save admin password");
+      return;
+    }
+    await runAction(
+      async () => {
+        await api.saveAuthConfig({ password: authPasswordInput, enabled: true });
+        // The new (or first) password invalidates nothing server-side, but sign in so
+        // the session cookie exists before the next authenticated request.
+        await api.authLogin(authPasswordInput);
+        setAuthPasswordInput("");
+        setAuthPasswordConfirm("");
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      "save admin password",
+    );
+  };
+
+  const setAuthEnabled = async (enabled: boolean): Promise<void> => {
+    await runAction(
+      async () => {
+        await api.saveAuthConfig({ enabled });
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      enabled ? "enable authentication" : "disable authentication",
+    );
+  };
+
+  const rotateApiToken = async (): Promise<void> => {
+    await runAction(
+      async () => {
+        const result = await api.saveAuthConfig({ rotate_api_token: true });
+        setIssuedApiToken(result.api_token ?? "");
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      "generate API token",
+    );
+  };
+
+  const revokeApiToken = async (): Promise<void> => {
+    await runAction(
+      async () => {
+        await api.saveAuthConfig({ revoke_api_token: true });
+        setIssuedApiToken("");
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      "revoke API token",
+    );
+  };
+
   const saveWebhookSecret = async (): Promise<void> => {
     if (!webhookSecretInput.trim()) {
       setError("Webhook secret cannot be empty", "save webhook secret");
@@ -201,6 +260,61 @@ export function IntegrationsPage(): JSX.Element {
 
   return (
     <div className="space-y-6 rounded-2xl border border-white/10 glass-panel p-4 sm:p-6">
+      <div className="inner-card">
+        <h3>Authentication</h3>
+        <div className="row">
+          <span className="pill">{authStatus.data?.enabled ? "authentication enabled" : "authentication disabled"}</span>
+          <span className="pill">{authStatus.data?.password_set ? "password set" : "no password set"}</span>
+          <span className="pill">{authStatus.data?.api_token_set ? "API token issued" : "no API token"}</span>
+          <span className="muted">
+            Protects every API endpoint with a login. API automation can use a bearer token instead.
+          </span>
+        </div>
+        <div className="row mt8">
+          <input
+            type="password"
+            autoComplete="new-password"
+            placeholder={authStatus.data?.password_set ? "New admin password (min 8 chars)" : "Set admin password (min 8 chars)"}
+            value={authPasswordInput}
+            onChange={(event) => setAuthPasswordInput(event.target.value)}
+          />
+          <input
+            type="password"
+            autoComplete="new-password"
+            placeholder="Confirm password"
+            value={authPasswordConfirm}
+            onChange={(event) => setAuthPasswordConfirm(event.target.value)}
+          />
+          <button type="button" className="secondary" onClick={() => void savePassword()}>
+            {authStatus.data?.password_set ? "Change password & enable" : "Set password & enable"}
+          </button>
+        </div>
+        {authStatus.data?.enabled ? (
+          <div className="row mt8">
+            <button type="button" className="secondary" onClick={() => void setAuthEnabled(false)}>
+              Disable authentication
+            </button>
+          </div>
+        ) : null}
+        <div className="row mt8">
+          <button type="button" className="secondary" onClick={() => void rotateApiToken()}>
+            {authStatus.data?.api_token_set ? "Rotate API token" : "Generate API token"}
+          </button>
+          {authStatus.data?.api_token_set ? (
+            <button type="button" className="secondary" onClick={() => void revokeApiToken()}>
+              Revoke API token
+            </button>
+          ) : null}
+        </div>
+        {issuedApiToken ? (
+          <div className="row mt8">
+            <span className="muted">
+              Copy this token now — it is shown only once. Send it as <code>Authorization: Bearer …</code>
+            </span>
+            <code>{issuedApiToken}</code>
+          </div>
+        ) : null}
+      </div>
       <h3 className="font-heading text-lg font-semibold">Integrations</h3>
       <div className="stack">
         {(integrations.data ?? []).map((row) => (
@@ -232,6 +346,8 @@ export function IntegrationsPage(): JSX.Element {
                 }
               />
               <input
+                type="password"
+                autoComplete="off"
                 placeholder="New API key (optional)"
                 value={integrationDrafts[`${row.source}:${row.name}`]?.api_key ?? ""}
                 onChange={(event) =>
@@ -400,6 +516,8 @@ export function IntegrationsPage(): JSX.Element {
         <div className="row">
           <span className="pill">{webhookConfig.data?.secret_set ? "secret set" : "secret missing"}</span>
           <input
+            type="password"
+            autoComplete="off"
             placeholder="Set new webhook shared secret"
             value={webhookSecretInput}
             onChange={(event) => setWebhookSecretInput(event.target.value)}

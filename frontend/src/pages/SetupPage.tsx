@@ -31,6 +31,9 @@ type WizardForm = {
   incrementalCron: string;
   reconcileCron: string;
   timezone: string;
+  adminPassword: string;
+  adminPasswordConfirm: string;
+  allowNoAuth: boolean;
 };
 
 export function SetupPage(): JSX.Element {
@@ -70,6 +73,9 @@ export function SetupPage(): JSX.Element {
     incrementalCron: "",
     reconcileCron: "",
     timezone: "UTC",
+    adminPassword: "",
+    adminPasswordConfirm: "",
+    allowNoAuth: false,
   });
 
   const engineReady = Boolean(setupStatus.data?.database?.engine_ready);
@@ -112,12 +118,17 @@ export function SetupPage(): JSX.Element {
           webhook_enabled: true,
         },
         webhook_secret: wizardForm.webhookSecret,
+        admin_password: wizardForm.allowNoAuth ? "" : wizardForm.adminPassword,
         schedules: {
           incremental: wizardForm.incrementalCron,
           reconcile: wizardForm.reconcileCron,
         },
         timezone: wizardForm.timezone,
       });
+      if (!wizardForm.allowNoAuth && wizardForm.adminPassword) {
+        // Sign in with the freshly created password so the redirect lands in the app, not /login.
+        await api.authLogin(wizardForm.adminPassword);
+      }
       if (wizardRunInitialSync) {
         const setupSources: string[] = [];
         if (!wizardForm.sonarrSkip && wizardRunSonarr) {
@@ -188,6 +199,7 @@ export function SetupPage(): JSX.Element {
     "Sonarr Setup",
     "Radarr Setup",
     "Webhook + Schedule",
+    "Security",
     "Initial Sync",
     "Review",
   ];
@@ -195,6 +207,10 @@ export function SetupPage(): JSX.Element {
   const isLastStep = wizardStep === totalSteps - 1;
   const databaseStepBlocksNext = wizardStep === 0 && !engineReady;
   const databaseBlocksNonDbSteps = !engineReady && wizardStep > 0;
+  const passwordTooShort = wizardForm.adminPassword.length > 0 && wizardForm.adminPassword.length < 8;
+  const passwordMismatch = wizardForm.adminPassword !== wizardForm.adminPasswordConfirm;
+  const securityStepBlocksNext =
+    wizardStep === 4 && !wizardForm.allowNoAuth && (!wizardForm.adminPassword || passwordTooShort || passwordMismatch);
 
   let stepBody: JSX.Element = <div />;
   if (wizardStep === 0) {
@@ -306,6 +322,8 @@ export function SetupPage(): JSX.Element {
             onChange={(event) => setWizardForm({ ...wizardForm, sonarrBaseUrl: event.target.value })}
           />
           <input
+            type="password"
+            autoComplete="off"
             disabled={wizardForm.sonarrSkip}
             placeholder="Sonarr API key"
             value={wizardForm.sonarrApiKey}
@@ -345,6 +363,8 @@ export function SetupPage(): JSX.Element {
             onChange={(event) => setWizardForm({ ...wizardForm, radarrBaseUrl: event.target.value })}
           />
           <input
+            type="password"
+            autoComplete="off"
             disabled={wizardForm.radarrSkip}
             placeholder="Radarr API key"
             value={wizardForm.radarrApiKey}
@@ -360,6 +380,8 @@ export function SetupPage(): JSX.Element {
         <strong>Webhook and Schedule</strong>
         <div className="row mt8">
           <input
+            type="password"
+            autoComplete="off"
             placeholder="Webhook shared secret (optional now)"
             value={wizardForm.webhookSecret}
             onChange={(event) => setWizardForm({ ...wizardForm, webhookSecret: event.target.value })}
@@ -386,6 +408,49 @@ export function SetupPage(): JSX.Element {
     );
   }
   if (wizardStep === 4) {
+    stepBody = (
+      <div className="inner-card">
+        <strong>Admin password</strong>
+        <div className="muted">
+          Protect this server with a password. Every API endpoint — including ones that can change integrations or
+          wipe data — is otherwise open to anyone who can reach this machine on the network.
+        </div>
+        <div className="row mt8 flex-col gap-3 sm:flex-row">
+          <input
+            type="password"
+            autoComplete="new-password"
+            disabled={wizardForm.allowNoAuth}
+            placeholder="Admin password (min 8 characters)"
+            value={wizardForm.adminPassword}
+            onChange={(event) => setWizardForm({ ...wizardForm, adminPassword: event.target.value })}
+          />
+          <input
+            type="password"
+            autoComplete="new-password"
+            disabled={wizardForm.allowNoAuth}
+            placeholder="Confirm password"
+            value={wizardForm.adminPasswordConfirm}
+            onChange={(event) => setWizardForm({ ...wizardForm, adminPasswordConfirm: event.target.value })}
+          />
+        </div>
+        {passwordTooShort ? <div className="muted mt8">Password must be at least 8 characters.</div> : null}
+        {!passwordTooShort && wizardForm.adminPassword && passwordMismatch ? (
+          <div className="muted mt8">Passwords do not match.</div>
+        ) : null}
+        <div className="row mt8">
+          <label className="pill">
+            <input
+              type="checkbox"
+              checked={wizardForm.allowNoAuth}
+              onChange={(event) => setWizardForm({ ...wizardForm, allowNoAuth: event.target.checked })}
+            />
+            run without authentication (not recommended)
+          </label>
+        </div>
+      </div>
+    );
+  }
+  if (wizardStep === 5) {
     stepBody = (
       <div className="inner-card">
         <strong>Initial Full Sync</strong>
@@ -423,7 +488,7 @@ export function SetupPage(): JSX.Element {
       </div>
     );
   }
-  if (wizardStep === 5) {
+  if (wizardStep === 6) {
     stepBody = (
       <div className="inner-card">
         <strong>Review</strong>
@@ -433,6 +498,9 @@ export function SetupPage(): JSX.Element {
           <div className="muted">Sonarr: {wizardForm.sonarrSkip ? "skipped" : wizardForm.sonarrBaseUrl || "configured later"}</div>
           <div className="muted">Radarr: {wizardForm.radarrSkip ? "skipped" : wizardForm.radarrBaseUrl || "configured later"}</div>
           <div className="muted">Webhook Secret: {wizardForm.webhookSecret ? "set" : "not set"}</div>
+          <div className="muted">
+            Authentication: {wizardForm.allowNoAuth || !wizardForm.adminPassword ? "disabled (not recommended)" : "enabled"}
+          </div>
           <div className="muted">Initial Sync: {wizardRunInitialSync ? "enabled (sequential)" : "not requested"}</div>
         </div>
       </div>
@@ -491,7 +559,7 @@ export function SetupPage(): JSX.Element {
             {!isLastStep ? (
               <Button
                 type="button"
-                disabled={wizardBusy || databaseStepBlocksNext || databaseBlocksNonDbSteps}
+                disabled={wizardBusy || databaseStepBlocksNext || databaseBlocksNonDbSteps || securityStepBlocksNext}
                 onClick={() => setWizardStep((prev) => Math.min(totalSteps - 1, prev + 1))}
               >
                 Next

@@ -7,10 +7,10 @@ import hashlib
 import io
 import json
 import logging
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
@@ -51,16 +51,38 @@ from arrsync.database_lifecycle import (
     run_migrations_and_seed,
     wait_for_postgres,
 )
+from arrsync.auth import (
+    SESSION_COOKIE_NAME,
+    LoginRateLimiter,
+    auth_required,
+    generate_api_token,
+    get_auth_config,
+    hash_password,
+    invalidate_auth_cache,
+    mint_session_token,
+    request_is_authenticated,
+    verify_password,
+)
 from arrsync.postgres_bootstrap import bootstrap_arrapp_from_admin_url
 from arrsync.runtime_database_url import persist_runtime_database_url, runtime_database_url_persisted
+from arrsync.runtime_secrets import encryption_at_rest_active
 from arrsync.security import encrypt_secret, hash_secret, verify_secret_hash
+from arrsync.services.auth_store import (
+    store_api_token_hash,
+    store_auth_enabled,
+    store_auth_password_hash,
+)
+from arrsync.services.url_guard import UrlPolicyError, assert_url_allowed
 
 log = logging.getLogger(__name__)
 
 
 def build_router(app_state: Any) -> APIRouter:
     router = APIRouter()
-    reporting_max_limit = 1_000_000
+    # Hard ceilings on rows a single request can pull; protects Postgres and the
+    # event loop from accidental (or unauthenticated) full-table dumps.
+    reporting_max_limit = 50_000
+    export_row_cap = 100_000
     web_ui_dir = Path(__file__).with_name("web")
     web_ui_path = web_ui_dir.joinpath("index.html")
     web_dist_dir = web_ui_dir.joinpath("dist")
@@ -124,6 +146,12 @@ def build_router(app_state: Any) -> APIRouter:
                 if value:
                     urls.append(value)
         return urls
+
+    def _assert_egress_allowed(url: str, label: str) -> None:
+        try:
+            assert_url_allowed(url, app_state.settings.egress_policy)
+        except UrlPolicyError as exc:
+            raise HTTPException(status_code=400, detail=f"{label}: {exc}") from exc
 
     def _get_setting(session: Any, key: str, default: str = "") -> str:
         value = session.execute(
@@ -2658,14 +2686,114 @@ def build_router(app_state: Any) -> APIRouter:
             "version": app_state.settings.app_version,
             "git_sha": app_state.settings.app_git_sha,
             "time": datetime.now(timezone.utc).isoformat(),
+            "encryption": "ok" if encryption_at_rest_active() else "plaintext",
         }
         if not app_state.session_factory.ready:
             payload["database"] = "not_configured"
+            payload["auth"] = "disabled"
             return payload
         with app_state.session_scope() as session:
             session.execute(text("select 1"))
+            stored_webhook_hash = _get_setting(session, "app.webhook_secret_hash", "")
         payload["database"] = "ok"
+        payload["auth"] = "enabled" if auth_required(app_state) else "disabled"
+        if not stored_webhook_hash and app_state.settings.webhook_shared_secret == "changeme":
+            payload["webhook_secret"] = "default"
         return payload
+
+    login_rate_limiter = LoginRateLimiter()
+
+    @router.get("/api/auth/status")
+    async def auth_status(request: Request) -> dict[str, Any]:
+        config = get_auth_config(app_state)
+        required = auth_required(app_state)
+        return {
+            "enabled": required,
+            "password_set": bool(config and config.password_set),
+            "api_token_set": bool(config and config.api_token_hash),
+            "authenticated": (not required) or request_is_authenticated(request, app_state),
+        }
+
+    @router.post("/api/auth/login")
+    async def auth_login(payload: dict[str, Any], request: Request) -> JSONResponse:
+        client_key = request.client.host if request.client else "unknown"
+        if login_rate_limiter.is_locked(client_key):
+            raise HTTPException(status_code=429, detail="too many failed login attempts; try again shortly")
+        password = str(payload.get("password", ""))
+        config = get_auth_config(app_state)
+        recovery = app_state.settings.auth_recovery_password.strip()
+        authenticated = bool(config and config.password_hash and verify_password(password, config.password_hash))
+        if not authenticated and recovery and password:
+            if secrets.compare_digest(password, recovery):
+                authenticated = True
+                log.warning("login accepted via AUTH_RECOVERY_PASSWORD; set a regular password and unset it")
+        if not authenticated:
+            login_rate_limiter.register_failure(client_key)
+            raise HTTPException(status_code=401, detail="invalid password")
+        login_rate_limiter.reset(client_key)
+        ttl_seconds = max(1, app_state.settings.auth_session_ttl_hours) * 3600
+        token = mint_session_token(ttl_seconds)
+        response = JSONResponse({"status": "ok"})
+        secure_cookie = (
+            request.url.scheme == "https"
+            or request.headers.get("x-forwarded-proto", "").strip().lower() == "https"
+        )
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            max_age=ttl_seconds,
+            httponly=True,
+            samesite="strict",
+            secure=secure_cookie,
+            path="/",
+        )
+        return response
+
+    @router.post("/api/auth/logout")
+    async def auth_logout() -> JSONResponse:
+        response = JSONResponse({"status": "ok"})
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        return response
+
+    @router.put("/api/auth/config")
+    async def auth_update_config(payload: dict[str, Any]) -> dict[str, Any]:
+        # When auth is enabled the middleware has already authenticated this request;
+        # when disabled, setting a password + enabling is intentionally open (first-run).
+        if not app_state.session_factory.ready:
+            raise HTTPException(status_code=400, detail="database not configured")
+        config = get_auth_config(app_state)
+        new_password = str(payload.get("password", ""))
+        enabled_value = payload.get("enabled")
+        rotate_token = bool(payload.get("rotate_api_token", False))
+        revoke_token = bool(payload.get("revoke_api_token", False))
+        if new_password and len(new_password) < 8:
+            raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+        result: dict[str, Any] = {}
+        with app_state.session_scope() as session:
+            if new_password:
+                store_auth_password_hash(session, hash_password(new_password))
+            if enabled_value is not None:
+                want_enabled = _to_bool(enabled_value)
+                password_available = bool(new_password) or bool(config and config.password_set)
+                if want_enabled and not password_available:
+                    raise HTTPException(status_code=400, detail="set a password before enabling authentication")
+                store_auth_enabled(session, want_enabled)
+            if rotate_token:
+                api_token = generate_api_token()
+                store_api_token_hash(session, hash_secret(api_token))
+                result["api_token"] = api_token
+            elif revoke_token:
+                store_api_token_hash(session, "")
+        invalidate_auth_cache(app_state)
+        refreshed = get_auth_config(app_state)
+        result.update(
+            {
+                "enabled": auth_required(app_state),
+                "password_set": bool(refreshed and refreshed.password_set),
+                "api_token_set": bool(refreshed and refreshed.api_token_hash),
+            }
+        )
+        return result
 
     @router.get("/metrics")
     async def metrics() -> PlainTextResponse:
@@ -2771,25 +2899,26 @@ def build_router(app_state: Any) -> APIRouter:
             },
         ]
 
+    report_handlers: dict[str, Any] = {
+        "overview": _query_reporting_overview,
+        "language-audit": _query_reporting_language_audit,
+        "sync-ops": _query_reporting_sync_ops,
+        "ops-overview": _query_reporting_ops_overview,
+        "media-deep-dive": _query_reporting_media_deep_dive,
+        "monitoring-audit": _query_reporting_monitoring_audit,
+        "sonarr-forensics": _query_reporting_sonarr_forensics,
+        "radarr-forensics": _query_reporting_radarr_forensics,
+        "mal": _query_reporting_mal,
+    }
+
     @router.get("/api/reporting/dashboards/{dashboard_key}")
     async def get_reporting_dashboard(
         dashboard_key: str,
         instance_name: str = "",
         limit: int = 200,
     ) -> dict[str, Any]:
-        effective_limit = reporting_max_limit if limit == 0 else limit
-        reports: dict[str, Any] = {
-            "overview": _query_reporting_overview,
-            "language-audit": _query_reporting_language_audit,
-            "sync-ops": _query_reporting_sync_ops,
-            "ops-overview": _query_reporting_ops_overview,
-            "media-deep-dive": _query_reporting_media_deep_dive,
-            "monitoring-audit": _query_reporting_monitoring_audit,
-            "sonarr-forensics": _query_reporting_sonarr_forensics,
-            "radarr-forensics": _query_reporting_radarr_forensics,
-            "mal": _query_reporting_mal,
-        }
-        handler = reports.get(dashboard_key)
+        effective_limit = _bounded_limit(limit, default=reporting_max_limit, max_limit=reporting_max_limit)
+        handler = report_handlers.get(dashboard_key)
         if not handler:
             raise HTTPException(status_code=404, detail="unknown dashboard")
         return handler(instance_name=instance_name, limit=effective_limit)
@@ -2801,19 +2930,8 @@ def build_router(app_state: Any) -> APIRouter:
         instance_name: str = "",
         limit: int = 5000,
     ) -> PlainTextResponse:
-        effective_limit = reporting_max_limit if limit == 0 else limit
-        reports: dict[str, Any] = {
-            "overview": _query_reporting_overview,
-            "language-audit": _query_reporting_language_audit,
-            "sync-ops": _query_reporting_sync_ops,
-            "ops-overview": _query_reporting_ops_overview,
-            "media-deep-dive": _query_reporting_media_deep_dive,
-            "monitoring-audit": _query_reporting_monitoring_audit,
-            "sonarr-forensics": _query_reporting_sonarr_forensics,
-            "radarr-forensics": _query_reporting_radarr_forensics,
-            "mal": _query_reporting_mal,
-        }
-        handler = reports.get(dashboard_key)
+        effective_limit = _bounded_limit(limit, default=reporting_max_limit, max_limit=reporting_max_limit)
+        handler = report_handlers.get(dashboard_key)
         if not handler:
             raise HTTPException(status_code=404, detail="unknown dashboard")
         dashboard = handler(instance_name=instance_name, limit=effective_limit)
@@ -3015,6 +3133,9 @@ def build_router(app_state: Any) -> APIRouter:
         schedules = payload.get("schedules", {}) if isinstance(payload.get("schedules"), dict) else {}
         timezone = str(payload.get("timezone", app_state.settings.scheduler_timezone))
         webhook_secret = str(payload.get("webhook_secret", "")).strip()
+        admin_password = str(payload.get("admin_password", ""))
+        if admin_password and len(admin_password) < 8:
+            raise HTTPException(status_code=400, detail="admin password must be at least 8 characters")
 
         def _integration_params(source: str, data: dict[str, Any]) -> dict[str, Any]:
             skip = bool(data.get("skip", False))
@@ -3035,9 +3156,7 @@ def build_router(app_state: Any) -> APIRouter:
                     continue
                 if not item["base_url"]:
                     raise HTTPException(status_code=400, detail=f"{item['source']} base_url is required unless skipped")
-                parsed = urlparse(str(item["base_url"]))
-                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    raise HTTPException(status_code=400, detail=f"{item['source']} base_url must be a valid http(s) URL")
+                _assert_egress_allowed(str(item["base_url"]), f"{item['source']} base_url")
                 session.execute(
                     text(
                         """
@@ -3067,6 +3186,10 @@ def build_router(app_state: Any) -> APIRouter:
             if webhook_secret:
                 _set_setting(session, "app.webhook_secret_hash", hash_secret(webhook_secret))
 
+            if admin_password:
+                store_auth_password_hash(session, hash_password(admin_password))
+                store_auth_enabled(session, True)
+
             incremental = str(schedules.get("incremental", "")).strip()
             reconcile = str(schedules.get("reconcile", "")).strip()
             for mode, cron_value in (("incremental", incremental), ("reconcile", reconcile)):
@@ -3093,6 +3216,7 @@ def build_router(app_state: Any) -> APIRouter:
 
             _set_setting(session, "app.setup_completed", "true")
 
+        invalidate_auth_cache(app_state)
         app_state.scheduler.reload()
         return {"status": "ok", "completed": True}
 
@@ -3533,7 +3657,7 @@ def build_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> PlainTextResponse:
-        query_limit = 100_000 if export_all else limit
+        query_limit = export_row_cap if export_all else min(limit, export_row_cap)
         rows = _query_show_episodes(
             series_id=series_id,
             instance_name=instance_name,
@@ -3579,7 +3703,7 @@ def build_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> PlainTextResponse:
-        query_limit = 100_000 if export_all else limit
+        query_limit = export_row_cap if export_all else min(limit, export_row_cap)
         rows = _query_all_episodes(
             search=search,
             instance_name=instance_name,
@@ -3621,7 +3745,7 @@ def build_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> PlainTextResponse:
-        query_limit = 100_000 if export_all else limit
+        query_limit = export_row_cap if export_all else min(limit, export_row_cap)
         rows = _query_movies(
             search=search,
             instance_name=instance_name,
@@ -3642,9 +3766,7 @@ def build_router(app_state: Any) -> APIRouter:
         base_url = payload.get("base_url")
         if not base_url:
             raise HTTPException(status_code=400, detail="base_url is required")
-        parsed = urlparse(str(base_url))
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise HTTPException(status_code=400, detail="base_url must be a valid http(s) URL")
+        _assert_egress_allowed(str(base_url), "base_url")
         api_key = str(payload.get("api_key", ""))
         enabled = bool(payload.get("enabled", True))
         webhook_enabled = bool(payload.get("webhook_enabled", True))
@@ -3799,9 +3921,7 @@ def build_router(app_state: Any) -> APIRouter:
             elif provided_urls is not None:
                 parsed_urls = _parse_webhook_urls(provided_urls)
                 for webhook_url in parsed_urls:
-                    parsed = urlparse(webhook_url)
-                    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                        raise HTTPException(status_code=400, detail="webhook_urls must contain valid http(s) URLs")
+                    _assert_egress_allowed(webhook_url, "webhook_urls")
                 webhook_urls = parsed_urls
                 store_alert_webhook_urls(session, webhook_urls)
             timeout_seconds = float(payload.get("timeout_seconds", current["timeout_seconds"]))
@@ -4273,9 +4393,6 @@ def build_router(app_state: Any) -> APIRouter:
     async def webhook(source: str, request: Request) -> JSONResponse:
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=404, detail="unknown source")
-        content_length = int(request.headers.get("content-length", "0"))
-        if content_length > app_state.settings.webhook_max_body_bytes:
-            raise HTTPException(status_code=413, detail="payload too large")
 
         received_secret = request.headers.get("x-arr-shared-secret", "")
         with app_state.session_scope() as session:
@@ -4286,8 +4403,28 @@ def build_router(app_state: Any) -> APIRouter:
         elif not app_state.arr_client_class.validate_webhook_secret(received_secret, app_state.settings.webhook_shared_secret):
             raise HTTPException(status_code=401, detail="invalid secret")
 
+        # Enforce the size cap on the bytes actually received: Content-Length can be
+        # absent (chunked transfer) or malformed, so it cannot be trusted for the limit.
+        max_body_bytes = app_state.settings.webhook_max_body_bytes
+
+        async def _read_body_capped() -> bytes:
+            chunks: list[bytes] = []
+            received = 0
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > max_body_bytes:
+                    raise HTTPException(status_code=413, detail="payload too large")
+                chunks.append(chunk)
+            return b"".join(chunks)
+
         try:
-            payload = await asyncio.wait_for(request.json(), timeout=2.0)
+            body = await asyncio.wait_for(_read_body_capped(), timeout=5.0)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="invalid payload") from exc
+        try:
+            payload = json.loads(body)
             if not isinstance(payload, dict):
                 raise ValueError("json payload must be object")
         except Exception as exc:

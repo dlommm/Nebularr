@@ -27,6 +27,7 @@ import { LegacyViewRedirect } from "./LegacyViewRedirect";
 import { pathTitle, PATHS } from "../routes/paths";
 import { DiagnosticsPanel } from "../components/ui";
 import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
+import { SecurityBanner } from "../components/nebula/SecurityBanner";
 import { PageFallback } from "../components/PageFallback";
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { Button } from "@/components/ui/button";
@@ -339,6 +340,7 @@ export function AppLayout(): JSX.Element {
         </header>
 
         <main className="w-full min-w-0 max-w-full flex-1 overflow-x-hidden bg-transparent px-3 py-4 sm:px-4 lg:px-6" id="main-content" tabIndex={-1}>
+          <SecurityBanner />
           <DiagnosticsPanel message={lastError} context={errorContext} clear={() => setLastError(null)} />
           <RouteErrorBoundary>
             <Suspense fallback={<PageFallback />}>

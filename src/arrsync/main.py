@@ -14,7 +14,10 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from arrsync.api import build_router
+from arrsync.auth import auth_required, request_is_authenticated
 from arrsync.config import Settings, get_settings
+from arrsync.runtime_secrets import encryption_at_rest_active
+from arrsync.services.auth_store import read_setting
 from arrsync.database_lifecycle import (
     bind_database_engine,
     dispose_bound_engine,
@@ -52,6 +55,8 @@ class AppState:
     mal_tag_sync_service: MalTagSyncService | None = None
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
+    auth_config_cache: Any | None = field(default=None, repr=False)
+    auth_config_cached_at: float = field(default=0.0, repr=False)
     _engine: Any | None = field(default=None, repr=False)
     _pending_alert_config: dict[str, Any] | None = field(default=None, repr=False)
     scheduler_started: bool = field(default=False, repr=False)
@@ -150,6 +155,32 @@ async def database_ready_gate(request: Request, call_next: Any) -> Any:
     return JSONResponse({"detail": "database not configured"}, status_code=503)
 
 
+_AUTH_EXEMPT_EXACT = {"/api/auth/login", "/api/auth/status"}
+_AUTH_PROTECTED_EXACT = {"/docs", "/redoc", "/openapi.json"}
+
+
+def _auth_protected_path(path: str) -> bool:
+    """Only the JSON API and API docs are gated; SPA shell pages and static assets
+    stay public (the SPA redirects to /login on the first 401), and /hooks/* has
+    its own shared-secret check."""
+    if path in _AUTH_EXEMPT_EXACT:
+        return False
+    if path in _AUTH_PROTECTED_EXACT:
+        return True
+    return path.startswith("/api/")
+
+
+@app.middleware("http")
+async def authentication_gate(request: Request, call_next: Any) -> Any:
+    if not _auth_protected_path(request.url.path):
+        return await call_next(request)
+    if not auth_required(app_state):
+        return await call_next(request)
+    if request_is_authenticated(request, app_state):
+        return await call_next(request)
+    return JSONResponse({"detail": "authentication required"}, status_code=401)
+
+
 app.include_router(build_router(app_state))
 
 
@@ -167,6 +198,30 @@ def _register_signal_handlers() -> None:
             pass
 
 
+def _log_security_posture() -> None:
+    """Loud, actionable warnings for insecure-but-supported configurations."""
+    if not encryption_at_rest_active():
+        log.warning(
+            "SECURITY WARNING: secrets at rest are NOT encrypted (no APP_ENCRYPTION_KEY "
+            "available); integration API keys are stored in plaintext in Postgres"
+        )
+    if not app_state.session_factory.ready:
+        return
+    if not auth_required(app_state):
+        log.warning(
+            "SECURITY WARNING: API authentication is disabled; anyone with network access "
+            "to this service can read and modify its configuration, including stored API "
+            "keys. Enable it under Settings → Authentication in the web UI (see SECURITY.md)."
+        )
+    with app_state.session_scope() as session:
+        stored_webhook_hash = read_setting(session, "app.webhook_secret_hash")
+    if not stored_webhook_hash and app_state.settings.webhook_shared_secret == "changeme":
+        log.warning(
+            "SECURITY WARNING: webhook shared secret is the default 'changeme'; set "
+            "WEBHOOK_SHARED_SECRET or store a secret in the web UI setup wizard"
+        )
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     _register_signal_handlers()
@@ -179,6 +234,7 @@ async def startup_event() -> None:
     app_state._engine = bind_database_engine(settings, app_state.session_factory)
     await asyncio.to_thread(run_migrations_and_seed, app_state, settings)
     await finalize_application_services(app_state)
+    _log_security_posture()
     log.info("startup complete")
 
 
