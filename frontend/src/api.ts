@@ -37,18 +37,52 @@ function redirectToLogin(): void {
   }
 }
 
+const REQUEST_TIMEOUT_MS = 30_000;
+const ERROR_MESSAGE_MAX_CHARS = 300;
+
+async function errorMessageFrom(response: Response): Promise<string> {
+  // Prefer the API's {"detail": ...} shape; never surface a raw HTML error page.
+  try {
+    const text = await response.text();
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && "detail" in parsed) {
+        const detail = (parsed as { detail: unknown }).detail;
+        const message = typeof detail === "string" ? detail : JSON.stringify(detail);
+        if (message) return message.slice(0, ERROR_MESSAGE_MAX_CHARS);
+      }
+    } catch {
+      if (text && !text.trimStart().startsWith("<")) {
+        return text.slice(0, ERROR_MESSAGE_MAX_CHARS);
+      }
+    }
+  } catch {
+    // fall through to the status line
+  }
+  return `HTTP ${response.status} ${response.statusText}`.trim();
+}
+
 async function requestJson<T>(path: string, method: HttpMethod = "GET", body?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path.split("?")[0]}`);
+    }
+    throw error;
+  }
   if (!response.ok) {
     const apiPath = path.split("?")[0];
     if (response.status === 401 && !AUTH_EXEMPT_PATHS.has(apiPath)) {
       redirectToLogin();
     }
-    throw new Error(await response.text());
+    throw new Error(await errorMessageFrom(response));
   }
   return (await response.json()) as T;
 }

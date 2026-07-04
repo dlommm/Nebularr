@@ -5,6 +5,14 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate } from "../hooks";
 import { SCHEDULE_MODE_LABELS, sortScheduleRows } from "../constants/domain";
 import { useActionError } from "../hooks/useActionError";
+import { GlassCard } from "@/components/nebula/GlassCard";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function SchedulesPage(): JSX.Element {
   usePageTitle("Schedules");
@@ -41,74 +49,104 @@ export function SchedulesPage(): JSX.Element {
   };
 
   return (
-    <div className="space-y-4 rounded-2xl border border-white/10 glass-panel p-4 sm:p-6">
-      <h3 className="font-heading text-lg font-semibold">Schedules</h3>
-      <p className="text-sm text-muted-foreground">
-        Cron uses five fields: minute hour day month day_of_week (APScheduler). Timezone is per row. MAL jobs are controlled from
-        Integrations → MyAnimeList; an unchecked &quot;enabled&quot; row here removes that cron from the scheduler entirely.
-      </p>
-      <div className="stack">
+    <GlassCard>
+      <CardHeader>
+        <CardTitle>Schedules</CardTitle>
+        <CardDescription>
+          Cron uses five fields: minute hour day month day_of_week (APScheduler). Timezone is per row. MAL jobs are
+          controlled from Integrations → MyAnimeList; an unchecked &quot;enabled&quot; row here removes that cron from
+          the scheduler entirely.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {schedules.isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : null}
+        {schedules.isError ? (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"
+          >
+            <span>Could not load schedules: {schedules.error instanceof Error ? schedules.error.message : "unknown error"}</span>
+            <Button size="sm" variant="secondary" onClick={() => void schedules.refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : null}
         {sortScheduleRows(schedules.data ?? []).map((row) => (
-          <div className="inner-card" key={row.mode}>
-            <div className="row">
-              <div>
-                <strong>{SCHEDULE_MODE_LABELS[row.mode] ?? row.mode}</strong>
-                <span className="pill" style={{ marginLeft: 8 }}>
-                  {row.mode}
-                </span>
-              </div>
-              <span className="muted">Updated {fmtDate(row.updated_at)}</span>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4" key={row.mode}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{SCHEDULE_MODE_LABELS[row.mode] ?? row.mode}</span>
+              <Badge variant="outline">{row.mode}</Badge>
+              <span className="ml-auto text-xs text-muted-foreground">Updated {fmtDate(row.updated_at)}</span>
             </div>
-            <div className="row mt8">
-              <input
-                value={scheduleDrafts[row.mode]?.cron ?? row.cron}
-                onChange={(event) =>
-                  setScheduleDrafts((prev) => ({
-                    ...prev,
-                    [row.mode]: {
-                      ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
-                      cron: event.target.value,
-                    },
-                  }))
-                }
-              />
-              <input
-                value={scheduleDrafts[row.mode]?.timezone ?? row.timezone}
-                onChange={(event) =>
-                  setScheduleDrafts((prev) => ({
-                    ...prev,
-                    [row.mode]: {
-                      ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
-                      timezone: event.target.value,
-                    },
-                  }))
-                }
-              />
-            </div>
-            <div className="row mt8">
-              <label className="pill">
-                <input
-                  type="checkbox"
-                  checked={scheduleDrafts[row.mode]?.enabled ?? row.enabled}
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+              <div className="grid w-full gap-1.5">
+                <Label htmlFor={`schedule-cron-${row.mode}`} className="text-xs text-muted-foreground">
+                  Cron
+                </Label>
+                <Input
+                  id={`schedule-cron-${row.mode}`}
+                  value={scheduleDrafts[row.mode]?.cron ?? row.cron}
                   onChange={(event) =>
                     setScheduleDrafts((prev) => ({
                       ...prev,
                       [row.mode]: {
                         ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
-                        enabled: event.target.checked,
+                        cron: event.target.value,
                       },
                     }))
                   }
                 />
-                enabled
-              </label>
-              <button type="button" className="secondary" onClick={() => void saveSchedule(row.mode)}>
+              </div>
+              <div className="grid w-full gap-1.5">
+                <Label htmlFor={`schedule-tz-${row.mode}`} className="text-xs text-muted-foreground">
+                  Timezone (IANA)
+                </Label>
+                <Input
+                  id={`schedule-tz-${row.mode}`}
+                  value={scheduleDrafts[row.mode]?.timezone ?? row.timezone}
+                  onChange={(event) =>
+                    setScheduleDrafts((prev) => ({
+                      ...prev,
+                      [row.mode]: {
+                        ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
+                        timezone: event.target.value,
+                      },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id={`schedule-enabled-${row.mode}`}
+                  checked={scheduleDrafts[row.mode]?.enabled ?? row.enabled}
+                  onCheckedChange={(checked) =>
+                    setScheduleDrafts((prev) => ({
+                      ...prev,
+                      [row.mode]: {
+                        ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
+                        enabled: checked === true,
+                      },
+                    }))
+                  }
+                />
+                <Label htmlFor={`schedule-enabled-${row.mode}`} className="text-sm text-muted-foreground">
+                  enabled
+                </Label>
+              </div>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void saveSchedule(row.mode)}>
                 Save
-              </button>
+              </Button>
             </div>
           </div>
         ))}
-      </div>
-    </div>
+      </CardContent>
+    </GlassCard>
   );
 }

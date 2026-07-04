@@ -362,6 +362,20 @@ function routeResponse(pathname, referer) {
   if (pathname === "/api/ui/movies") return json(mockData.movies);
   if (pathname === "/api/reporting/dashboards") return json(mockData.reportingDashboards);
   if (pathname.startsWith("/api/reporting/dashboards/")) return json(mockData.reportingDashboard);
+  if (pathname === "/api/ui/work-status") {
+    return json({ active: false, items: [], warehouse_running: false, mal_running: false, setup_running: false });
+  }
+  if (pathname === "/api/operator/stuck-state") {
+    return json({
+      job_locks: [],
+      mal_job_runs_running: [],
+      warehouse_sync_runs_running: [],
+      job_run_summary_running: [],
+    });
+  }
+  if (pathname === "/api/auth/status") {
+    return json({ enabled: true, password_set: true, api_token_set: false, authenticated: true });
+  }
   if (pathname.startsWith("/api/")) return json({ status: "ok" });
   return null;
 }

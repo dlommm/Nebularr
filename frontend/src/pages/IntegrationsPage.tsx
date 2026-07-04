@@ -4,6 +4,56 @@ import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
+import { GlassCard } from "@/components/nebula/GlassCard";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+const SELECT_CLASS = "h-9 rounded-md border border-white/10 bg-white/5 px-2 text-sm";
+const TEXTAREA_CLASS =
+  "w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+
+type IntegrationDraft = { base_url: string; api_key: string; enabled: boolean; webhook_enabled: boolean };
+
+function QueryErrorNotice({ label, retry, error }: { label: string; retry: () => void; error: unknown }): JSX.Element {
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"
+    >
+      <span>
+        Could not load {label}: {error instanceof Error ? error.message : "unknown error"}
+      </span>
+      <Button size="sm" variant="secondary" onClick={retry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <GlassCard glow="none">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description ? <CardDescription>{description}</CardDescription> : null}
+      </CardHeader>
+      <CardContent className="space-y-4">{children}</CardContent>
+    </GlassCard>
+  );
+}
 
 export function IntegrationsPage(): JSX.Element {
   usePageTitle("Integrations");
@@ -17,9 +67,7 @@ export function IntegrationsPage(): JSX.Element {
   const alertWebhookConfig = useQuery({ queryKey: ["alert-webhook-config"], queryFn: api.alertWebhookConfig });
   const authStatus = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus });
 
-  const [integrationDrafts, setIntegrationDrafts] = useState<
-    Record<string, { base_url: string; api_key: string; enabled: boolean; webhook_enabled: boolean }>
-  >({});
+  const [integrationDrafts, setIntegrationDrafts] = useState<Record<string, IntegrationDraft>>({});
   const [webhookSecretInput, setWebhookSecretInput] = useState("");
   const [authPasswordInput, setAuthPasswordInput] = useState("");
   const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
@@ -48,7 +96,7 @@ export function IntegrationsPage(): JSX.Element {
 
   useEffect(() => {
     if (!integrations.data) return;
-    const next: Record<string, { base_url: string; api_key: string; enabled: boolean; webhook_enabled: boolean }> = {};
+    const next: Record<string, IntegrationDraft> = {};
     integrations.data.forEach((row) => {
       next[`${row.source}:${row.name}`] = {
         base_url: row.base_url ?? "",
@@ -83,6 +131,13 @@ export function IntegrationsPage(): JSX.Element {
     }));
   }, [alertWebhookConfig.data]);
 
+  const updateDraft = (key: string, fallback: IntegrationDraft, patch: Partial<IntegrationDraft>): void => {
+    setIntegrationDrafts((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? fallback), ...patch },
+    }));
+  };
+
   const saveIntegration = async (source: string, name: string): Promise<void> => {
     const key = `${source}:${name}`;
     const draft = integrationDrafts[key];
@@ -99,6 +154,60 @@ export function IntegrationsPage(): JSX.Element {
         await queryClient.invalidateQueries({ queryKey: ["integrations"] });
       },
       `save integration ${source}/${name}`,
+    );
+  };
+
+  const savePassword = async (): Promise<void> => {
+    if (authPasswordInput.length < 8) {
+      setError("Password must be at least 8 characters", "save admin password");
+      return;
+    }
+    if (authPasswordInput !== authPasswordConfirm) {
+      setError("Passwords do not match", "save admin password");
+      return;
+    }
+    await runAction(
+      async () => {
+        await api.saveAuthConfig({ password: authPasswordInput, enabled: true });
+        // Sign in with the new password so the session cookie exists before the next request.
+        await api.authLogin(authPasswordInput);
+        setAuthPasswordInput("");
+        setAuthPasswordConfirm("");
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      "save admin password",
+    );
+  };
+
+  const setAuthEnabled = async (enabled: boolean): Promise<void> => {
+    await runAction(
+      async () => {
+        await api.saveAuthConfig({ enabled });
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      enabled ? "enable authentication" : "disable authentication",
+    );
+  };
+
+  const rotateApiToken = async (): Promise<void> => {
+    await runAction(
+      async () => {
+        const result = await api.saveAuthConfig({ rotate_api_token: true });
+        setIssuedApiToken(result.api_token ?? "");
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      "generate API token",
+    );
+  };
+
+  const revokeApiToken = async (): Promise<void> => {
+    await runAction(
+      async () => {
+        await api.saveAuthConfig({ revoke_api_token: true });
+        setIssuedApiToken("");
+        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      },
+      "revoke API token",
     );
   };
 
@@ -156,61 +265,6 @@ export function IntegrationsPage(): JSX.Element {
     );
   };
 
-  const savePassword = async (): Promise<void> => {
-    if (authPasswordInput.length < 8) {
-      setError("Password must be at least 8 characters", "save admin password");
-      return;
-    }
-    if (authPasswordInput !== authPasswordConfirm) {
-      setError("Passwords do not match", "save admin password");
-      return;
-    }
-    await runAction(
-      async () => {
-        await api.saveAuthConfig({ password: authPasswordInput, enabled: true });
-        // The new (or first) password invalidates nothing server-side, but sign in so
-        // the session cookie exists before the next authenticated request.
-        await api.authLogin(authPasswordInput);
-        setAuthPasswordInput("");
-        setAuthPasswordConfirm("");
-        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
-      },
-      "save admin password",
-    );
-  };
-
-  const setAuthEnabled = async (enabled: boolean): Promise<void> => {
-    await runAction(
-      async () => {
-        await api.saveAuthConfig({ enabled });
-        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
-      },
-      enabled ? "enable authentication" : "disable authentication",
-    );
-  };
-
-  const rotateApiToken = async (): Promise<void> => {
-    await runAction(
-      async () => {
-        const result = await api.saveAuthConfig({ rotate_api_token: true });
-        setIssuedApiToken(result.api_token ?? "");
-        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
-      },
-      "generate API token",
-    );
-  };
-
-  const revokeApiToken = async (): Promise<void> => {
-    await runAction(
-      async () => {
-        await api.saveAuthConfig({ revoke_api_token: true });
-        setIssuedApiToken("");
-        await queryClient.invalidateQueries({ queryKey: ["auth-status"] });
-      },
-      "revoke API token",
-    );
-  };
-
   const saveWebhookSecret = async (): Promise<void> => {
     if (!webhookSecretInput.trim()) {
       setError("Webhook secret cannot be empty", "save webhook secret");
@@ -259,233 +313,225 @@ export function IntegrationsPage(): JSX.Element {
   };
 
   return (
-    <div className="space-y-6 rounded-2xl border border-white/10 glass-panel p-4 sm:p-6">
-      <div className="inner-card">
-        <h3>Authentication</h3>
-        <div className="row">
-          <span className="pill">{authStatus.data?.enabled ? "authentication enabled" : "authentication disabled"}</span>
-          <span className="pill">{authStatus.data?.password_set ? "password set" : "no password set"}</span>
-          <span className="pill">{authStatus.data?.api_token_set ? "API token issued" : "no API token"}</span>
-          <span className="muted">
-            Protects every API endpoint with a login. API automation can use a bearer token instead.
-          </span>
+    <div className="space-y-6">
+      <SectionCard
+        title="Authentication"
+        description="Protects every API endpoint with a login. API automation can use a bearer token instead."
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant={authStatus.data?.enabled ? "default" : "destructive"}>
+            {authStatus.data?.enabled ? "authentication enabled" : "authentication disabled"}
+          </Badge>
+          <Badge variant="outline">{authStatus.data?.password_set ? "password set" : "no password set"}</Badge>
+          <Badge variant="outline">{authStatus.data?.api_token_set ? "API token issued" : "no API token"}</Badge>
         </div>
-        <div className="row mt8">
-          <input
-            type="password"
-            autoComplete="new-password"
-            placeholder={authStatus.data?.password_set ? "New admin password (min 8 chars)" : "Set admin password (min 8 chars)"}
-            value={authPasswordInput}
-            onChange={(event) => setAuthPasswordInput(event.target.value)}
-          />
-          <input
-            type="password"
-            autoComplete="new-password"
-            placeholder="Confirm password"
-            value={authPasswordConfirm}
-            onChange={(event) => setAuthPasswordConfirm(event.target.value)}
-          />
-          <button type="button" className="secondary" onClick={() => void savePassword()}>
-            {authStatus.data?.password_set ? "Change password & enable" : "Set password & enable"}
-          </button>
-        </div>
-        {authStatus.data?.enabled ? (
-          <div className="row mt8">
-            <button type="button" className="secondary" onClick={() => void setAuthEnabled(false)}>
-              Disable authentication
-            </button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="grid w-full gap-1.5">
+            <Label htmlFor="auth-password" className="text-xs text-muted-foreground">
+              {authStatus.data?.password_set ? "New admin password (min 8 chars)" : "Set admin password (min 8 chars)"}
+            </Label>
+            <Input
+              id="auth-password"
+              type="password"
+              autoComplete="new-password"
+              value={authPasswordInput}
+              onChange={(event) => setAuthPasswordInput(event.target.value)}
+            />
           </div>
-        ) : null}
-        <div className="row mt8">
-          <button type="button" className="secondary" onClick={() => void rotateApiToken()}>
+          <div className="grid w-full gap-1.5">
+            <Label htmlFor="auth-password-confirm" className="text-xs text-muted-foreground">
+              Confirm password
+            </Label>
+            <Input
+              id="auth-password-confirm"
+              type="password"
+              autoComplete="new-password"
+              value={authPasswordConfirm}
+              onChange={(event) => setAuthPasswordConfirm(event.target.value)}
+            />
+          </div>
+          <Button type="button" className="shrink-0" onClick={() => void savePassword()}>
+            {authStatus.data?.password_set ? "Change password & enable" : "Set password & enable"}
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={() => void rotateApiToken()}>
             {authStatus.data?.api_token_set ? "Rotate API token" : "Generate API token"}
-          </button>
+          </Button>
           {authStatus.data?.api_token_set ? (
-            <button type="button" className="secondary" onClick={() => void revokeApiToken()}>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void revokeApiToken()}>
               Revoke API token
-            </button>
+            </Button>
+          ) : null}
+          {authStatus.data?.enabled ? (
+            <Button type="button" variant="destructive" size="sm" onClick={() => void setAuthEnabled(false)}>
+              Disable authentication
+            </Button>
           ) : null}
         </div>
         {issuedApiToken ? (
-          <div className="row mt8">
-            <span className="muted">
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+            <p className="text-muted-foreground">
               Copy this token now — it is shown only once. Send it as <code>Authorization: Bearer …</code>
-            </span>
-            <code>{issuedApiToken}</code>
+            </p>
+            <code className="mt-1 block break-all">{issuedApiToken}</code>
           </div>
         ) : null}
-      </div>
-      <h3 className="font-heading text-lg font-semibold">Integrations</h3>
-      <div className="stack">
-        {(integrations.data ?? []).map((row) => (
-          <div className="inner-card" key={`${row.source}-${row.name}`}>
-            <div className="row">
-              <strong>
-                {row.source}/{row.name}
-              </strong>
-              <span className="muted">Updated {fmtDate(row.updated_at)}</span>
-              <span className="pill">{row.api_key_set ? "API key set" : "API key missing"}</span>
-              <span className="pill">{row.enabled ? "enabled" : "disabled"}</span>
+      </SectionCard>
+
+      <SectionCard title="Integrations" description="Sonarr and Radarr connections used for library sync and tagging.">
+        {integrations.isLoading ? <Skeleton className="h-32 w-full" /> : null}
+        {integrations.isError ? (
+          <QueryErrorNotice label="integrations" retry={() => void integrations.refetch()} error={integrations.error} />
+        ) : null}
+        {(integrations.data ?? []).map((row) => {
+          const key = `${row.source}:${row.name}`;
+          const fallback: IntegrationDraft = {
+            base_url: row.base_url,
+            api_key: "",
+            enabled: row.enabled,
+            webhook_enabled: row.webhook_enabled,
+          };
+          return (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4" key={key}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">
+                  {row.source}/{row.name}
+                </span>
+                <Badge variant={row.api_key_set ? "outline" : "destructive"}>
+                  {row.api_key_set ? "API key set" : "API key missing"}
+                </Badge>
+                <Badge variant="outline">{row.enabled ? "enabled" : "disabled"}</Badge>
+                <span className="ml-auto text-xs text-muted-foreground">Updated {fmtDate(row.updated_at)}</span>
+              </div>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                <div className="grid w-full gap-1.5">
+                  <Label htmlFor={`integration-url-${key}`} className="text-xs text-muted-foreground">
+                    Base URL
+                  </Label>
+                  <Input
+                    id={`integration-url-${key}`}
+                    value={integrationDrafts[key]?.base_url ?? row.base_url}
+                    onChange={(event) => updateDraft(key, fallback, { base_url: event.target.value })}
+                  />
+                </div>
+                <div className="grid w-full gap-1.5">
+                  <Label htmlFor={`integration-key-${key}`} className="text-xs text-muted-foreground">
+                    New API key (optional)
+                  </Label>
+                  <Input
+                    id={`integration-key-${key}`}
+                    type="password"
+                    autoComplete="off"
+                    value={integrationDrafts[key]?.api_key ?? ""}
+                    onChange={(event) => updateDraft(key, fallback, { api_key: event.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id={`integration-enabled-${key}`}
+                    checked={integrationDrafts[key]?.enabled ?? row.enabled}
+                    onCheckedChange={(checked) => updateDraft(key, fallback, { enabled: checked === true })}
+                  />
+                  <Label htmlFor={`integration-enabled-${key}`} className="text-sm text-muted-foreground">
+                    enabled
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id={`integration-webhook-${key}`}
+                    checked={integrationDrafts[key]?.webhook_enabled ?? row.webhook_enabled}
+                    onCheckedChange={(checked) => updateDraft(key, fallback, { webhook_enabled: checked === true })}
+                  />
+                  <Label htmlFor={`integration-webhook-${key}`} className="text-sm text-muted-foreground">
+                    webhook enabled
+                  </Label>
+                </div>
+                <Button type="button" variant="secondary" size="sm" onClick={() => void saveIntegration(row.source, row.name)}>
+                  Save
+                </Button>
+              </div>
             </div>
-            <div className="row mt8">
-              <input
-                value={integrationDrafts[`${row.source}:${row.name}`]?.base_url ?? row.base_url}
-                onChange={(event) =>
-                  setIntegrationDrafts((prev) => ({
-                    ...prev,
-                    [`${row.source}:${row.name}`]: {
-                      ...(prev[`${row.source}:${row.name}`] ?? {
-                        base_url: row.base_url,
-                        api_key: "",
-                        enabled: row.enabled,
-                        webhook_enabled: row.webhook_enabled,
-                      }),
-                      base_url: event.target.value,
-                    },
-                  }))
-                }
-              />
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder="New API key (optional)"
-                value={integrationDrafts[`${row.source}:${row.name}`]?.api_key ?? ""}
-                onChange={(event) =>
-                  setIntegrationDrafts((prev) => ({
-                    ...prev,
-                    [`${row.source}:${row.name}`]: {
-                      ...(prev[`${row.source}:${row.name}`] ?? {
-                        base_url: row.base_url,
-                        api_key: "",
-                        enabled: row.enabled,
-                        webhook_enabled: row.webhook_enabled,
-                      }),
-                      api_key: event.target.value,
-                    },
-                  }))
-                }
-              />
-            </div>
-            <div className="row mt8">
-              <label className="pill">
-                <input
-                  type="checkbox"
-                  checked={integrationDrafts[`${row.source}:${row.name}`]?.enabled ?? row.enabled}
-                  onChange={(event) =>
-                    setIntegrationDrafts((prev) => ({
-                      ...prev,
-                      [`${row.source}:${row.name}`]: {
-                        ...(prev[`${row.source}:${row.name}`] ?? {
-                          base_url: row.base_url,
-                          api_key: "",
-                          enabled: row.enabled,
-                          webhook_enabled: row.webhook_enabled,
-                        }),
-                        enabled: event.target.checked,
-                      },
-                    }))
-                  }
-                />
-                enabled
-              </label>
-              <label className="pill">
-                <input
-                  type="checkbox"
-                  checked={integrationDrafts[`${row.source}:${row.name}`]?.webhook_enabled ?? row.webhook_enabled}
-                  onChange={(event) =>
-                    setIntegrationDrafts((prev) => ({
-                      ...prev,
-                      [`${row.source}:${row.name}`]: {
-                        ...(prev[`${row.source}:${row.name}`] ?? {
-                          base_url: row.base_url,
-                          api_key: "",
-                          enabled: row.enabled,
-                          webhook_enabled: row.webhook_enabled,
-                        }),
-                        webhook_enabled: event.target.checked,
-                      },
-                    }))
-                  }
-                />
-                webhook enabled
-              </label>
-              <button type="button" className="secondary" onClick={() => void saveIntegration(row.source, row.name)}>
-                Save
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="inner-card mt8">
-        <h3>MyAnimeList API</h3>
-        <div className="row">
-          <span className="pill">
+          );
+        })}
+      </SectionCard>
+
+      <SectionCard
+        title="MyAnimeList API"
+        description="Stored in the database when set here (persists across restarts). MAL_CLIENT_ID from the environment is used if nothing is stored."
+      >
+        {malConfig.isError ? (
+          <QueryErrorNotice label="MAL settings" retry={() => void malConfig.refetch()} error={malConfig.error} />
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">
             {malConfig.data?.client_id_configured
               ? "client ID stored in database"
               : malConfig.data?.env_fallback_configured
                 ? "using MAL_CLIENT_ID from environment"
                 : "client ID not configured"}
-          </span>
-          <span className="muted">
-            Stored in the database when set here (persists across restarts). Values in `MAL_CLIENT_ID` are used if nothing is
-            stored.
-          </span>
+          </Badge>
         </div>
-        <div className="row mt8">
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder="MyAnimeList API client ID (from myanimelist.net/apiconfig)"
-            value={malClientIdInput}
-            onChange={(event) => setMalClientIdInput(event.target.value)}
-          />
-          <button type="button" className="secondary" onClick={() => void saveMalConfig()}>
-            Save
-          </button>
-        </div>
-        <div className="row mt8">
-          <label className="pill">
-            <input type="checkbox" checked={malClearClientId} onChange={(event) => setMalClearClientId(event.target.checked)} />
-            remove stored client ID (fall back to environment only)
-          </label>
-        </div>
-        <div className="row mt8">
-          <label className="pill">
-            <input type="checkbox" checked={malIngestEnabled} onChange={(event) => setMalIngestEnabled(event.target.checked)} />
-            enable MAL ingest scheduler
-          </label>
-          <label className="pill">
-            <input type="checkbox" checked={malMatcherEnabled} onChange={(event) => setMalMatcherEnabled(event.target.checked)} />
-            enable MAL matcher scheduler
-          </label>
-          <label className="pill">
-            <input type="checkbox" checked={malTaggingEnabled} onChange={(event) => setMalTaggingEnabled(event.target.checked)} />
-            enable MAL tag sync scheduler
-          </label>
-        </div>
-        <div className="row mt8">
-          <label className="pill">
-            <input
-              type="checkbox"
-              checked={malAllowTitleYearMatch}
-              onChange={(event) => setMalAllowTitleYearMatch(event.target.checked)}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="grid w-full gap-1.5">
+            <Label htmlFor="mal-client-id" className="text-xs text-muted-foreground">
+              MyAnimeList API client ID (from myanimelist.net/apiconfig)
+            </Label>
+            <Input
+              id="mal-client-id"
+              type="password"
+              autoComplete="off"
+              value={malClientIdInput}
+              onChange={(event) => setMalClientIdInput(event.target.value)}
             />
-            allow title+year fallback matching (when ID linking is unavailable)
-          </label>
+          </div>
+          <Button type="button" variant="secondary" className="shrink-0" onClick={() => void saveMalConfig()}>
+            Save
+          </Button>
         </div>
-      </div>
-      <div className="inner-card mt8">
-        <h3>Application logging</h3>
-        <div className="row">
-          <span className="pill">effective: {loggingConfig.data?.effective_level ?? "…"}</span>
-          <span className="muted">
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          {(
+            [
+              ["mal-clear-client-id", "remove stored client ID (fall back to environment only)", malClearClientId, setMalClearClientId],
+              ["mal-ingest", "enable MAL ingest scheduler", malIngestEnabled, setMalIngestEnabled],
+              ["mal-matcher", "enable MAL matcher scheduler", malMatcherEnabled, setMalMatcherEnabled],
+              ["mal-tagging", "enable MAL tag sync scheduler", malTaggingEnabled, setMalTaggingEnabled],
+              [
+                "mal-title-year",
+                "allow title+year fallback matching (when ID linking is unavailable)",
+                malAllowTitleYearMatch,
+                setMalAllowTitleYearMatch,
+              ],
+            ] as const
+          ).map(([id, label, checked, setter]) => (
+            <div className="flex items-center gap-2" key={id}>
+              <Checkbox id={id} checked={checked} onCheckedChange={(value) => setter(value === true)} />
+              <Label htmlFor={id} className="text-sm text-muted-foreground">
+                {label}
+              </Label>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Application logging">
+        {loggingConfig.isError ? (
+          <QueryErrorNotice label="logging settings" retry={() => void loggingConfig.refetch()} error={loggingConfig.error} />
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">effective: {loggingConfig.data?.effective_level ?? "…"}</Badge>
+          <span className="text-xs text-muted-foreground">
             {loggingConfig.data?.stored_level
-              ? `Level stored in database (overrides LOG_LEVEL at startup and when changed here).`
+              ? "Level stored in database (overrides LOG_LEVEL at startup and when changed here)."
               : `No database override; using process LOG_LEVEL (${loggingConfig.data?.environment_default ?? "…"}) until you save a level below.`}
           </span>
         </div>
-        <div className="row mt8">
+        <div className="flex flex-wrap items-center gap-3">
           <select
+            aria-label="Log level"
+            className={SELECT_CLASS}
             value={loggingLevelChoice}
             disabled={loggingUseEnvDefault}
             onChange={(event) => setLoggingLevelChoice(event.target.value)}
@@ -496,122 +542,153 @@ export function IntegrationsPage(): JSX.Element {
               </option>
             ))}
           </select>
-          <button type="button" className="secondary" onClick={() => void saveLoggingConfig()}>
+          <Button type="button" variant="secondary" size="sm" onClick={() => void saveLoggingConfig()}>
             Apply log level
-          </button>
-        </div>
-        <div className="row mt8">
-          <label className="pill">
-            <input
-              type="checkbox"
+          </Button>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="logging-env-default"
               checked={loggingUseEnvDefault}
-              onChange={(event) => setLoggingUseEnvDefault(event.target.checked)}
+              onCheckedChange={(checked) => setLoggingUseEnvDefault(checked === true)}
             />
-            on save, clear database override and use LOG_LEVEL from the environment
-          </label>
+            <Label htmlFor="logging-env-default" className="text-sm text-muted-foreground">
+              on save, clear database override and use LOG_LEVEL from the environment
+            </Label>
+          </div>
         </div>
-      </div>
-      <div className="inner-card mt8">
-        <h3>Webhook shared secret</h3>
-        <div className="row">
-          <span className="pill">{webhookConfig.data?.secret_set ? "secret set" : "secret missing"}</span>
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder="Set new webhook shared secret"
-            value={webhookSecretInput}
-            onChange={(event) => setWebhookSecretInput(event.target.value)}
-          />
-          <button type="button" className="secondary" onClick={() => void saveWebhookSecret()}>
+      </SectionCard>
+
+      <SectionCard title="Webhook shared secret" description="Sonarr/Radarr must send this value in the x-arr-shared-secret header.">
+        {webhookConfig.isError ? (
+          <QueryErrorNotice label="webhook settings" retry={() => void webhookConfig.refetch()} error={webhookConfig.error} />
+        ) : null}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Badge variant={webhookConfig.data?.secret_set ? "outline" : "destructive"} className="self-start sm:self-center">
+            {webhookConfig.data?.secret_set ? "secret set" : "secret missing"}
+          </Badge>
+          <div className="grid w-full gap-1.5">
+            <Label htmlFor="webhook-secret" className="text-xs text-muted-foreground">
+              Set new webhook shared secret
+            </Label>
+            <Input
+              id="webhook-secret"
+              type="password"
+              autoComplete="off"
+              value={webhookSecretInput}
+              onChange={(event) => setWebhookSecretInput(event.target.value)}
+            />
+          </div>
+          <Button type="button" variant="secondary" className="shrink-0" onClick={() => void saveWebhookSecret()}>
             Save secret
-          </button>
+          </Button>
         </div>
-      </div>
-      <div className="inner-card mt8">
-        <h3>Alert webhooks</h3>
-        <div className="row">
-          <span className="pill">
+      </SectionCard>
+
+      <SectionCard
+        title="Alert webhooks"
+        description="Health alerts POST to these URLs. Stored in the database; encrypted when an encryption key is configured."
+      >
+        {alertWebhookConfig.isError ? (
+          <QueryErrorNotice
+            label="alert webhook settings"
+            retry={() => void alertWebhookConfig.refetch()}
+            error={alertWebhookConfig.error}
+          />
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">
             {alertWebhookConfig.data?.urls_configured
               ? `${alertWebhookConfig.data.url_count} webhook URL${alertWebhookConfig.data.url_count === 1 ? "" : "s"} configured`
               : "no webhook URLs configured"}
-          </span>
-          <span className="muted">Stored in DB; URLs are encrypted when `APP_ENCRYPTION_KEY` is configured.</span>
+          </Badge>
         </div>
-        <div className="stack mt8">
-          <textarea
-            rows={4}
-            placeholder="Paste webhook URLs (one per line or comma-separated). Leave blank to keep existing URLs."
-            value={alertWebhookDraft.webhookUrlsText}
-            onChange={(event) =>
-              setAlertWebhookDraft((prev) => ({
-                ...prev,
-                webhookUrlsText: event.target.value,
-              }))
-            }
-          />
-          <div className="row">
-            <label className="pill">
-              <input
-                type="checkbox"
-                checked={alertWebhookDraft.clearUrls}
-                onChange={(event) =>
-                  setAlertWebhookDraft((prev) => ({
-                    ...prev,
-                    clearUrls: event.target.checked,
-                  }))
-                }
-              />
+        <textarea
+          rows={4}
+          aria-label="Alert webhook URLs"
+          className={TEXTAREA_CLASS}
+          placeholder="Paste webhook URLs (one per line or comma-separated). Leave blank to keep existing URLs."
+          value={alertWebhookDraft.webhookUrlsText}
+          onChange={(event) =>
+            setAlertWebhookDraft((prev) => ({
+              ...prev,
+              webhookUrlsText: event.target.value,
+            }))
+          }
+        />
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox
+              id="alert-clear-urls"
+              checked={alertWebhookDraft.clearUrls}
+              onCheckedChange={(checked) =>
+                setAlertWebhookDraft((prev) => ({
+                  ...prev,
+                  clearUrls: checked === true,
+                }))
+              }
+            />
+            <Label htmlFor="alert-clear-urls" className="text-sm text-muted-foreground">
               clear stored webhook URLs
-            </label>
-            <label className="pill">
-              minimum state
-              <select
-                value={alertWebhookDraft.minState}
-                onChange={(event) =>
-                  setAlertWebhookDraft((prev) => ({
-                    ...prev,
-                    minState: event.target.value as "warning" | "critical",
-                  }))
-                }
-              >
-                <option value="warning">warning</option>
-                <option value="critical">critical</option>
-              </select>
-            </label>
-            <label className="pill">
-              timeout (seconds)
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={alertWebhookDraft.timeoutSeconds}
-                onChange={(event) =>
-                  setAlertWebhookDraft((prev) => ({
-                    ...prev,
-                    timeoutSeconds: Number(event.target.value || 0),
-                  }))
-                }
-              />
-            </label>
-            <label className="pill">
-              <input
-                type="checkbox"
-                checked={alertWebhookDraft.notifyRecovery}
-                onChange={(event) =>
-                  setAlertWebhookDraft((prev) => ({
-                    ...prev,
-                    notifyRecovery: event.target.checked,
-                  }))
-                }
-              />
-              notify on recovery to ok
-            </label>
-            <button type="button" className="secondary" onClick={() => void saveAlertWebhooks()}>
-              Save alert webhooks
-            </button>
+            </Label>
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="alert-min-state" className="text-xs text-muted-foreground">
+              minimum state
+            </Label>
+            <select
+              id="alert-min-state"
+              className={SELECT_CLASS}
+              value={alertWebhookDraft.minState}
+              onChange={(event) =>
+                setAlertWebhookDraft((prev) => ({
+                  ...prev,
+                  minState: event.target.value as "warning" | "critical",
+                }))
+              }
+            >
+              <option value="warning">warning</option>
+              <option value="critical">critical</option>
+            </select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="alert-timeout" className="text-xs text-muted-foreground">
+              timeout (seconds)
+            </Label>
+            <Input
+              id="alert-timeout"
+              type="number"
+              min={1}
+              step={1}
+              className="w-28"
+              value={alertWebhookDraft.timeoutSeconds}
+              onChange={(event) =>
+                setAlertWebhookDraft((prev) => ({
+                  ...prev,
+                  timeoutSeconds: Number(event.target.value || 0),
+                }))
+              }
+            />
+          </div>
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox
+              id="alert-notify-recovery"
+              checked={alertWebhookDraft.notifyRecovery}
+              onCheckedChange={(checked) =>
+                setAlertWebhookDraft((prev) => ({
+                  ...prev,
+                  notifyRecovery: checked === true,
+                }))
+              }
+            />
+            <Label htmlFor="alert-notify-recovery" className="text-sm text-muted-foreground">
+              notify on recovery to ok
+            </Label>
+          </div>
+          <Button type="button" variant="secondary" size="sm" className="mb-1" onClick={() => void saveAlertWebhooks()}>
+            Save alert webhooks
+          </Button>
         </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }
