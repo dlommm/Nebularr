@@ -248,9 +248,9 @@ export function LibraryPage(): JSX.Element {
                     value={libraryFilters.sortBy}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, sortBy: event.target.value, offset: 0 })}
                   >
-                    <option value="title">Operations (title)</option>
-                    <option value="size_bytes">Media forensics</option>
-                    <option value="air_date">Language audit</option>
+                    <option value="title">Title</option>
+                    <option value="size_bytes">File size</option>
+                    <option value="air_date">Air date</option>
                   </select>
                 </div>
               </div>

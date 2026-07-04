@@ -4,13 +4,6 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class SyncRequest:
-    source: str
-    mode: str
-    reason: str
-
-
-@dataclass(slots=True)
 class CapabilitySet:
     source: str
     app_version: str

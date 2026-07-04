@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -38,20 +38,3 @@ def session_scope(session_factory: sessionmaker[Session]) -> Iterator[Session]:
         raise
     finally:
         session.close()
-
-
-def advisory_lock_key(source: str, mode: str) -> tuple[int, int]:
-    key = f"{source}:{mode}"
-    total = sum(ord(ch) for ch in key)
-    return total // 32768, total % 32768
-
-
-def try_advisory_lock(session: Session, source: str, mode: str) -> bool:
-    k1, k2 = advisory_lock_key(source, mode)
-    result = session.execute(text("select pg_try_advisory_lock(:k1, :k2)"), {"k1": k1, "k2": k2})
-    return bool(result.scalar_one())
-
-
-def advisory_unlock(session: Session, source: str, mode: str) -> None:
-    k1, k2 = advisory_lock_key(source, mode)
-    session.execute(text("select pg_advisory_unlock(:k1, :k2)"), {"k1": k1, "k2": k2})

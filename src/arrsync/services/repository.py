@@ -564,10 +564,6 @@ def mark_webhook_failed(session: Session, queue_id: int, attempts: int, error_me
     )
 
 
-def update_watermark(session: Session, source: str, history_time: datetime | None, history_id: int | None) -> None:
-    update_watermark_for_instance(session, source, "default", history_time, history_id)
-
-
 def update_watermark_for_instance(
     session: Session,
     source: str,
@@ -593,10 +589,6 @@ def update_watermark_for_instance(
             "history_id": history_id,
         },
     )
-
-
-def get_watermark(session: Session, source: str) -> tuple[str | None, int | None]:
-    return get_watermark_for_instance(session, source, "default")
 
 
 def get_watermark_for_instance(session: Session, source: str, instance_name: str) -> tuple[str | None, int | None]:
