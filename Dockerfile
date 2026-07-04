@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 # Multi-stage: wheel build (no repo dev junk), minimal runtime, non-root.
 # Base: Python 3.14 slim (matches official refresh on Debian trixie; aligns with Scout base-image bumps).
+# Digest-pinned for reproducible builds; Dependabot (docker ecosystem) keeps the digest fresh.
 
-FROM python:3.14-slim AS builder
+FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS builder
 
 WORKDIR /build
 
@@ -19,9 +20,9 @@ COPY alembic ./alembic
 RUN pip install --no-cache-dir pip==26.1 setuptools==82.0.1 wheel==0.47.0 \
     && pip wheel --no-cache-dir --wheel-dir /wheels .
 
-FROM python:3.14-slim AS runtime
+FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS runtime
 
-ARG APP_VERSION=1.9.3
+ARG APP_VERSION=2.0.0
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -34,6 +35,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Refresh OS + pull fixed libcap2 from sid until trixie catalog carries >= 1:2.78-1 (CVE-2026-4878 upstream fix path).
+# TODO(2026-07): stopgap added 2026-05 — drop this sid pull and the matching
+# .trivyignore.image entry once `apt-cache policy libcap2` on trixie shows >= 1:2.78-1.
 RUN apt-get update \
     && apt-get upgrade -y -o Dpkg::Options::="--force-confold" \
     && echo deb http://deb.debian.org/debian sid main > /etc/apt/sources.list.d/debian-sid.list \
