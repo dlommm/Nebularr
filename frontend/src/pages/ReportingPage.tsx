@@ -5,6 +5,7 @@ import { api } from "../api";
 import { fmtDate, useLocalStorageState } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
 import type { ReportingPanel } from "../types";
+import { MultiSelectFilter } from "../components/nebula/MultiSelectFilter";
 
 export function ReportingPage(): JSX.Element {
   usePageTitle("Reporting");
@@ -329,23 +330,18 @@ export function ReportingPage(): JSX.Element {
                   <th key={`${panel.id}-${column}`}>
                     <div className="report-th">
                       <span className="report-th-name">{column}</span>
-                      <select
+                      <MultiSelectFilter
                         className="report-th-filter"
-                        multiple
-                        value={reportingColumnFilters[`${panelStateKey}:${column}`] ?? []}
-                        onChange={(event) =>
+                        label={column}
+                        options={columnOptions[column] ?? []}
+                        selected={reportingColumnFilters[`${panelStateKey}:${column}`] ?? []}
+                        onChange={(next) =>
                           setReportingColumnFilters((prev) => ({
                             ...prev,
-                            [`${panelStateKey}:${column}`]: Array.from(event.target.selectedOptions, (option) => option.value),
+                            [`${panelStateKey}:${column}`]: next,
                           }))
                         }
-                      >
-                        {(columnOptions[column] ?? []).map((option) => (
-                          <option key={`${panelStateKey}:${column}:${option}`} value={option}>
-                            {option.length > 80 ? `${option.slice(0, 80)}…` : option}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
                   </th>
                 ))}

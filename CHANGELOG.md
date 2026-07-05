@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-07-04
+
+### Changed
+- Reporting table column filters are now proper multi-select dropdowns
+  (searchable checkbox list with a selected-count trigger and one-click clear)
+  instead of always-open native multi-select listboxes. Filtering semantics
+  and saved state are unchanged.
+
 ## [2.1.0] - 2026-07-04
 
 Web UI redesign. No API, schema, or configuration changes; existing stacks
