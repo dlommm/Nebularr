@@ -285,7 +285,7 @@ def build_config_router(app_state: Any) -> APIRouter:
     @router.put("/api/config/schedules/{mode}")
     async def update_schedule(mode: str, payload: dict[str, Any]) -> dict[str, Any]:
         allowed_modes = frozenset(
-            {"incremental", "reconcile", "full", "mal_ingest", "mal_matcher", "mal_tag_sync"}
+            {"incremental", "reconcile", "full", "stats_snapshot", "mal_ingest", "mal_matcher", "mal_tag_sync"}
         )
         if mode not in allowed_modes:
             raise HTTPException(status_code=400, detail="invalid mode")
