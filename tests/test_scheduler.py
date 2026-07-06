@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from arrsync.services.scheduler import SyncScheduler
-from tests.fakes import FakeResult, FakeSession
+from fakes import FakeResult, FakeSession
 
 
 class ScheduleFakeSession(FakeSession):

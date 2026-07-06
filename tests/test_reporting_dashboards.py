@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from arrsync.api import build_router
-from tests.fakes import FakeAppState
+from fakes import FakeAppState
 
 
 def _build_client() -> TestClient:
