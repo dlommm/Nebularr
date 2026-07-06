@@ -198,3 +198,67 @@ def test_library_stat_snapshot_capture_and_daily_guard(app_state) -> None:  # ty
     assert "sonarr" in by_source
     assert by_source["sonarr"]["entity_count"] >= 1
     assert by_source["sonarr"]["file_bytes"] >= 0
+
+
+def test_integrity_audit_run_lifecycle(app_state) -> None:  # type: ignore[no-untyped-def]
+    with app_state.session_scope() as session:
+        run_id = repo.start_integrity_audit_run(session, "sonarr", "itest")
+        counts = repo.warehouse_integrity_counts(session, "sonarr", "itest")
+        repo.finish_integrity_audit_run(
+            session,
+            run_id,
+            status="success",
+            arr_counts={"item_count": counts["item_count"] + 1, "file_count": 0, "size_bytes": 0},
+            warehouse_counts=counts,
+            drift={"item_count": 1, "file_count": 0, "size_bytes": 0},
+            drift_detected=True,
+        )
+    with app_state.session_scope() as session:
+        runs = repo.list_integrity_audit_runs(session, limit=5)
+        assert runs and runs[0]["id"] == run_id
+        assert runs[0]["drift_detected"] is True
+        assert repo.latest_integrity_drift_sources(session) == ["sonarr"]
+        # The roundtrip test upserted one series for this instance.
+        assert counts["item_count"] >= 1
+
+
+def test_retention_policy_store_and_prune(app_state) -> None:  # type: ignore[no-untyped-def]
+    from arrsync.services.retention_store import read_retention_policy, write_retention_policy
+
+    with app_state.session_scope() as session:
+        policy = read_retention_policy(session)
+        assert policy["queue_days"] == 30
+        updated = write_retention_policy(session, {"sync_run_days": 7, "stat_snapshot_days": 0})
+        assert updated["sync_run_days"] == 7
+        assert updated["stat_snapshot_days"] == 0
+    with app_state.session_scope() as session:
+        # Backdate the roundtrip test's sync run past the window, then prune.
+        session.execute(text("update warehouse.sync_run set started_at = now() - interval '30 days'"))
+    with app_state.session_scope() as session:
+        repo.prune_old_rows(session, sync_run_days=7, stat_snapshot_days=0)
+    with app_state.session_scope() as session:
+        remaining = session.execute(text("select count(*) from warehouse.sync_run")).scalar_one()
+        snapshots = session.execute(
+            text("select count(*) from warehouse.library_stat_snapshot")
+        ).scalar_one()
+    assert remaining == 0
+    # stat_snapshot_days=0 means keep forever — the snapshot test's rows survive.
+    assert snapshots >= 1
+
+
+def test_webhook_ingest_allowed_follows_integration_flags(app_state) -> None:  # type: ignore[no-untyped-def]
+    with app_state.session_scope() as session:
+        session.execute(
+            text(
+                """
+                insert into app.integration_instance(source, name, base_url, api_key, enabled, webhook_enabled, updated_at)
+                values ('radarr', 'itest-hooks', 'http://radarr:7878', 'k', true, true, now())
+                on conflict (source, name) do update set enabled = true, webhook_enabled = true
+                """
+            )
+        )
+    with app_state.session_scope() as session:
+        assert repo.webhook_ingest_allowed(session, "radarr") is True
+        session.execute(text("update app.integration_instance set webhook_enabled = false where source = 'radarr'"))
+    with app_state.session_scope() as session:
+        assert repo.webhook_ingest_allowed(session, "radarr") is False

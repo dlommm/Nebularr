@@ -18,11 +18,14 @@ from arrsync.routers.shared import (
 )
 from arrsync.security import encrypt_secret, hash_secret
 from arrsync.services.alert_config_store import (
+    read_alert_email_config,
     read_alert_webhook_config,
+    store_alert_email_config,
     store_alert_webhook_events,
     store_alert_webhook_options,
     store_alert_webhook_urls,
 )
+from arrsync.services.alert_notifier import normalize_ntfy_url
 from arrsync.services.log_level_store import (
     clear_stored_log_level,
     effective_log_level,
@@ -35,6 +38,11 @@ from arrsync.services.mal_config_store import (
     read_mal_feature_flags,
     store_mal_client_id,
     store_mal_feature_flags,
+)
+from arrsync.services.retention_store import (
+    MAX_RETENTION_DAYS,
+    read_retention_policy,
+    write_retention_policy,
 )
 from arrsync.services.settings_store import get_setting, set_setting
 
@@ -201,6 +209,7 @@ def build_config_router(app_state: Any) -> APIRouter:
     async def get_alert_webhook_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
             config = read_alert_webhook_config(session, app_state.settings)
+        email = config["email"]
         return {
             "urls_configured": bool(config["webhook_urls"]),
             "url_count": len(config["webhook_urls"]),
@@ -208,6 +217,16 @@ def build_config_router(app_state: Any) -> APIRouter:
             "min_state": config["min_state"],
             "notify_recovery": config["notify_recovery"],
             "events": config["events"],
+            "email": {
+                "enabled": email["enabled"],
+                "host": email["host"],
+                "port": email["port"],
+                "username": email["username"],
+                "password_set": bool(email["password"]),
+                "from_address": email["from_address"],
+                "to_addresses": email["to_addresses"],
+                "starttls": email["starttls"],
+            },
         }
 
     @router.put("/api/config/alert-webhooks")
@@ -223,7 +242,11 @@ def build_config_router(app_state: Any) -> APIRouter:
             elif provided_urls is not None:
                 parsed_urls = parse_webhook_urls(provided_urls)
                 for webhook_url in parsed_urls:
-                    require_egress_allowed(webhook_url, "webhook_urls", app_state.settings.egress_policy)
+                    # ntfy:// is an accepted alias for self-hosted ntfy; the egress
+                    # check runs against the https URL it resolves to.
+                    require_egress_allowed(
+                        normalize_ntfy_url(webhook_url), "webhook_urls", app_state.settings.egress_policy
+                    )
                 webhook_urls = parsed_urls
                 store_alert_webhook_urls(session, webhook_urls)
             timeout_seconds = float(payload.get("timeout_seconds", current["timeout_seconds"]))
@@ -247,6 +270,22 @@ def build_config_router(app_state: Any) -> APIRouter:
                     if name in provided_events:
                         events[name] = to_bool(provided_events[name], events[name])
                 store_alert_webhook_events(session, events)
+            provided_email = payload.get("email", None)
+            if isinstance(provided_email, dict):
+                merged_email: dict[str, Any] = {**current["email"], **provided_email}
+                try:
+                    port = int(merged_email.get("port", 587))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail="email.port must be an integer") from exc
+                if port < 1 or port > 65535:
+                    raise HTTPException(status_code=400, detail="email.port must be between 1 and 65535")
+                if to_bool(merged_email.get("enabled", False), False) and not str(merged_email.get("host", "")).strip():
+                    raise HTTPException(status_code=400, detail="email.host is required when email is enabled")
+                password = provided_email.get("password", None)
+                if password is not None and not isinstance(password, str):
+                    raise HTTPException(status_code=400, detail="email.password must be a string")
+                store_alert_email_config(session, merged_email, password=password)
+            email_config = read_alert_email_config(session)
         alert_notifier = getattr(app_state, "alert_notifier", None)
         if alert_notifier is not None:
             await alert_notifier.configure(
@@ -255,6 +294,7 @@ def build_config_router(app_state: Any) -> APIRouter:
                 min_state=min_state,
                 notify_recovery=notify_recovery,
                 events=events,
+                email=dict(email_config),
             )
         return {"status": "ok", "url_count": len(webhook_urls), "events": events}
 
@@ -282,10 +322,45 @@ def build_config_router(app_state: Any) -> APIRouter:
             ).mappings()
             return [dict(r) for r in rows]
 
+    @router.get("/api/config/retention")
+    async def get_retention() -> dict[str, Any]:
+        with app_state.session_scope() as session:
+            return dict(read_retention_policy(session))
+
+    @router.put("/api/config/retention")
+    async def update_retention(payload: dict[str, Any]) -> dict[str, Any]:
+        updates: dict[str, object] = {}
+        for key in ("queue_days", "sync_run_days", "stat_snapshot_days"):
+            if key not in payload:
+                continue
+            try:
+                days = int(payload[key])
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
+            if days < 0 or days > MAX_RETENTION_DAYS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{key} must be between 0 (keep forever) and {MAX_RETENTION_DAYS}",
+                )
+            updates[key] = days
+        if not updates:
+            raise HTTPException(status_code=400, detail="no retention fields provided")
+        with app_state.session_scope() as session:
+            return dict(write_retention_policy(session, updates))
+
     @router.put("/api/config/schedules/{mode}")
     async def update_schedule(mode: str, payload: dict[str, Any]) -> dict[str, Any]:
         allowed_modes = frozenset(
-            {"incremental", "reconcile", "full", "stats_snapshot", "mal_ingest", "mal_matcher", "mal_tag_sync"}
+            {
+                "incremental",
+                "reconcile",
+                "full",
+                "stats_snapshot",
+                "integrity_audit",
+                "mal_ingest",
+                "mal_matcher",
+                "mal_tag_sync",
+            }
         )
         if mode not in allowed_modes:
             raise HTTPException(status_code=400, detail="invalid mode")

@@ -9,6 +9,7 @@ import { MAL_JOB_TYPE_ORDER } from "../constants/domain";
 import { StatusPill } from "../components/ui";
 import { useActionError } from "../hooks/useActionError";
 import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
+import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
 import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
 import { MetricCard } from "../components/nebula/MetricCard";
 import { EmptyState } from "../components/nebula/EmptyState";
@@ -24,7 +25,18 @@ export function DashboardPage(): JSX.Element {
   usePageTitle("Dashboard");
   const navigate = useNavigate();
   const { runAction } = useActionError();
+  const { requestConfirm, confirmDialog } = useConfirmDialog();
   const { connected: sseConnected } = useServerEventsStatus();
+
+  const runFullSync = (source: "sonarr" | "radarr", actionLabel: string): void => {
+    const name = source === "sonarr" ? "Sonarr" : "Radarr";
+    requestConfirm({
+      title: `Run ${name} full sync?`,
+      description: `This re-fetches the entire ${name} library and can take a long time on large libraries.`,
+      confirmLabel: "Run full sync",
+      onConfirm: () => void runAction(() => api.runSync(source, "full"), actionLabel),
+    });
+  };
   const status = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
@@ -51,26 +63,10 @@ export function DashboardPage(): JSX.Element {
           <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr")}>
             Radarr incremental
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              if (window.confirm("Run Sonarr full sync? This re-fetches the full library and may run for a long time.")) {
-                void runAction(() => api.runSync("sonarr", "full"), "dashboard sonarr full");
-              }
-            }}
-          >
+          <Button size="sm" variant="outline" onClick={() => runFullSync("sonarr", "dashboard sonarr full")}>
             Sonarr full
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              if (window.confirm("Run Radarr full sync? This re-fetches the full library and may run for a long time.")) {
-                void runAction(() => api.runSync("radarr", "full"), "dashboard radarr full");
-              }
-            }}
-          >
+          <Button size="sm" variant="outline" onClick={() => runFullSync("radarr", "dashboard radarr full")}>
             Radarr full
           </Button>
           <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => navigate(PATHS.sync)}>
@@ -87,14 +83,14 @@ export function DashboardPage(): JSX.Element {
         <MetricCard
           label="Webhook backlog"
           value={status.data?.webhook_queue_open ?? "—"}
-          hint={`DL: ${status.data?.webhook_queue_dead_letter ?? 0}`}
+          hint={`dead-letter: ${status.data?.webhook_queue_dead_letter ?? 0}`}
           icon={Inbox}
         />
         <MetricCard label="Active syncs" value={status.data?.active_sync_count ?? "—"} icon={Server} />
         <MetricCard
           label="Activity rows"
           value={syncActivity.isLoading ? "…" : (syncActivity.data?.length ?? 0)}
-          hint="from sync-activity"
+          hint="active + recent work items"
           icon={ListVideo}
         />
         <MetricCard
@@ -248,7 +244,7 @@ export function DashboardPage(): JSX.Element {
       <GlassCard>
         <CardHeader>
           <CardTitle className="text-base">Live sync activity</CardTitle>
-          <CardDescription>Active and recent work from /api/ui/sync-activity (5s refresh)</CardDescription>
+          <CardDescription>Active and recent sync work; refreshes automatically</CardDescription>
         </CardHeader>
         <CardContent className="px-0 sm:px-0">
           {syncActivity.isLoading ? (
@@ -297,6 +293,7 @@ export function DashboardPage(): JSX.Element {
           )}
         </CardContent>
       </GlassCard>
+      {confirmDialog}
     </div>
   );
 }

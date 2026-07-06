@@ -114,6 +114,7 @@ async def finalize_application_services(app_state: Any) -> None:
         min_state=alert_config["min_state"],
         notify_recovery=alert_config["notify_recovery"],
         events=alert_config.get("events"),
+        email=alert_config.get("email"),
     )
 
     async def _detect_capabilities_background() -> None:
@@ -174,6 +175,39 @@ async def finalize_application_services(app_state: Any) -> None:
                 except Exception:
                     log.exception("notification dispatch failed", extra={"event_type": event.get("type")})
 
+    # Near-real-time webhook processing: the receiver signals this task after
+    # enqueueing, so jobs are drained within seconds instead of waiting for the
+    # incremental cron tick. The cron drain stays as a safety net.
+    drain_pending_sources: set[str] = set()
+    drain_wakeup = asyncio.Event()
+
+    def request_webhook_drain(source: str) -> None:
+        drain_pending_sources.add(source)
+        drain_wakeup.set()
+
+    async def _drain_webhooks_background() -> None:
+        stop_event = app_state.stop_event
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(drain_wakeup.wait(), timeout=5.0)
+            except TimeoutError:
+                continue
+            # Debounce: an Arr import burst fires many webhooks back to back;
+            # let them land so one drain pass claims the whole batch.
+            await asyncio.sleep(2.0)
+            drain_wakeup.clear()
+            sources = sorted(drain_pending_sources)
+            drain_pending_sources.clear()
+            for source in sources:
+                if stop_event.is_set():
+                    break
+                try:
+                    await app_state.sync_service.process_webhook_queue(source)
+                except Exception:
+                    log.exception("realtime webhook drain failed", extra={"webhook_source": source})
+
+    app_state.request_webhook_drain = request_webhook_drain
+    app_state.webhook_drain_task = asyncio.create_task(_drain_webhooks_background())
     app_state.capability_task = asyncio.create_task(_detect_capabilities_background())
     app_state.health_alert_task = asyncio.create_task(_run_health_alerts_background())
     app_state.notification_task = asyncio.create_task(_route_events_to_notifications_background())

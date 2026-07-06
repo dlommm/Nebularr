@@ -212,6 +212,54 @@ export type ScheduleRow = {
   updated_at: string;
 };
 
+export type RetentionPolicy = {
+  queue_days: number;
+  sync_run_days: number;
+  stat_snapshot_days: number;
+};
+
+export type MalJobRunRow = {
+  id: number;
+  job_type: "ingest" | "matcher" | "tag_sync";
+  status: "running" | "success" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  details: Record<string, unknown>;
+  error_message: string | null;
+};
+
+export type MalUnmatchedRow = {
+  mal_id: number;
+  main_title: string | null;
+  media_type: string | null;
+  status: string | null;
+  start_date: string | null;
+  num_episodes: number | null;
+  mal_fetch_status: string;
+  has_manual_link: boolean;
+};
+
+export type IntegrityAuditResult = {
+  source: string;
+  instance_name: string;
+  status: "success" | "failed";
+  arr_counts?: { item_count: number; file_count: number; size_bytes: number };
+  warehouse_counts?: { item_count: number; file_count: number; size_bytes: number };
+  drift?: { item_count: number; file_count: number; size_bytes: number };
+  drift_detected?: boolean;
+  error?: string;
+};
+
+export type MalOverview = {
+  dubbed_total: number;
+  fetched_success: number;
+  pending_fetch: number;
+  linked: number;
+  unlinked: number;
+  manual_link_count: number;
+  unmatched: MalUnmatchedRow[];
+};
+
 export type RunRow = {
   source: string;
   mode: string;
@@ -380,6 +428,17 @@ export type AlertEventFlags = {
   dead_letter: boolean;
 };
 
+export type AlertEmailConfig = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password_set: boolean;
+  from_address: string;
+  to_addresses: string[];
+  starttls: boolean;
+};
+
 export type AlertWebhookConfig = {
   urls_configured: boolean;
   url_count: number;
@@ -387,6 +446,7 @@ export type AlertWebhookConfig = {
   min_state: "warning" | "critical";
   notify_recovery: boolean;
   events: AlertEventFlags;
+  email: AlertEmailConfig;
 };
 
 export type ReportingDashboardMeta = {

@@ -610,19 +610,182 @@ def get_watermark_for_instance(session: Session, source: str, instance_name: str
     return history_time, history_id
 
 
-def prune_old_rows(session: Session, keep_days: int = 30) -> None:
-    session.execute(
-        text("delete from app.webhook_queue where processed_at < now() - make_interval(days => :keep_days)"),
-        {"keep_days": keep_days},
-    )
-    session.execute(
-        text("delete from app.job_run_summary where started_at < now() - make_interval(days => :keep_days)"),
-        {"keep_days": keep_days},
-    )
+def prune_old_rows(
+    session: Session,
+    keep_days: int = 30,
+    *,
+    sync_run_days: int = 90,
+    stat_snapshot_days: int = 365,
+) -> None:
+    """Prune history tables per retention policy. 0 days means keep forever.
+
+    Only touches run/audit/snapshot history — never current warehouse entities.
+    """
+    if keep_days > 0:
+        session.execute(
+            text("delete from app.webhook_queue where processed_at < now() - make_interval(days => :keep_days)"),
+            {"keep_days": keep_days},
+        )
+        session.execute(
+            text("delete from app.job_run_summary where started_at < now() - make_interval(days => :keep_days)"),
+            {"keep_days": keep_days},
+        )
+    if sync_run_days > 0:
+        session.execute(
+            text(
+                """
+                delete from warehouse.sync_run
+                where status <> 'running'
+                  and started_at < now() - make_interval(days => :keep_days)
+                """
+            ),
+            {"keep_days": sync_run_days},
+        )
+    if stat_snapshot_days > 0:
+        session.execute(
+            text(
+                "delete from warehouse.library_stat_snapshot"
+                " where captured_at < now() - make_interval(days => :keep_days)"
+            ),
+            {"keep_days": stat_snapshot_days},
+        )
 
 
 def _to_json(value: Any) -> str:
     return json.dumps(value, default=str)
+
+
+def start_integrity_audit_run(session: Session, source: str, instance_name: str) -> int:
+    return int(
+        session.execute(
+            text(
+                """
+                insert into app.integrity_audit_run(source, instance_name, status)
+                values (:source, :instance_name, 'running')
+                returning id
+                """
+            ),
+            {"source": source, "instance_name": instance_name},
+        ).scalar_one()
+    )
+
+
+def finish_integrity_audit_run(
+    session: Session,
+    run_id: int,
+    *,
+    status: str,
+    arr_counts: dict[str, Any] | None = None,
+    warehouse_counts: dict[str, Any] | None = None,
+    drift: dict[str, Any] | None = None,
+    drift_detected: bool = False,
+    error_message: str | None = None,
+) -> None:
+    session.execute(
+        text(
+            """
+            update app.integrity_audit_run
+            set status = :status,
+                finished_at = now(),
+                arr_counts = cast(:arr_counts as jsonb),
+                warehouse_counts = cast(:warehouse_counts as jsonb),
+                drift = cast(:drift as jsonb),
+                drift_detected = :drift_detected,
+                error_message = :error_message
+            where id = :run_id
+            """
+        ),
+        {
+            "run_id": run_id,
+            "status": status,
+            "arr_counts": _to_json(arr_counts or {}),
+            "warehouse_counts": _to_json(warehouse_counts or {}),
+            "drift": _to_json(drift or {}),
+            "drift_detected": drift_detected,
+            "error_message": error_message,
+        },
+    )
+
+
+def warehouse_integrity_counts(session: Session, source: str, instance_name: str) -> dict[str, int]:
+    if source == "sonarr":
+        row = session.execute(
+            text(
+                """
+                select
+                    (select count(*) from warehouse.series
+                     where not deleted and instance_name = :instance_name) as item_count,
+                    (select count(*) from warehouse.episode_file
+                     where not deleted and instance_name = :instance_name) as file_count,
+                    (select coalesce(sum(size_bytes), 0) from warehouse.episode_file
+                     where not deleted and instance_name = :instance_name) as size_bytes
+                """
+            ),
+            {"instance_name": instance_name},
+        ).one()
+    else:
+        row = session.execute(
+            text(
+                """
+                select
+                    (select count(*) from warehouse.movie
+                     where not deleted and instance_name = :instance_name) as item_count,
+                    (select count(*) from warehouse.movie_file
+                     where not deleted and instance_name = :instance_name) as file_count,
+                    (select coalesce(sum(size_bytes), 0) from warehouse.movie_file
+                     where not deleted and instance_name = :instance_name) as size_bytes
+                """
+            ),
+            {"instance_name": instance_name},
+        ).one()
+    return {"item_count": int(row[0]), "file_count": int(row[1]), "size_bytes": int(row[2])}
+
+
+def list_integrity_audit_runs(session: Session, limit: int = 20) -> list[dict[str, Any]]:
+    rows = session.execute(
+        text(
+            """
+            select id, source, instance_name, status, started_at, finished_at,
+                   arr_counts, warehouse_counts, drift, drift_detected, error_message
+            from app.integrity_audit_run
+            order by started_at desc
+            limit :limit
+            """
+        ),
+        {"limit": max(1, min(limit, 200))},
+    ).mappings()
+    return [dict(r) for r in rows]
+
+
+def latest_integrity_drift_sources(session: Session) -> list[str]:
+    """Sources whose most recent finished audit found drift."""
+    rows = session.execute(
+        text(
+            """
+            select distinct on (source, instance_name) source, drift_detected
+            from app.integrity_audit_run
+            where status <> 'running'
+            order by source, instance_name, started_at desc
+            """
+        )
+    ).mappings()
+    return sorted({str(r["source"]) for r in rows if bool(r["drift_detected"])})
+
+
+def webhook_ingest_allowed(session: Session, source: str) -> bool:
+    """True when at least one enabled integration for the source accepts webhooks."""
+    row = session.execute(
+        text(
+            """
+            select 1
+            from app.integration_instance
+            where source = :source and enabled and webhook_enabled
+            limit 1
+            """
+        ),
+        {"source": source},
+    ).first()
+    return row is not None
 
 
 def list_enabled_integrations(session: Session, source: str) -> list[dict[str, Any]]:

@@ -76,3 +76,21 @@ def test_webhook_rejects_wrong_secret_and_unknown_source() -> None:
         == 401
     )
     assert client.post("/hooks/lidarr", headers=SECRET_HEADER, json={"eventType": "T"}).status_code == 404
+
+
+def test_webhook_rejected_when_ingest_disabled() -> None:
+    state = FakeAppState()
+    state.session.webhook_ingest_allowed = False
+    client = _build_client(state)
+    response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "Download"})
+    assert response.status_code == 403
+
+
+def test_webhook_signals_realtime_drain() -> None:
+    state = FakeAppState()
+    drained: list[str] = []
+    state.request_webhook_drain = drained.append
+    client = _build_client(state)
+    response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "Download"})
+    assert response.status_code == 200
+    assert drained == ["sonarr"]

@@ -4,6 +4,78 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Operator-experience release: near-real-time webhook processing, a dedicated
+MyAnimeList page, dead-letter management, data-integrity audits, retention
+policies, and new notification channels. One additive DB migration (0008) runs
+automatically.
+
+### Added
+- **Near-real-time webhook processing**: incoming Sonarr/Radarr webhooks now
+  wake a debounced background drain (~2s) instead of waiting for the next
+  incremental cron tick (previously up to 30 minutes). The cron drain remains as
+  a safety net, and a new `webhook.processed` SSE event refreshes the UI within
+  seconds of processing.
+- **MyAnimeList page** (`/mal`): dub-pipeline overview stats (dubbed totals,
+  fetch progress, link coverage), the ingest/matcher/tag-sync runners with
+  structured result rendering (moved from Sync & Queue → Manual), job-run
+  history from `app.mal_job_run` with a type filter, and an "unmatched dubbed
+  anime" table linking out to MAL. New read routes `GET /api/mal/job-runs` and
+  `GET /api/mal/overview`.
+- **Data-integrity audit**: compares cheap Sonarr/Radarr API aggregates
+  (series/movie counts, file counts, sizes) against warehouse counts per
+  instance and records drift in a new `app.integrity_audit_run` table
+  (migration 0008). Run on demand from Sync & Queue → Manual
+  (`POST /api/operator/integrity-audit`), on an opt-in `integrity_audit`
+  schedule (seeded disabled, default weekly), and surfaced as an "Integrity
+  Audits" panel on the Sync Operations dashboard. Detected drift degrades the
+  sync health dimension to warning (`integrity_drift:<sources>`).
+- **Webhook queue management**: the Sync & Queue → Webhooks tab gained a status
+  filter, pagination, a per-row **Requeue** button for dead-letter/retrying
+  jobs (wiring the previously unused `POST /api/webhooks/requeue/{id}`), and
+  bulk replay-dead-letter actions.
+- **Retention policies**: `warehouse.sync_run` and
+  `warehouse.library_stat_snapshot` previously grew forever; the cleanup pass
+  now prunes them per a configurable policy (defaults: 90 days of run history,
+  365 days of storage snapshots, 30 days of processed queue rows; 0 = keep
+  forever). Editable under Schedules → Data retention via new
+  `GET/PUT /api/config/retention` routes. Synced library data is never pruned.
+- **Email (SMTP) and ntfy notifications**: alert notifications can now also go
+  to email (STARTTLS or implicit TLS on port 465; password encrypted at rest)
+  and ntfy (auto-detected for ntfy.sh, `ntfy://host/topic` for self-hosted),
+  alongside Discord/Slack/generic webhooks, honoring the same per-event
+  toggles and minimum state.
+- **Logout button**: the header now shows a logout action when authentication
+  is enabled (the endpoint existed; the UI never called it).
+- **Logs page**: minimum-level filter, text search, and download/copy of the
+  visible lines.
+- **Scheduled full syncs**: the `full` schedule mode was accepted by the API
+  but never registered with the scheduler — saving an enabled full-sync cron
+  now actually fires (opt-in; no seeded row).
+
+### Changed
+- **Library page fixes**: the shows list and the episodes table no longer share
+  one pagination offset (paging one used to page the other); the episodes panel
+  gained its own sort control; sort options now match what each tab's backend
+  accepts (movies sort by year, not air date); the instance filter is a
+  dropdown of known instances instead of free text; all library queries render
+  an error state with retry instead of a silent empty list.
+- **Media detail sheet** is now a proper dialog: Escape closes it, focus is
+  trapped, and clicking the backdrop dismisses it; library table rows are
+  keyboard-activatable.
+- **Destructive actions** (reset data, reset MAL data, clear stuck state, full
+  syncs, MAL import-all) use styled confirmation dialogs with typed
+  confirmation phrases instead of `window.confirm`/`window.prompt`.
+- Webhook receiver now honors the per-integration `webhook_enabled`/`enabled`
+  flags (previously stored but ignored); disabled sources get `403`.
+- Developer-facing copy in the UI ("from /api/status", "DL: 0", endpoint paths
+  in descriptions) rewritten in user terms.
+
+### Fixed
+- `PUT /api/config/schedules/full` no longer silently creates a cron that never
+  fires (see scheduled full syncs above).
+
 ## [2.2.0] - 2026-07-05
 
 Performance and feature release: faster syncs, a responsive server during heavy

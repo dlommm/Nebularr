@@ -21,6 +21,90 @@ log = logging.getLogger(__name__)
 def build_mal_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/api/mal/job-runs")
+    async def list_mal_job_runs(job_type: str = "all", limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        normalized = job_type.lower()
+        allowed = {"all", "ingest", "matcher", "tag_sync"}
+        if normalized not in allowed:
+            raise HTTPException(status_code=400, detail="invalid job_type filter")
+        bounded_limit = max(1, min(limit, 200))
+        bounded_offset = max(0, offset)
+        where_clause = ""
+        params: dict[str, Any] = {"limit": bounded_limit, "offset": bounded_offset}
+        if normalized != "all":
+            where_clause = "where job_type = :job_type"
+            params["job_type"] = normalized
+        with app_state.session_scope() as session:
+            rows = session.execute(
+                text(
+                    f"""
+                    select id, job_type, status, started_at, finished_at, details, error_message
+                    from app.mal_job_run
+                    {where_clause}
+                    order by started_at desc
+                    limit :limit
+                    offset :offset
+                    """
+                ),
+                params,
+            ).mappings()
+            return [dict(r) for r in rows]
+
+    @router.get("/api/mal/overview")
+    async def mal_overview(unmatched_limit: int = 100) -> dict[str, Any]:
+        bounded_limit = max(1, min(unmatched_limit, 500))
+        with app_state.session_scope() as session:
+            dubbed_total = int(
+                session.execute(
+                    text("select count(*) from mal.anime where is_english_dubbed = true")
+                ).scalar_one()
+            )
+            fetched_success = mal_repo.count_anime_fetched_success(session)
+            pending_fetch = mal_repo.count_anime_needing_mal_fetch(session)
+            linked = int(
+                session.execute(
+                    text(
+                        """
+                        select count(distinct a.mal_id)
+                        from mal.anime a
+                        where a.is_english_dubbed = true
+                          and exists (select 1 from mal.warehouse_link l where l.mal_id = a.mal_id)
+                        """
+                    )
+                ).scalar_one()
+            )
+            manual_link_count = int(session.execute(text("select count(*) from mal.manual_link")).scalar_one())
+            unmatched = session.execute(
+                text(
+                    """
+                    select
+                        a.mal_id,
+                        a.main_title,
+                        a.media_type,
+                        a.status,
+                        a.start_date,
+                        a.num_episodes,
+                        a.mal_fetch_status,
+                        exists (select 1 from mal.manual_link m where m.mal_id = a.mal_id) as has_manual_link
+                    from mal.anime a
+                    where a.is_english_dubbed = true
+                      and not exists (select 1 from mal.warehouse_link l where l.mal_id = a.mal_id)
+                    order by a.main_title nulls last, a.mal_id
+                    limit :limit
+                    """
+                ),
+                {"limit": bounded_limit},
+            ).mappings()
+            return {
+                "dubbed_total": dubbed_total,
+                "fetched_success": fetched_success,
+                "pending_fetch": pending_fetch,
+                "linked": linked,
+                "unlinked": max(dubbed_total - linked, 0),
+                "manual_link_count": manual_link_count,
+                "unmatched": [dict(r) for r in unmatched],
+            }
+
     @router.post("/api/mal/ingest")
     async def trigger_mal_ingest(payload: dict[str, Any] | None = None) -> dict[str, Any]:
         svc = app_state.mal_ingest_service

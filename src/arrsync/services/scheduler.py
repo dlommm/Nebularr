@@ -66,6 +66,22 @@ class SyncScheduler:
                 id="stats_snapshot",
                 replace_existing=True,
             )
+        # "full" is opt-in: it has no seeded default row, so it only fires when the
+        # operator saves an enabled full-sync schedule.
+        if "full" in jobs:
+            self.scheduler.add_job(
+                self._run_full_tick,
+                CronTrigger.from_crontab(jobs["full"], timezone=self.settings.scheduler_timezone),
+                id="full",
+                replace_existing=True,
+            )
+        if "integrity_audit" in jobs:
+            self.scheduler.add_job(
+                self._run_integrity_audit_tick,
+                CronTrigger.from_crontab(jobs["integrity_audit"], timezone=self.settings.scheduler_timezone),
+                id="integrity_audit",
+                replace_existing=True,
+            )
         if self._mal_ingest_coro and mal_flags["ingest_enabled"] and "mal_ingest" in jobs:
             self.scheduler.add_job(
                 self._mal_ingest_coro,
@@ -119,6 +135,7 @@ class SyncScheduler:
                       ('incremental', :incremental_cron, :tz, true, now()),
                       ('reconcile', :reconcile_cron, :tz, true, now()),
                       ('stats_snapshot', :stats_snapshot_cron, :tz, true, now()),
+                      ('integrity_audit', :integrity_audit_cron, :tz, false, now()),
                       ('mal_ingest', :mal_ingest_cron, :tz, true, now()),
                       ('mal_matcher', :mal_matcher_cron, :tz, true, now()),
                       ('mal_tag_sync', :mal_tag_sync_cron, :tz, true, now())
@@ -129,6 +146,7 @@ class SyncScheduler:
                     "incremental_cron": self.settings.incremental_cron,
                     "reconcile_cron": self.settings.full_reconcile_cron,
                     "stats_snapshot_cron": self.settings.stats_snapshot_cron,
+                    "integrity_audit_cron": self.settings.integrity_audit_cron,
                     "mal_ingest_cron": self.settings.mal_ingest_cron,
                     "mal_matcher_cron": self.settings.mal_matcher_cron,
                     "mal_tag_sync_cron": self.settings.mal_tag_sync_cron,
@@ -159,6 +177,14 @@ class SyncScheduler:
         )
         log.debug("scheduler tick: incremental complete")
 
+    async def _run_full_tick(self) -> None:
+        log.debug("scheduler tick: full")
+        await asyncio.gather(
+            self.sync_service.run_sync("sonarr", "full", reason="cron"),
+            self.sync_service.run_sync("radarr", "full", reason="cron"),
+        )
+        log.debug("scheduler tick: full complete")
+
     async def _run_reconcile_tick(self) -> None:
         log.debug("scheduler tick: reconcile")
         await asyncio.gather(
@@ -166,6 +192,14 @@ class SyncScheduler:
             self.sync_service.run_sync("radarr", "reconcile", reason="cron"),
         )
         log.debug("scheduler tick: reconcile complete")
+
+    async def _run_integrity_audit_tick(self) -> None:
+        log.debug("scheduler tick: integrity audit")
+        await asyncio.gather(
+            self.sync_service.run_integrity_audit("sonarr", reason="cron"),
+            self.sync_service.run_integrity_audit("radarr", reason="cron"),
+        )
+        log.debug("scheduler tick: integrity audit complete")
 
     async def _run_stats_snapshot_tick(self) -> None:
         log.debug("scheduler tick: library stats snapshot")

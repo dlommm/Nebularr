@@ -6,11 +6,13 @@ import {
   AlignJustify,
   BarChart2,
   BookOpen,
+  Clapperboard,
   Command,
   FileText,
   Home,
   LayoutDashboard,
   ListOrdered,
+  LogOut,
   Menu,
   Moon,
   Network,
@@ -47,6 +49,7 @@ const NAV_PRIMARY: NavItem[] = [
   { to: PATHS.dashboard, label: "Dashboard", Icon: LayoutDashboard },
   { to: PATHS.library, label: "Library", Icon: BookOpen },
   { to: PATHS.sync, label: "Sync & Queue", Icon: Zap },
+  { to: PATHS.mal, label: "MyAnimeList", Icon: Clapperboard },
   { to: PATHS.reporting, label: "Reporting", Icon: BarChart2 },
 ];
 
@@ -88,7 +91,19 @@ export function AppLayout(): JSX.Element {
     queryFn: api.status,
     refetchInterval: serverEvents.connected ? 60_000 : 15_000,
   });
+  const authStatus = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus, staleTime: 60_000 });
+  const showLogout = authStatus.data?.enabled === true && authStatus.data.authenticated;
   const currentTitle = pathTitle(location.pathname);
+
+  const onLogout = async (): Promise<void> => {
+    try {
+      await api.authLogout();
+    } catch {
+      // The session cookie may already be invalid; continue to the login page.
+    }
+    queryClient.clear();
+    navigate(PATHS.login, { replace: true });
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -366,6 +381,19 @@ export function AppLayout(): JSX.Element {
               >
                 {resolvedTheme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
               </Button>
+              {showLogout ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
+                  onClick={onLogout}
+                  title="Log out"
+                  aria-label="Log out"
+                >
+                  <LogOut className="size-4" />
+                </Button>
+              ) : null}
             </div>
           </div>
         </header>

@@ -40,7 +40,7 @@ flowchart LR
 
 ### Reliability And Data Quality
 
-- `v2-rel-001` (`proposed`): Add periodic integrity audit job that compares warehouse counts against Sonarr/Radarr API snapshots and emits drift metrics.
+- `v2-rel-001` (`done`, v2.3.0): Integrity audit compares warehouse counts against Sonarr/Radarr API aggregates per instance; on-demand + opt-in `integrity_audit` schedule, `app.integrity_audit_run` history, Sync Operations panel, and drift degrades sync health.
 - `v2-rel-002` (`proposed`): Add self-healing watermark repair mode that can rewind to a safe cursor window when incremental gaps are detected.
 - `v2-rel-003` (`proposed`): Add exactly-once style event processing option using stronger idempotency keys where upstream event identifiers exist.
 - `v2-rel-004` (`proposed`): Add adaptive retry policy with jitter and circuit-breaker behavior per integration.
@@ -71,15 +71,15 @@ flowchart LR
 - `v2-ui-002` (`done`, v2.2.0): Library/Reporting state now URL-driven with a Saved Views menu and Copy Link.
 - `v2-ui-003` (`proposed`): Add dashboard customization (widget visibility, compact mode, refresh intervals).
 - `v2-ui-004` (`proposed`): Add CSV/JSON export actions for table datasets.
-- `v2-ui-005` (`proposed`): Add retention and queue policy editing in UI with validation and previews.
+- `v2-ui-005` (`in_progress`, v2.3.0): Retention policy editing shipped (Schedules → Data retention: run history, storage snapshots, processed queue rows; 0 = keep forever) plus webhook dead-letter requeue/filter controls; queue policy tuning (batch sizes, retry caps) still open.
 - `v2-ui-006` (`proposed`): Add guided setup wizard for first-time deployment.
-- `v2-ui-007` (`proposed`): Add Web UI panels for MAL ingest/matcher/tag-sync job history (`app.mal_job_run`) and unmatched dubbed IDs.
+- `v2-ui-007` (`done`, v2.3.0): Dedicated `/mal` page with pipeline runners, overview stats, job history from `app.mal_job_run`, and an unmatched dubbed anime table (new `GET /api/mal/job-runs` and `GET /api/mal/overview`).
 
 ### Integrations And Automation
 
 - `v2-int-001` (`proposed`): Add outbound automation hooks for actions like tagging media when quality/language rules match.
 - `v2-int-002` (`proposed`): Add pluggable rules engine for policy-based recommendations (example: oversized files with same quality alternatives).
-- `v2-int-003` (`done`, v2.2.0): Discord/Slack-formatted alert webhooks with per-event toggles (health, sync failure, dead-letter) and a test route; email still open.
+- `v2-int-003` (`done`, v2.2.0/v2.3.0): Discord/Slack-formatted alert webhooks with per-event toggles (health, sync failure, dead-letter) and a test route; email (SMTP) and ntfy channels added in v2.3.0.
 - `v2-int-004` (`proposed`): Add optional metadata enrichment from external providers for richer analytics dimensions.
 - `v2-int-005` (`proposed`): Add import/export for configuration bundles across environments.
 

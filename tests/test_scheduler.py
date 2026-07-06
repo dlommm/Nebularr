@@ -35,6 +35,7 @@ def _build_settings(**overrides: Any) -> Any:
         incremental_cron="*/30 * * * *",
         full_reconcile_cron="0 4 * * 0",
         stats_snapshot_cron="10 3 * * *",
+        integrity_audit_cron="30 5 * * 0",
         mal_ingest_cron="0 5 * * *",
         mal_matcher_cron="30 5 * * *",
         mal_tag_sync_cron="0 6 * * *",
@@ -78,6 +79,26 @@ async def test_start_seeds_defaults_and_registers_core_jobs() -> None:
         seed_params = next(p for sql, p in session.statements if "insert into app.sync_schedule" in sql)
         assert seed_params is not None
         assert seed_params["incremental_cron"] == "*/30 * * * *"
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_opt_in_full_and_integrity_jobs_registered_when_rows_enabled() -> None:
+    session = ScheduleFakeSession(
+        schedule_rows=[
+            {"mode": "incremental", "cron": "*/30 * * * *"},
+            {"mode": "reconcile", "cron": "0 4 * * 0"},
+            {"mode": "full", "cron": "0 2 1 * *"},
+            {"mode": "integrity_audit", "cron": "30 5 * * 0"},
+        ]
+    )
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert "full" in job_ids
+        assert "integrity_audit" in job_ids
     finally:
         scheduler.shutdown()
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from arrsync.config import Settings
 from arrsync.mal.repository import get_mal_sync_ui_snapshot
 from arrsync.metrics import Metrics
+from arrsync.services import repository as repo
 from arrsync.services.mal_config_store import mal_client_id_is_configured, read_mal_feature_flags
 
 _SEVERITY = {"ok": 0, "warning": 1, "critical": 2}
@@ -35,12 +36,17 @@ def _eval_webhooks(
     return "ok", []
 
 
-def _eval_sync(settings: Settings, max_lag: float) -> tuple[str, list[str]]:
+def _eval_sync(settings: Settings, max_lag: float, drift_sources: list[str]) -> tuple[str, list[str]]:
     if max_lag >= settings.alert_sync_lag_critical_seconds:
-        return "critical", ["sync_lag_critical"]
-    if max_lag >= settings.alert_sync_lag_warning_seconds:
-        return "warning", ["sync_lag_warning"]
-    return "ok", []
+        state, reasons = "critical", ["sync_lag_critical"]
+    elif max_lag >= settings.alert_sync_lag_warning_seconds:
+        state, reasons = "warning", ["sync_lag_warning"]
+    else:
+        state, reasons = "ok", []
+    if drift_sources:
+        state = _worse(state, "warning")
+        reasons.append("integrity_drift:" + ",".join(drift_sources))
+    return state, reasons
 
 
 def _eval_integrations(arr_versions: dict[str, str]) -> tuple[str, list[str]]:
@@ -129,8 +135,10 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
     for source, value in lag.items():
         metrics.set_gauge(f"arrsync_sync_lag_seconds_{source}", value)
 
+    drift_sources = repo.latest_integrity_drift_sources(session)
+
     webhooks_state, webhooks_r = _eval_webhooks(settings, int(queue_backlog), int(dead_letter_count))
-    sync_state, sync_r = _eval_sync(settings, max_lag)
+    sync_state, sync_r = _eval_sync(settings, max_lag, drift_sources)
     integrations_state, integrations_r = _eval_integrations(arr_versions)
     mal_sync = get_mal_sync_ui_snapshot(session)
     mal_flags = read_mal_feature_flags(session, settings)

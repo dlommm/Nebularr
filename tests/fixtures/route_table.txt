@@ -4,8 +4,12 @@ GET /api/config/alert-webhooks
 GET /api/config/integrations
 GET /api/config/logging
 GET /api/config/mal
+GET /api/config/retention
 GET /api/config/schedules
 GET /api/config/webhook
+GET /api/mal/job-runs
+GET /api/mal/overview
+GET /api/operator/integrity-audit
 GET /api/operator/stuck-state
 GET /api/reporting/dashboards
 GET /api/reporting/dashboards/{dashboard_key}
@@ -48,6 +52,7 @@ POST /api/mal/match-refresh
 POST /api/mal/reset-data
 POST /api/mal/tag-sync
 POST /api/operator/clear-stuck
+POST /api/operator/integrity-audit
 POST /api/setup/bootstrap-database
 POST /api/setup/initial-sync
 POST /api/setup/initialize-postgres
@@ -63,5 +68,6 @@ PUT /api/config/alert-webhooks
 PUT /api/config/integrations/{source}
 PUT /api/config/logging
 PUT /api/config/mal
+PUT /api/config/retention
 PUT /api/config/schedules/{mode}
 PUT /api/config/webhook

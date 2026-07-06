@@ -1,5 +1,5 @@
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { isEpisodeRecord, mediaDetailSections, mediaTitle } from "../../lib/mediaDetail";
 import type { DetailField, MediaRecord } from "../../lib/mediaDetail";
 import { StatusBadge } from "./StatusBadge";
@@ -33,41 +33,44 @@ export function MediaDetailSheet({
   const sections = mediaDetailSections(row);
   const status = isEpisodeRecord(row) ? row.series_status : row.status;
   return (
-    <aside
-      className="fixed inset-y-0 right-0 z-40 w-full max-w-md overflow-y-auto border-l border-border glass-panel-strong p-4 shadow-2xl"
-      aria-label="Media details"
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <div className="mb-1 flex items-start justify-between gap-2">
-        <strong className="text-sm leading-snug">{mediaTitle(row)}</strong>
-        <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-          Close
-        </Button>
-      </div>
-      <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        {typeof status === "string" && status ? <StatusBadge status={status} className="text-[0.6rem]" /> : null}
-        {row.monitored ? (
-          <span className="text-[0.6rem] font-medium uppercase text-primary">monitored</span>
-        ) : null}
-      </div>
-      <div className="space-y-4">
-        {sections.map((section) => (
-          <section key={section.title}>
-            <h4 className="mb-1 border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {section.title}
-            </h4>
-            {section.fields.map((field) => (
-              <FieldRow key={field.label} field={field} />
-            ))}
-          </section>
-        ))}
-        <details className="rounded-lg border border-border bg-muted/30 p-2">
-          <summary className="cursor-pointer text-xs text-muted-foreground">Raw JSON</summary>
-          <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-muted/50 p-2 text-[11px] text-foreground/90">
-            {JSON.stringify(row, null, 2)}
-          </pre>
-        </details>
-      </div>
-    </aside>
+      <SheetContent
+        side="right"
+        aria-label="Media details"
+        className="w-full gap-0 overflow-y-auto border-border glass-panel-strong p-4 data-[side=right]:sm:max-w-md"
+      >
+        <SheetTitle className="mb-1 pr-8 text-sm leading-snug">{mediaTitle(row)}</SheetTitle>
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {typeof status === "string" && status ? <StatusBadge status={status} className="text-[0.6rem]" /> : null}
+          {row.monitored ? (
+            <span className="text-[0.6rem] font-medium uppercase text-primary">monitored</span>
+          ) : null}
+        </div>
+        <div className="space-y-4">
+          {sections.map((section) => (
+            <section key={section.title}>
+              <h4 className="mb-1 border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {section.title}
+              </h4>
+              {section.fields.map((field) => (
+                <FieldRow key={field.label} field={field} />
+              ))}
+            </section>
+          ))}
+          <details className="rounded-lg border border-border bg-muted/30 p-2">
+            <summary className="cursor-pointer text-xs text-muted-foreground">Raw JSON</summary>
+            <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-muted/50 p-2 text-[11px] text-foreground/90">
+              {JSON.stringify(row, null, 2)}
+            </pre>
+          </details>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

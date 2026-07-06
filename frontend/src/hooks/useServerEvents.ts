@@ -6,6 +6,15 @@ const EVENT_QUERY_KEYS: Record<string, string[][]> = {
   "sync.progress": [["sync-progress"], ["work-status"]],
   "sync.finished": [["sync-progress"], ["work-status"], ["runs"], ["recent-runs"], ["sync-activity"], ["status"]],
   "webhook.dead_letter": [["webhook-queue"], ["webhook-jobs"], ["status"]],
+  "webhook.processed": [
+    ["webhook-queue"],
+    ["webhook-jobs"],
+    ["status"],
+    ["sync-activity"],
+    ["shows"],
+    ["all-episodes"],
+    ["movies"],
+  ],
   "health.changed": [["status"], ["healthz"]],
 };
 

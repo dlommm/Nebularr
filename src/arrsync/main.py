@@ -58,6 +58,8 @@ class AppState:
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
     notification_task: asyncio.Task[None] | None = None
+    webhook_drain_task: asyncio.Task[None] | None = None
+    request_webhook_drain: Any | None = field(default=None, repr=False)
     auth_config_cache: Any | None = field(default=None, repr=False)
     auth_config_cached_at: float = field(default=0.0, repr=False)
     _engine: Any | None = field(default=None, repr=False)
@@ -247,6 +249,10 @@ async def _shutdown() -> None:
         app_state.notification_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.notification_task
+    if app_state.webhook_drain_task and not app_state.webhook_drain_task.done():
+        app_state.webhook_drain_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await app_state.webhook_drain_task
     await sync_service.aclose()
     await sonarr_client.aclose()
     await radarr_client.aclose()

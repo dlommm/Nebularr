@@ -14,8 +14,33 @@ ALERT_WEBHOOK_TIMEOUT_KEY = "app.alert_webhook_timeout_seconds"
 ALERT_WEBHOOK_MIN_STATE_KEY = "app.alert_webhook_min_state"
 ALERT_WEBHOOK_NOTIFY_RECOVERY_KEY = "app.alert_webhook_notify_recovery"
 ALERT_WEBHOOK_EVENTS_KEY = "app.alert_webhook_events_json"
+ALERT_EMAIL_CONFIG_KEY = "app.alert_email_json"
+ALERT_EMAIL_PASSWORD_KEY = "app.alert_email_password_enc"
 
 ALERT_EVENT_TYPES = ("health", "sync_failure", "dead_letter")
+
+
+class AlertEmailConfig(TypedDict):
+    enabled: bool
+    host: str
+    port: int
+    username: str
+    password: str
+    from_address: str
+    to_addresses: list[str]
+    starttls: bool
+
+
+DEFAULT_ALERT_EMAIL_CONFIG: AlertEmailConfig = {
+    "enabled": False,
+    "host": "",
+    "port": 587,
+    "username": "",
+    "password": "",
+    "from_address": "",
+    "to_addresses": [],
+    "starttls": True,
+}
 
 
 class AlertWebhookConfig(TypedDict):
@@ -24,6 +49,7 @@ class AlertWebhookConfig(TypedDict):
     min_state: Literal["warning", "critical"]
     notify_recovery: bool
     events: dict[str, bool]
+    email: AlertEmailConfig
 
 
 def _get_setting(session: Session, key: str, default: str = "") -> str:
@@ -108,7 +134,60 @@ def read_alert_webhook_config(session: Session, settings: Settings) -> AlertWebh
         "min_state": min_state,
         "notify_recovery": notify_recovery,
         "events": events,
+        "email": read_alert_email_config(session),
     }
+
+
+def read_alert_email_config(session: Session) -> AlertEmailConfig:
+    config: AlertEmailConfig = dict(DEFAULT_ALERT_EMAIL_CONFIG)  # type: ignore[assignment]
+    config["to_addresses"] = []
+    raw = _get_setting(session, ALERT_EMAIL_CONFIG_KEY, "").strip()
+    if raw:
+        try:
+            stored = json.loads(raw)
+        except Exception:
+            stored = {}
+        if isinstance(stored, dict):
+            config["enabled"] = _parse_bool(stored.get("enabled", False), False)
+            config["host"] = str(stored.get("host", "")).strip()
+            try:
+                config["port"] = max(1, min(int(stored.get("port", 587)), 65535))
+            except (TypeError, ValueError):
+                config["port"] = 587
+            config["username"] = str(stored.get("username", "")).strip()
+            config["from_address"] = str(stored.get("from_address", "")).strip()
+            to_addresses = stored.get("to_addresses", [])
+            if isinstance(to_addresses, list):
+                config["to_addresses"] = [str(a).strip() for a in to_addresses if str(a).strip()]
+            config["starttls"] = _parse_bool(stored.get("starttls", True), True)
+    encrypted_password = _get_setting(session, ALERT_EMAIL_PASSWORD_KEY, "").strip()
+    if encrypted_password:
+        config["password"] = decrypt_secret(encrypted_password) or ""
+    return config
+
+
+def store_alert_email_config(
+    session: Session,
+    config: dict[str, object],
+    *,
+    password: str | None = None,
+) -> None:
+    """Persist the non-secret email fields; `password=None` keeps the stored one."""
+    to_addresses = config.get("to_addresses", [])
+    if not isinstance(to_addresses, list):
+        to_addresses = []
+    non_secret = {
+        "enabled": _parse_bool(config.get("enabled", False), False),  # type: ignore[arg-type]
+        "host": str(config.get("host", "")).strip(),
+        "port": config.get("port", 587),
+        "username": str(config.get("username", "")).strip(),
+        "from_address": str(config.get("from_address", "")).strip(),
+        "to_addresses": [str(a).strip() for a in to_addresses if str(a).strip()],
+        "starttls": _parse_bool(config.get("starttls", True), True),  # type: ignore[arg-type]
+    }
+    _set_setting(session, ALERT_EMAIL_CONFIG_KEY, json.dumps(non_secret))
+    if password is not None:
+        _set_setting(session, ALERT_EMAIL_PASSWORD_KEY, encrypt_secret(password) if password else "")
 
 
 def store_alert_webhook_urls(session: Session, webhook_urls: list[str]) -> None:

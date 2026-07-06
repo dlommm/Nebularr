@@ -6,6 +6,8 @@ export const SCHEDULE_MODE_LABELS: Record<string, string> = {
   incremental: "Incremental sync (Sonarr + Radarr + webhooks)",
   reconcile: "Full reconcile (Sonarr + Radarr)",
   full: "Full sync (legacy)",
+  stats_snapshot: "Storage snapshot (daily growth stats)",
+  integrity_audit: "Integrity audit (warehouse vs Arr counts)",
   mal_ingest: "MAL — Dub list + anime ingest",
   mal_matcher: "MAL — Warehouse link / match refresh",
   mal_tag_sync: "MAL — English dub tag sync (Sonarr & Radarr)",
@@ -14,6 +16,8 @@ export const SCHEDULE_MODE_LABELS: Record<string, string> = {
 const SCHEDULE_VIEW_ORDER = [
   "incremental",
   "reconcile",
+  "stats_snapshot",
+  "integrity_audit",
   "mal_ingest",
   "mal_matcher",
   "mal_tag_sync",

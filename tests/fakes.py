@@ -44,6 +44,7 @@ class FakeSession:
     def __init__(self) -> None:
         self.settings: dict[str, str] = {}
         self.statements: list[tuple[str, dict[str, Any] | None]] = []
+        self.webhook_ingest_allowed = True
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
         sql = " ".join(str(query).lower().split())
@@ -63,6 +64,8 @@ class FakeSession:
             return FakeResult(1)
         if "insert into app.webhook_queue" in sql:
             return FakeResult()
+        if "from app.integration_instance" in sql and "webhook_enabled" in sql:
+            return FakeResult(rows=[(1,)] if self.webhook_ingest_allowed else [])
         raise RuntimeError(f"unexpected SQL in fake session: {sql}")
 
     # No-ops so this fake also works under the real db.session_scope().

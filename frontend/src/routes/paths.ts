@@ -5,6 +5,7 @@ export const PATHS = {
   library: "/library",
   /** Combined sync progress, queue, webhooks, and manual actions */
   sync: "/sync",
+  mal: "/mal",
   runs: "/runs",
   integrations: "/integrations",
   schedules: "/schedules",
@@ -12,6 +13,7 @@ export const PATHS = {
   actions: "/actions",
   logs: "/logs",
   setup: "/setup",
+  login: "/login",
 } as const;
 
 export const APP_ROUTE_TITLES: Record<string, string> = {
@@ -20,6 +22,7 @@ export const APP_ROUTE_TITLES: Record<string, string> = {
   [PATHS.reporting]: "Reporting",
   [PATHS.library]: "Library",
   [PATHS.sync]: "Sync & Queue",
+  [PATHS.mal]: "MyAnimeList",
   [PATHS.runs]: "Sync Runs",
   [PATHS.integrations]: "Integrations",
   [PATHS.schedules]: "Schedules",

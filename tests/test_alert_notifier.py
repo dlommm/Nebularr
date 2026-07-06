@@ -257,3 +257,15 @@ async def test_send_test_message_hits_all_urls(monkeypatch: pytest.MonkeyPatch) 
 
     assert await notifier.send_test_message() is True
     assert len(requests) == 2
+
+
+def test_detect_webhook_target_and_ntfy_normalization() -> None:
+    from arrsync.services.alert_notifier import detect_webhook_target, normalize_ntfy_url
+
+    assert detect_webhook_target("https://ntfy.sh/nebularr") == "ntfy"
+    assert detect_webhook_target("ntfy://ntfy.home.lan/nebularr") == "ntfy"
+    assert detect_webhook_target("https://hooks.slack.com/services/x") == "slack"
+    assert detect_webhook_target("https://discord.com/api/webhooks/1/x") == "discord"
+    assert detect_webhook_target("https://example.com/hook") == "generic"
+    assert normalize_ntfy_url("ntfy://ntfy.home.lan/nebularr") == "https://ntfy.home.lan/nebularr"
+    assert normalize_ntfy_url("https://example.com/hook") == "https://example.com/hook"

@@ -800,6 +800,31 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     {"instance_name": normalized_instance, "limit": bounded_limit},
                 ).mappings()
             ]
+            integrity_audits = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select
+                            started_at,
+                            source,
+                            instance_name,
+                            status,
+                            drift_detected,
+                            arr_counts->>'item_count' as arr_items,
+                            warehouse_counts->>'item_count' as warehouse_items,
+                            arr_counts->>'file_count' as arr_files,
+                            warehouse_counts->>'file_count' as warehouse_files,
+                            coalesce(error_message, '') as error_message
+                        from app.integrity_audit_run
+                        where (:instance_name = '' or instance_name = :instance_name)
+                        order by started_at desc
+                        limit 20
+                        """
+                    ),
+                    {"instance_name": normalized_instance},
+                ).mappings()
+            ]
         return {
             "key": "sync-ops",
             "title": "Sync Operations",
@@ -813,6 +838,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "recent_runs", "title": "Recent Sync Runs", "kind": "table", "rows": recent_runs},
                 {"id": "run_aggregates_24h", "title": "Run Aggregates (24h)", "kind": "table", "rows": aggregates_24h},
                 {"id": "throughput_48h", "title": "Throughput By Hour (48h)", "kind": "table", "rows": throughput_48h},
+                {"id": "integrity_audits", "title": "Integrity Audits (Warehouse vs Arr)", "kind": "table", "rows": integrity_audits},
             ],
         }
 

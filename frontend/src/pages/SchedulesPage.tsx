@@ -13,15 +13,37 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
+import type { RetentionPolicy } from "../types";
+
+const RETENTION_FIELDS: { key: keyof RetentionPolicy; label: string; hint: string }[] = [
+  { key: "queue_days", label: "Webhook queue & job summaries", hint: "Processed webhook jobs and per-run summaries" },
+  { key: "sync_run_days", label: "Sync run history", hint: "Rows on the Sync & Queue → Runs tab" },
+  { key: "stat_snapshot_days", label: "Storage snapshots", hint: "Daily captures behind the Storage & Growth dashboard" },
+];
 
 export function SchedulesPage(): JSX.Element {
   usePageTitle("Schedules");
   const queryClient = useQueryClient();
   const { runAction } = useActionError();
   const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
+  const retention = useQuery({ queryKey: ["retention"], queryFn: api.retention });
   const [scheduleDrafts, setScheduleDrafts] = useState<
     Record<string, { cron: string; timezone: string; enabled: boolean }>
   >({});
+  const [retentionDraft, setRetentionDraft] = useState<RetentionPolicy | null>(null);
+
+  useEffect(() => {
+    if (retention.data) setRetentionDraft(retention.data);
+  }, [retention.data]);
+
+  const saveRetention = async (): Promise<void> => {
+    if (!retentionDraft) return;
+    await runAction(async () => {
+      await api.saveRetention(retentionDraft);
+      await queryClient.invalidateQueries({ queryKey: ["retention"] });
+    }, "save retention policy");
+  };
 
   useEffect(() => {
     if (!schedules.data) return;
@@ -49,6 +71,7 @@ export function SchedulesPage(): JSX.Element {
   };
 
   return (
+    <div className="space-y-6">
     <GlassCard>
       <CardHeader>
         <CardTitle>Schedules</CardTitle>
@@ -148,5 +171,53 @@ export function SchedulesPage(): JSX.Element {
         ))}
       </CardContent>
     </GlassCard>
+
+    <GlassCard>
+      <CardHeader>
+        <CardTitle>Data retention</CardTitle>
+        <CardDescription>
+          How long history rows are kept before the next cleanup pass removes them. Retention never touches your
+          synced library data — only run history, processed queue rows, and storage snapshots. Set a value to 0 to
+          keep rows forever.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {retention.isError ? (
+          <QueryErrorNotice label="retention policy" retry={() => void retention.refetch()} error={retention.error} />
+        ) : null}
+        {retention.isLoading ? <Skeleton className="h-20 w-full" /> : null}
+        {retentionDraft ? (
+          <>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {RETENTION_FIELDS.map(({ key, label, hint }) => (
+                <div className="grid gap-1.5" key={key}>
+                  <Label htmlFor={`retention-${key}`} className="text-xs text-muted-foreground">
+                    {label} (days)
+                  </Label>
+                  <Input
+                    id={`retention-${key}`}
+                    type="number"
+                    min={0}
+                    max={3650}
+                    value={retentionDraft[key]}
+                    onChange={(event) =>
+                      setRetentionDraft({
+                        ...retentionDraft,
+                        [key]: Math.max(0, Math.min(3650, Number(event.target.value) || 0)),
+                      })
+                    }
+                  />
+                  <p className="text-[11px] text-muted-foreground">{hint}</p>
+                </div>
+              ))}
+            </div>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void saveRetention()}>
+              Save retention
+            </Button>
+          </>
+        ) : null}
+      </CardContent>
+    </GlassCard>
+    </div>
   );
 }

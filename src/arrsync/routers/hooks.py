@@ -29,11 +29,14 @@ def build_hooks_router(app_state: Any) -> APIRouter:
         received_secret = request.headers.get("x-arr-shared-secret", "")
         with app_state.session_scope() as session:
             stored_hash = get_setting(session, "app.webhook_secret_hash", "")
+            ingest_allowed = repo.webhook_ingest_allowed(session, source)
         if stored_hash:
             if not verify_secret_hash(received_secret, stored_hash):
                 raise HTTPException(status_code=401, detail="invalid secret")
         elif not app_state.arr_client_class.validate_webhook_secret(received_secret, app_state.settings.webhook_shared_secret):
             raise HTTPException(status_code=401, detail="invalid secret")
+        if not ingest_allowed:
+            raise HTTPException(status_code=403, detail="webhooks disabled for this source")
 
         # Enforce the size cap on the bytes actually received: Content-Length can be
         # absent (chunked transfer) or malformed, so it cannot be trusted for the limit.
@@ -69,6 +72,9 @@ def build_hooks_router(app_state: Any) -> APIRouter:
         with app_state.session_scope() as session:
             repo.enqueue_webhook(session, source=source, event_type=event_type, payload=payload, dedupe_key=dedupe_key)
         app_state.metrics.inc("arrsync_webhooks_received_total")
+        request_drain = getattr(app_state, "request_webhook_drain", None)
+        if request_drain is not None:
+            request_drain(source)
         log.info(
             "incoming webhook queued",
             extra={"webhook_source": source, "event_type": event_type, "dedupe_key_prefix": dedupe_key[:12]},

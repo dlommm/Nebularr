@@ -5,6 +5,7 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
 import { GlassCard } from "@/components/nebula/GlassCard";
+import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -18,22 +19,6 @@ const TEXTAREA_CLASS =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 type IntegrationDraft = { base_url: string; api_key: string; enabled: boolean; webhook_enabled: boolean };
-
-function QueryErrorNotice({ label, retry, error }: { label: string; retry: () => void; error: unknown }): JSX.Element {
-  return (
-    <div
-      role="alert"
-      className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"
-    >
-      <span>
-        Could not load {label}: {error instanceof Error ? error.message : "unknown error"}
-      </span>
-      <Button size="sm" variant="secondary" onClick={retry}>
-        Retry
-      </Button>
-    </div>
-  );
-}
 
 function SectionCard({
   title,
@@ -95,6 +80,25 @@ export function IntegrationsPage(): JSX.Element {
     notifyRecovery: true,
     events: { health: true, sync_failure: true, dead_letter: true },
   });
+  const [alertEmailDraft, setAlertEmailDraft] = useState<{
+    enabled: boolean;
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    fromAddress: string;
+    toAddressesText: string;
+    starttls: boolean;
+  }>({
+    enabled: false,
+    host: "",
+    port: 587,
+    username: "",
+    password: "",
+    fromAddress: "",
+    toAddressesText: "",
+    starttls: true,
+  });
 
   useEffect(() => {
     if (!integrations.data) return;
@@ -132,6 +136,19 @@ export function IntegrationsPage(): JSX.Element {
       notifyRecovery: alertWebhookConfig.data.notify_recovery,
       events: alertWebhookConfig.data.events ?? prev.events,
     }));
+    const email = alertWebhookConfig.data.email;
+    if (email) {
+      setAlertEmailDraft((prev) => ({
+        ...prev,
+        enabled: email.enabled,
+        host: email.host,
+        port: email.port,
+        username: email.username,
+        fromAddress: email.from_address,
+        toAddressesText: email.to_addresses.join(", "),
+        starttls: email.starttls,
+      }));
+    }
   }, [alertWebhookConfig.data]);
 
   const updateDraft = (key: string, fallback: IntegrationDraft, patch: Partial<IntegrationDraft>): void => {
@@ -286,18 +303,25 @@ export function IntegrationsPage(): JSX.Element {
   const saveAlertWebhooks = async (): Promise<void> => {
     await runAction(
       async () => {
-        const payload: {
-          webhook_urls?: string;
-          clear_urls?: boolean;
-          timeout_seconds: number;
-          min_state: "warning" | "critical";
-          notify_recovery: boolean;
-          events: { health: boolean; sync_failure: boolean; dead_letter: boolean };
-        } = {
+        const payload: Parameters<typeof api.saveAlertWebhookConfig>[0] = {
           timeout_seconds: alertWebhookDraft.timeoutSeconds,
           min_state: alertWebhookDraft.minState,
           notify_recovery: alertWebhookDraft.notifyRecovery,
           events: alertWebhookDraft.events,
+          email: {
+            enabled: alertEmailDraft.enabled,
+            host: alertEmailDraft.host.trim(),
+            port: alertEmailDraft.port,
+            username: alertEmailDraft.username.trim(),
+            from_address: alertEmailDraft.fromAddress.trim(),
+            to_addresses: alertEmailDraft.toAddressesText
+              .split(/[\n,]/)
+              .map((address) => address.trim())
+              .filter(Boolean),
+            starttls: alertEmailDraft.starttls,
+            // Blank means "keep the stored password".
+            ...(alertEmailDraft.password ? { password: alertEmailDraft.password } : {}),
+          },
         };
         const normalizedUrls = alertWebhookDraft.webhookUrlsText.trim();
         if (alertWebhookDraft.clearUrls) {
@@ -311,6 +335,7 @@ export function IntegrationsPage(): JSX.Element {
           webhookUrlsText: "",
           clearUrls: false,
         }));
+        setAlertEmailDraft((prev) => ({ ...prev, password: "" }));
         await queryClient.invalidateQueries({ queryKey: ["alert-webhook-config"] });
       },
       "save alert webhooks",
@@ -717,9 +742,114 @@ export function IntegrationsPage(): JSX.Element {
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Discord and Slack webhook URLs get native formatting automatically; other URLs receive a generic JSON
-          payload.
+          Discord, Slack, and ntfy URLs get native formatting automatically (use <code className="rounded bg-muted px-1">ntfy://host/topic</code>{" "}
+          for self-hosted ntfy); other URLs receive a generic JSON payload.
         </p>
+        <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="alert-email-enabled"
+              checked={alertEmailDraft.enabled}
+              onCheckedChange={(checked) => setAlertEmailDraft((prev) => ({ ...prev, enabled: checked === true }))}
+            />
+            <Label htmlFor="alert-email-enabled" className="text-sm font-medium">
+              Email (SMTP)
+            </Label>
+            {alertWebhookConfig.data?.email?.password_set ? (
+              <Badge variant="outline">password stored</Badge>
+            ) : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="alert-email-host" className="text-xs text-muted-foreground">
+                SMTP host
+              </Label>
+              <Input
+                id="alert-email-host"
+                placeholder="smtp.example.com"
+                value={alertEmailDraft.host}
+                onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, host: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="alert-email-port" className="text-xs text-muted-foreground">
+                Port (465 uses implicit TLS)
+              </Label>
+              <Input
+                id="alert-email-port"
+                type="number"
+                min={1}
+                max={65535}
+                value={alertEmailDraft.port}
+                onChange={(event) =>
+                  setAlertEmailDraft((prev) => ({
+                    ...prev,
+                    port: Math.max(1, Math.min(65535, Number(event.target.value) || 587)),
+                  }))
+                }
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="alert-email-username" className="text-xs text-muted-foreground">
+                Username (optional)
+              </Label>
+              <Input
+                id="alert-email-username"
+                autoComplete="off"
+                value={alertEmailDraft.username}
+                onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, username: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="alert-email-password" className="text-xs text-muted-foreground">
+                Password (blank keeps stored)
+              </Label>
+              <Input
+                id="alert-email-password"
+                type="password"
+                autoComplete="new-password"
+                value={alertEmailDraft.password}
+                onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, password: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="alert-email-from" className="text-xs text-muted-foreground">
+                From address
+              </Label>
+              <Input
+                id="alert-email-from"
+                placeholder="nebularr@example.com"
+                value={alertEmailDraft.fromAddress}
+                onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, fromAddress: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="alert-email-to" className="text-xs text-muted-foreground">
+                To addresses (comma-separated)
+              </Label>
+              <Input
+                id="alert-email-to"
+                placeholder="you@example.com"
+                value={alertEmailDraft.toAddressesText}
+                onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, toAddressesText: event.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="alert-email-starttls"
+              checked={alertEmailDraft.starttls}
+              onCheckedChange={(checked) => setAlertEmailDraft((prev) => ({ ...prev, starttls: checked === true }))}
+            />
+            <Label htmlFor="alert-email-starttls" className="text-sm text-muted-foreground">
+              STARTTLS (ignored on port 465)
+            </Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Email uses the same event toggles and minimum state as the webhooks above. The password is encrypted at
+            rest when an encryption key is configured.
+          </p>
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" size="sm" onClick={() => void saveAlertWebhooks()}>
             Save alert webhooks

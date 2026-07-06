@@ -1,17 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { LogViewerRow } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
+import type { UiLogEntry } from "../types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+const LEVEL_RANK: Record<string, number> = {
+  debug: 10,
+  info: 20,
+  warning: 30,
+  error: 40,
+  critical: 50,
+};
+
+function entryText(entry: UiLogEntry): string {
+  const level = String(entry.level ?? "?").toUpperCase();
+  return `${String(entry.ts ?? "")} ${level} ${String(entry.logger ?? "")} ${String(entry.message ?? "")}`;
+}
 
 export function LogsPage(): JSX.Element {
   usePageTitle("Logs");
   const queryClient = useQueryClient();
   const [logsPaused, setLogsPaused] = useState(false);
+  const [minLevel, setMinLevel] = useState("all");
+  const [search, setSearch] = useState("");
   const logsEndRef = useRef<HTMLDivElement | null>(null);
   const uiLogs = useQuery({
     queryKey: ["ui-logs"],
@@ -21,10 +39,42 @@ export function LogsPage(): JSX.Element {
   const items = useMemo(() => uiLogs.data?.items ?? [], [uiLogs.data?.items]);
   const eff = uiLogs.data?.effective_level;
 
+  const filtered = useMemo(() => {
+    const minRank = minLevel === "all" ? 0 : (LEVEL_RANK[minLevel] ?? 0);
+    const query = search.trim().toLowerCase();
+    return items.filter((entry) => {
+      if (minRank > 0) {
+        const rank = LEVEL_RANK[String(entry.level ?? "").toLowerCase()] ?? 0;
+        if (rank < minRank) return false;
+      }
+      return !query || entryText(entry).toLowerCase().includes(query);
+    });
+  }, [items, minLevel, search]);
+  const filterActive = minLevel !== "all" || search.trim() !== "";
+
   useEffect(() => {
     if (logsPaused || !logsEndRef.current) return;
     logsEndRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [logsPaused, items]);
+  }, [logsPaused, filtered]);
+
+  const downloadLogs = (): void => {
+    const blob = new Blob([filtered.map(entryText).join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `nebularr-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyLogs = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(filtered.map(entryText).join("\n"));
+      toast.success(`Copied ${filtered.length} log line${filtered.length === 1 ? "" : "s"}`);
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  };
 
   return (
     <GlassCard>
@@ -47,11 +97,42 @@ export function LogsPage(): JSX.Element {
               Pause live updates
             </Label>
           </div>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            Level
+            <select
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              value={minLevel}
+              onChange={(event) => setMinLevel(event.target.value)}
+              aria-label="Minimum log level"
+            >
+              <option value="all">All</option>
+              <option value="debug">Debug+</option>
+              <option value="info">Info+</option>
+              <option value="warning">Warning+</option>
+              <option value="error">Error+</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Filter lines…"
+            className="h-9 w-56"
+            aria-label="Filter log lines"
+          />
           <Button type="button" variant="secondary" size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ui-logs"] })}>
             Refresh
           </Button>
+          <Button type="button" variant="outline" size="sm" onClick={downloadLogs} disabled={filtered.length === 0}>
+            Download
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void copyLogs()} disabled={filtered.length === 0}>
+            Copy
+          </Button>
           <span className="text-xs text-muted-foreground">
-            {uiLogs.data?.items?.length ?? 0} line{(uiLogs.data?.items?.length ?? 0) === 1 ? "" : "s"}
+            {filterActive
+              ? `${filtered.length} of ${items.length} line${items.length === 1 ? "" : "s"}`
+              : `${items.length} line${items.length === 1 ? "" : "s"}`}
           </span>
         </div>
         {uiLogs.isError ? (
@@ -69,7 +150,10 @@ export function LogsPage(): JSX.Element {
                 : null}
             </p>
           ) : null}
-          {items.map((entry, idx) => (
+          {items.length > 0 && filtered.length === 0 ? (
+            <p className="m-0 px-1 py-2 text-sm text-muted-foreground">No lines match the current filter.</p>
+          ) : null}
+          {filtered.map((entry, idx) => (
             <LogViewerRow key={`${String(entry.ts)}-${idx}`} entry={entry} />
           ))}
           <div ref={logsEndRef} />

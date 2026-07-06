@@ -10,6 +10,7 @@ from arrsync.db import session_scope
 from arrsync.models import CapabilitySet, SyncResult
 from arrsync.services.arr_client import ArrClient
 from arrsync.services import repository as repo
+from arrsync.services.retention_store import read_retention_policy
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,16 @@ class SyncService:
                 return fn(session, *args, **kwargs)
 
         return await asyncio.to_thread(_call)
+
+    @staticmethod
+    def _prune_per_retention_policy(session: Any) -> None:
+        policy = read_retention_policy(session)
+        repo.prune_old_rows(
+            session,
+            keep_days=policy["queue_days"],
+            sync_run_days=policy["sync_run_days"],
+            stat_snapshot_days=policy["stat_snapshot_days"],
+        )
 
     def _report_progress(
         self,
@@ -129,6 +140,89 @@ class SyncService:
             if repo.has_library_stat_snapshot_today(session):
                 return
             repo.capture_library_stat_snapshot(session)
+
+    async def run_integrity_audit(self, source: str, reason: str = "manual") -> list[dict[str, Any]]:
+        """Compare cheap Arr API aggregates against warehouse counts and record drift.
+
+        Reads only list endpoints (no per-item fan-out), so it is safe to run on
+        a schedule even against large libraries.
+        """
+        results: list[dict[str, Any]] = []
+        integrations = await asyncio.to_thread(self._enabled_integrations, source)
+        for integration in integrations:
+            instance_name = str(integration["name"])
+            run_id = await self._run_db(repo.start_integrity_audit_run, source, instance_name)
+            try:
+                client = self._client_for_integration(source, integration)
+                if source == "sonarr":
+                    series = await client.list_series()
+                    arr_counts = {
+                        "item_count": len(series),
+                        "file_count": sum(
+                            int((s.get("statistics") or {}).get("episodeFileCount", 0) or 0) for s in series
+                        ),
+                        "size_bytes": sum(
+                            int((s.get("statistics") or {}).get("sizeOnDisk", 0) or 0) for s in series
+                        ),
+                    }
+                else:
+                    movies = await client.list_movies()
+                    arr_counts = {
+                        "item_count": len(movies),
+                        "file_count": sum(1 for m in movies if m.get("hasFile")),
+                        "size_bytes": sum(int(m.get("sizeOnDisk", 0) or 0) for m in movies),
+                    }
+                warehouse_counts = await self._run_db(repo.warehouse_integrity_counts, source, instance_name)
+                drift = {key: int(arr_counts[key]) - int(warehouse_counts[key]) for key in arr_counts}
+                # Size deltas alone are not drift: Arr's sizeOnDisk includes extras
+                # (subtitles, NFOs) the warehouse never tracks per file.
+                drift_detected = drift["item_count"] != 0 or drift["file_count"] != 0
+                await self._run_db(
+                    repo.finish_integrity_audit_run,
+                    run_id,
+                    status="success",
+                    arr_counts=arr_counts,
+                    warehouse_counts=warehouse_counts,
+                    drift=drift,
+                    drift_detected=drift_detected,
+                )
+                results.append(
+                    {
+                        "source": source,
+                        "instance_name": instance_name,
+                        "status": "success",
+                        "arr_counts": arr_counts,
+                        "warehouse_counts": warehouse_counts,
+                        "drift": drift,
+                        "drift_detected": drift_detected,
+                    }
+                )
+                log.info(
+                    "integrity audit finished",
+                    extra={
+                        "source": source,
+                        "instance_name": instance_name,
+                        "trigger": reason,
+                        "drift_detected": drift_detected,
+                    },
+                )
+            except Exception as exc:
+                await self._run_db(
+                    repo.finish_integrity_audit_run, run_id, status="failed", error_message=str(exc)
+                )
+                results.append(
+                    {
+                        "source": source,
+                        "instance_name": instance_name,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+                log.warning(
+                    "integrity audit failed",
+                    extra={"source": source, "instance_name": instance_name, "trigger": reason, "error": str(exc)},
+                )
+        return results
 
     async def run_sync(self, source: str, mode: str, reason: str = "manual") -> SyncResult:
         started = datetime.now(timezone.utc)
@@ -704,7 +798,12 @@ class SyncService:
                             },
                         )
                     failed += 1
-        await self._run_db(repo.prune_old_rows)
+        await self._run_db(self._prune_per_retention_policy)
+        if processed or failed:
+            self._publish(
+                "webhook.processed",
+                {"source": source, "processed": processed, "failed": failed},
+            )
         log.info(
             "webhook queue drain finished",
             extra={"source": source, "processed": processed, "failed": failed},

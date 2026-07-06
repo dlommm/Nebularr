@@ -323,14 +323,15 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/ui/webhook-jobs")
-    async def webhook_jobs(status: str = "all", limit: int = 100) -> list[dict[str, Any]]:
+    async def webhook_jobs(status: str = "all", limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         normalized_status = status.lower()
         allowed = {"all", "queued", "retrying", "done", "dead_letter"}
         if normalized_status not in allowed:
             raise HTTPException(status_code=400, detail="invalid status filter")
         bounded_limit = max(1, min(limit, 500))
+        bounded_offset = max(0, offset)
         where_clause = ""
-        params: dict[str, Any] = {"limit": bounded_limit}
+        params: dict[str, Any] = {"limit": bounded_limit, "offset": bounded_offset}
         if normalized_status != "all":
             where_clause = "where status = :status"
             params["status"] = normalized_status
@@ -343,6 +344,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
                     {where_clause}
                     order by received_at desc
                     limit :limit
+                    offset :offset
                     """
                 ),
                 params,

@@ -6,11 +6,15 @@ import type {
   EpisodeRow,
   HealthzResponse,
   IntegrationRow,
+  IntegrityAuditResult,
   LoggingConfigResponse,
   MalConfigResponse,
+  MalJobRunRow,
+  MalOverview,
   UiLogsResponse,
   MovieRow,
   PagedResponse,
+  RetentionPolicy,
   RunRow,
   ScheduleRow,
   ShowRow,
@@ -138,13 +142,20 @@ export const api = {
   workStatus: () => requestJson<WorkStatusResponse>("/api/ui/work-status"),
   recentRuns: () => requestJson<RunRow[]>("/api/ui/recent-runs"),
   webhookQueue: () => requestJson<WebhookQueueRow[]>("/api/ui/webhook-queue"),
-  webhookJobs: (status = "all", limit = 150) =>
-    requestJson<WebhookJobRow[]>(withParams("/api/ui/webhook-jobs", { status, limit })),
+  webhookJobs: (status = "all", limit = 150, offset = 0) =>
+    requestJson<WebhookJobRow[]>(withParams("/api/ui/webhook-jobs", { status, limit, offset })),
   integrations: () => requestJson<IntegrationRow[]>("/api/config/integrations"),
   schedules: () => requestJson<ScheduleRow[]>("/api/config/schedules"),
+  retention: () => requestJson<RetentionPolicy>("/api/config/retention"),
+  saveRetention: (payload: Partial<RetentionPolicy>) =>
+    requestJson<RetentionPolicy>("/api/config/retention", "PUT", payload),
   saveIntegration: (source: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/integrations/${source}`, "PUT", payload),
   malConfig: () => requestJson<MalConfigResponse>("/api/config/mal"),
+  malJobRuns: (jobType = "all", limit = 50, offset = 0) =>
+    requestJson<MalJobRunRow[]>(withParams("/api/mal/job-runs", { job_type: jobType, limit, offset })),
+  malOverview: (unmatchedLimit = 100) =>
+    requestJson<MalOverview>(withParams("/api/mal/overview", { unmatched_limit: unmatchedLimit })),
   saveMalConfig: (payload: {
     client_id?: string;
     clear_client_id?: boolean;
@@ -197,6 +208,16 @@ export const api = {
     min_state: "warning" | "critical";
     notify_recovery: boolean;
     events?: Partial<AlertEventFlags>;
+    email?: {
+      enabled: boolean;
+      host: string;
+      port: number;
+      username: string;
+      password?: string;
+      from_address: string;
+      to_addresses: string[];
+      starttls: boolean;
+    };
   }) => requestJson<{ status: string; url_count: number }>("/api/config/alert-webhooks", "PUT", payload),
   sendAlertWebhookTest: () => requestJson<{ status: string }>("/api/config/alert-webhooks/test", "POST"),
   runSync: (source: string, mode: string) =>
@@ -204,6 +225,10 @@ export const api = {
   replayDeadLetter: (source: string) =>
     requestJson<{ status: string }>(`/api/webhooks/replay-dead-letter/${source}`, "POST"),
   requeueWebhook: (jobId: number) => requestJson<{ status: string }>(`/api/webhooks/requeue/${jobId}`, "POST"),
+  runIntegrityAudit: (source: "all" | "sonarr" | "radarr" = "all") =>
+    requestJson<{ status: string; results: IntegrityAuditResult[] }>("/api/operator/integrity-audit", "POST", {
+      source,
+    }),
   resetData: () => requestJson<{ status: string }>("/api/admin/reset-data", "POST", { confirmation: "RESET" }),
   shows: (params: {
     search: string;

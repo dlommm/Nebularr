@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     incremental_cron: str = "*/30 * * * *"
     full_reconcile_cron: str = "0 4 * * 0"
     stats_snapshot_cron: str = "10 3 * * *"
+    integrity_audit_cron: str = "30 5 * * 0"
     scheduler_timezone: str = "UTC"
     alert_sync_lag_warning_seconds: int = 3600
     alert_sync_lag_critical_seconds: int = 7200

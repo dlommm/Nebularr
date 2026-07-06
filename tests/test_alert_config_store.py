@@ -11,7 +11,9 @@ from arrsync.services.alert_config_store import (
     ALERT_WEBHOOK_NOTIFY_RECOVERY_KEY,
     ALERT_WEBHOOK_TIMEOUT_KEY,
     ALERT_WEBHOOK_URLS_KEY,
+    read_alert_email_config,
     read_alert_webhook_config,
+    store_alert_email_config,
     store_alert_webhook_options,
     store_alert_webhook_urls,
 )
@@ -81,3 +83,43 @@ def test_alert_config_store_falls_back_to_env_defaults() -> None:
     assert ALERT_WEBHOOK_TIMEOUT_KEY not in session.settings
     assert ALERT_WEBHOOK_MIN_STATE_KEY not in session.settings
     assert ALERT_WEBHOOK_NOTIFY_RECOVERY_KEY not in session.settings
+
+
+def test_alert_email_config_round_trip() -> None:
+    session = FakeSession()
+    store_alert_email_config(
+        session,
+        {
+            "enabled": True,
+            "host": "smtp.example.com",
+            "port": 587,
+            "username": "mailer",
+            "from_address": "nebularr@example.com",
+            "to_addresses": ["ops@example.com", ""],
+            "starttls": True,
+        },
+        password="hunter2",
+    )
+    loaded = read_alert_email_config(session)
+    assert loaded["enabled"] is True
+    assert loaded["host"] == "smtp.example.com"
+    assert loaded["to_addresses"] == ["ops@example.com"]
+    assert loaded["password"] == "hunter2"
+
+    # password=None keeps the stored secret across other field updates
+    store_alert_email_config(session, {**loaded, "port": 2525}, password=None)
+    loaded = read_alert_email_config(session)
+    assert loaded["port"] == 2525
+    assert loaded["password"] == "hunter2"
+
+    # an empty string clears it
+    store_alert_email_config(session, loaded, password="")
+    assert read_alert_email_config(session)["password"] == ""
+
+
+def test_alert_email_config_defaults_when_unset() -> None:
+    loaded = read_alert_email_config(FakeSession())
+    assert loaded["enabled"] is False
+    assert loaded["port"] == 587
+    assert loaded["to_addresses"] == []
+    assert loaded["starttls"] is True

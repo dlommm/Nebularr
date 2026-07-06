@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import type { IntegrityAuditResult } from "../types";
+import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
 import { useServerEventsStatus } from "../hooks/useServerEvents";
 import { StatusPill } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
+import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
 import { ProgressBar } from "../components/nebula/ProgressBar";
 import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Button } from "@/components/ui/button";
@@ -17,6 +20,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Activity, Inbox, ListOrdered, Wrench, Zap } from "lucide-react";
 const TAB_VALUES = ["overview", "runs", "webhooks", "manual"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
+
+const WEBHOOK_JOB_STATUSES = ["all", "queued", "retrying", "done", "dead_letter"] as const;
+type WebhookJobStatus = (typeof WEBHOOK_JOB_STATUSES)[number];
+const WEBHOOK_JOBS_PAGE_SIZE = 50;
 
 function tabFromParam(raw: string | null): TabValue {
   if (raw && (TAB_VALUES as readonly string[]).includes(raw)) return raw as TabValue;
@@ -35,13 +42,8 @@ export function SyncQueuePage(): JSX.Element {
   };
 
   const queryClient = useQueryClient();
-  const { setError, runAction } = useActionError();
-  const malConfig = useQuery({ queryKey: ["mal-config"], queryFn: api.malConfig });
-  const [malPipelineResult, setMalPipelineResult] = useState<string | null>(null);
-  const [malBacklogCycles, setMalBacklogCycles] = useState(10);
-  const [malCycleDelaySeconds, setMalCycleDelaySeconds] = useState(2);
-  const [malBatchSize, setMalBatchSize] = useState(200);
-  const [malImportAll, setMalImportAll] = useState(false);
+  const { runAction } = useActionError();
+  const { requestConfirm, confirmDialog } = useConfirmDialog();
   const [stuckClearAllLocks, setStuckClearAllLocks] = useState(false);
   const [stuckClearMalLock, setStuckClearMalLock] = useState(true);
   const [stuckClearMalJobs, setStuckClearMalJobs] = useState(true);
@@ -61,9 +63,11 @@ export function SyncQueuePage(): JSX.Element {
     queryFn: api.webhookQueue,
     refetchInterval: sseConnected ? 60_000 : 15_000,
   });
+  const [webhookJobsStatus, setWebhookJobsStatus] = useState<WebhookJobStatus>("all");
+  const [webhookJobsOffset, setWebhookJobsOffset] = useState(0);
   const webhookJobs = useQuery({
-    queryKey: ["webhook-jobs"],
-    queryFn: () => api.webhookJobs(),
+    queryKey: ["webhook-jobs", webhookJobsStatus, webhookJobsOffset],
+    queryFn: () => api.webhookJobs(webhookJobsStatus, WEBHOOK_JOBS_PAGE_SIZE, webhookJobsOffset),
     refetchInterval: sseConnected ? 60_000 : 15_000,
   });
   const syncProgress = useQuery({
@@ -88,56 +92,44 @@ export function SyncQueuePage(): JSX.Element {
     enabled: tab === "manual",
   });
 
-  useEffect(() => {
-    const n = malConfig.data?.mal_max_ids_per_run;
-    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
-      setMalBatchSize(Math.max(1, Math.min(500, n)));
-    }
-  }, [malConfig.data?.mal_max_ids_per_run]);
-
   const runFullSync = (source: "sonarr" | "radarr", actionLabel: string) => {
     const name = source === "sonarr" ? "Sonarr" : "Radarr";
-    if (!window.confirm(`Run ${name} full sync? This re-fetches the full ${name} library and may take a long time.`)) return;
-    void runAction(() => api.runSync(source, "full"), actionLabel);
+    requestConfirm({
+      title: `Run ${name} full sync?`,
+      description: `This re-fetches the entire ${name} library and can take a long time on large libraries.`,
+      confirmLabel: "Run full sync",
+      onConfirm: () => void runAction(() => api.runSync(source, "full"), actionLabel),
+    });
   };
 
-  const runMalPipeline = async (
-    fn: () => Promise<{ status: string; details?: unknown }>,
-    label: string,
-  ): Promise<void> => {
-    try {
-      const r = await fn();
-      setMalPipelineResult(`${label}\n${JSON.stringify(r.details ?? {}, null, 2)}`);
+  const requeueWebhookJob = (jobId: number): void => {
+    void runAction(async () => {
+      const result = await api.requeueWebhook(jobId);
+      await queryClient.invalidateQueries({ queryKey: ["webhook-jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["webhook-queue"] });
       await queryClient.invalidateQueries({ queryKey: ["status"] });
-    } catch (err) {
-      setError(err, label);
-    }
+      return result;
+    }, `requeue webhook job ${jobId}`);
   };
 
-  const runAllMalPipelines = async (): Promise<void> => {
-    try {
-      const ingestBacklog = await api.triggerMalIngestBacklog({
-        max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
-        cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
-        max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
-      });
-      const matcher = await api.triggerMalMatchRefresh();
-      const tagSync = await api.triggerMalTagSync();
-      setMalPipelineResult(
-        `MAL run all\n${JSON.stringify(
-          {
-            ingest_backlog: ingestBacklog.details ?? {},
-            match_refresh: matcher.details ?? {},
-            tag_sync: tagSync.details ?? {},
-          },
-          null,
-          2,
-        )}`,
-      );
+  const [integrityResults, setIntegrityResults] = useState<IntegrityAuditResult[] | null>(null);
+  const runIntegrityAudit = (): void => {
+    void runAction(async () => {
+      const result = await api.runIntegrityAudit("all");
+      setIntegrityResults(result.results);
       await queryClient.invalidateQueries({ queryKey: ["status"] });
-    } catch (err) {
-      setError(err, "MAL run all");
-    }
+      return result;
+    }, "run integrity audit");
+  };
+
+  const replayDeadLetter = (source: "sonarr" | "radarr"): void => {
+    void runAction(async () => {
+      const result = await api.replayDeadLetter(source);
+      await queryClient.invalidateQueries({ queryKey: ["webhook-jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["webhook-queue"] });
+      await queryClient.invalidateQueries({ queryKey: ["status"] });
+      return result;
+    }, `replay ${source} dead-letter`);
   };
 
   const progressPct = useMemo(() => {
@@ -158,7 +150,7 @@ export function SyncQueuePage(): JSX.Element {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-semibold tabular-nums">{status.data?.active_sync_count ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">from /api/status</p>
+            <p className="text-xs text-muted-foreground">running right now</p>
           </CardContent>
         </GlassCard>
         <GlassCard className="min-w-0" size="sm">
@@ -252,7 +244,7 @@ export function SyncQueuePage(): JSX.Element {
                     </p>
                   </>
                 ) : (
-                  <p className="text-sm text-muted-foreground">No active sync job reported by /api/ui/sync-progress.</p>
+                  <p className="text-sm text-muted-foreground">No sync is currently running.</p>
                 )}
                 <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   MAL fetched: <strong>{status.data?.mal_sync?.fetched_success_count ?? 0}</strong> /{" "}
@@ -346,7 +338,7 @@ export function SyncQueuePage(): JSX.Element {
               <CardHeader>
                 <CardTitle className="text-base">Queue summary</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
                 <div className="space-y-2">
                   {(webhookQueue.data ?? []).map((row) => (
                     <div className="flex items-center justify-between text-sm" key={row.status}>
@@ -355,15 +347,46 @@ export function SyncQueuePage(): JSX.Element {
                     </div>
                   ))}
                 </div>
+                <div className="space-y-2 border-t border-border pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    Re-queue every dead-letter job for a source in one go.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => replayDeadLetter("sonarr")}>
+                      Replay Sonarr dead letter
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => replayDeadLetter("radarr")}>
+                      Replay Radarr dead letter
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </GlassCard>
             <GlassCard className="min-w-0 lg:col-span-2">
-              <CardHeader>
+              <CardHeader className="flex-row items-center justify-between gap-2">
                 <CardTitle className="text-base">Webhook jobs</CardTitle>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  Status
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                    value={webhookJobsStatus}
+                    onChange={(event) => {
+                      setWebhookJobsStatus(event.target.value as WebhookJobStatus);
+                      setWebhookJobsOffset(0);
+                    }}
+                    aria-label="Filter webhook jobs by status"
+                  >
+                    {WEBHOOK_JOB_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s === "all" ? "All" : s.replace("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </CardHeader>
               <CardContent className="p-0 sm:px-0">
-                <div className="overflow-x-auto rounded-b-xl">
-                  <table className="w-full min-w-[720px] text-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                         <th className="p-3 font-medium">ID</th>
@@ -373,6 +396,7 @@ export function SyncQueuePage(): JSX.Element {
                         <th className="p-3 font-medium">Attempts</th>
                         <th className="p-3 font-medium">Received</th>
                         <th className="p-3 font-medium">Error</th>
+                        <th className="p-3 font-medium">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -386,11 +410,48 @@ export function SyncQueuePage(): JSX.Element {
                           </td>
                           <td className="p-3 font-mono tabular-nums">{row.attempts}</td>
                           <td className="p-3 text-xs text-muted-foreground">{fmtDate(row.received_at)}</td>
-                          <td className="p-3 text-xs text-critical">{row.error_message ?? "—"}</td>
+                          <td className="max-w-[240px] truncate p-3 text-xs text-critical" title={row.error_message ?? undefined}>
+                            {row.error_message ?? "—"}
+                          </td>
+                          <td className="p-3">
+                            {row.status === "dead_letter" || row.status === "retrying" ? (
+                              <Button size="sm" variant="outline" onClick={() => requeueWebhookJob(row.id)}>
+                                Requeue
+                              </Button>
+                            ) : null}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {!webhookJobs.isLoading && (webhookJobs.data ?? []).length === 0 ? (
+                    <p className="px-3 py-4 text-sm text-muted-foreground">
+                      {webhookJobsStatus === "all" ? "No webhook jobs yet." : "No webhook jobs with this status."}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+                  <span>
+                    {webhookJobsOffset + 1}–{webhookJobsOffset + (webhookJobs.data?.length ?? 0)}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={webhookJobsOffset <= 0}
+                    onClick={() => setWebhookJobsOffset(Math.max(0, webhookJobsOffset - WEBHOOK_JOBS_PAGE_SIZE))}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={(webhookJobs.data?.length ?? 0) < WEBHOOK_JOBS_PAGE_SIZE}
+                    onClick={() => setWebhookJobsOffset(webhookJobsOffset + WEBHOOK_JOBS_PAGE_SIZE)}
+                  >
+                    Next
+                  </Button>
                 </div>
               </CardContent>
             </GlassCard>
@@ -441,45 +502,80 @@ export function SyncQueuePage(): JSX.Element {
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => runAction(() => api.replayDeadLetter("sonarr"), "replay sonarr dead-letter")}>
+                  <Button variant="secondary" onClick={() => replayDeadLetter("sonarr")}>
                     Replay Sonarr dead letter
                   </Button>
-                  <Button variant="secondary" onClick={() => runAction(() => api.replayDeadLetter("radarr"), "replay radarr dead-letter")}>
+                  <Button variant="secondary" onClick={() => replayDeadLetter("radarr")}>
                     Replay Radarr dead letter
                   </Button>
+                </div>
+                <div className="space-y-2 border-t border-border pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    Compare warehouse counts against the live Sonarr/Radarr APIs. Drift means a sync was missed —
+                    run a full sync to repair. History lives in Reporting → Sync Operations.
+                  </p>
+                  <Button variant="secondary" className="w-fit" onClick={runIntegrityAudit}>
+                    Run integrity audit
+                  </Button>
+                  {integrityResults ? (
+                    <ul className="space-y-1 text-xs">
+                      {integrityResults.map((result) => (
+                        <li key={`${result.source}-${result.instance_name}`} className="rounded border border-border bg-muted/40 px-2 py-1">
+                          <span className="font-medium">
+                            {result.source}/{result.instance_name}:
+                          </span>{" "}
+                          {result.status === "failed" ? (
+                            <span className="text-critical">{result.error}</span>
+                          ) : result.drift_detected ? (
+                            <span className="text-warn">
+                              drift — items {(result.drift?.item_count ?? 0) >= 0 ? "+" : ""}
+                              {result.drift?.item_count ?? 0}, files{" "}
+                              {(result.drift?.file_count ?? 0) >= 0 ? "+" : ""}
+                              {result.drift?.file_count ?? 0} (Arr minus warehouse)
+                            </span>
+                          ) : (
+                            <span className="text-ok">in sync (items {result.arr_counts?.item_count ?? 0}, files {result.arr_counts?.file_count ?? 0})</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
                 <Button
                   variant="destructive"
                   className="w-fit"
-                  onClick={() => {
-                    if (window.confirm("Type RESET in the prompt to continue")) {
-                      const typed = window.prompt("Type RESET");
-                      if (typed?.trim().toUpperCase() === "RESET") {
-                        runAction(() => api.resetData(), "reset data");
-                      }
-                    }
-                  }}
+                  onClick={() =>
+                    requestConfirm({
+                      title: "Reset all data?",
+                      description:
+                        "Permanently deletes all synced library data, sync history, queue state, and MAL data from the database. Integrations and settings are kept. You will need to run a full sync afterwards. This cannot be undone.",
+                      confirmLabel: "Reset data",
+                      destructive: true,
+                      typedPhrase: "RESET",
+                      onConfirm: () => runAction(() => api.resetData(), "reset data"),
+                    })
+                  }
                 >
                   Reset data
                 </Button>
                 <Button
                   variant="outline"
                   className="w-fit border-warn/40 text-warn hover:bg-warn/10"
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Reset MAL data only? This clears dub list history, MAL anime rows, warehouse links, external IDs, manual MAL links, ingest checkpoints, tag apply state, and MAL job history. Sonarr/Radarr warehouse and app settings (including your MAL client ID) are not changed.",
-                      )
-                    ) {
-                      const typed = window.prompt("Type RESET_MAL to confirm");
-                      if (typed?.trim().toUpperCase() === "RESET_MAL") {
+                  onClick={() =>
+                    requestConfirm({
+                      title: "Reset MAL data only?",
+                      description:
+                        "Clears dub list history, MAL anime rows, warehouse links, external IDs, manual MAL links, ingest checkpoints, tag apply state, and MAL job history. Sonarr/Radarr warehouse and app settings (including your MAL client ID) are not changed.",
+                      confirmLabel: "Reset MAL data",
+                      destructive: true,
+                      typedPhrase: "RESET_MAL",
+                      onConfirm: () =>
                         void runAction(async () => {
                           await api.resetMalData();
                           await queryClient.invalidateQueries({ queryKey: ["status"] });
-                        }, "reset MAL data");
-                      }
-                    }
-                  }}
+                        }, "reset MAL data"),
+                    })
+                  }
                 >
                   Reset MAL Data
                 </Button>
@@ -578,17 +674,16 @@ export function SyncQueuePage(): JSX.Element {
                   <Button
                     variant="secondary"
                     className="w-fit"
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          "Type CLEAR_STUCK in the next prompt. This may delete rows in app.job_lock, update app.mal_job_run, warehouse.sync_run, and app.job_run_summary.",
-                        )
-                      ) {
-                        return;
-                      }
-                      const typed = window.prompt("Type CLEAR_STUCK to confirm");
-                      if (typed?.trim().toUpperCase() !== "CLEAR_STUCK") return;
-                      void runAction(async () => {
+                    onClick={() =>
+                      requestConfirm({
+                        title: "Clear stuck state?",
+                        description:
+                          "Applies the options selected above: this may delete job lock rows and mark running MAL or warehouse job rows as failed. Only use this when you are sure no work is actually running.",
+                        confirmLabel: "Clear stuck state",
+                        destructive: true,
+                        typedPhrase: "CLEAR_STUCK",
+                        onConfirm: () => {
+                          void runAction(async () => {
                         const r = await api.clearStuck(
                           stuckClearAllLocks
                             ? {
@@ -610,8 +705,10 @@ export function SyncQueuePage(): JSX.Element {
                         void queryClient.invalidateQueries({ queryKey: ["sync-progress"] });
                         void queryClient.invalidateQueries({ queryKey: ["runs"] });
                         return r;
-                      }, "clear stuck state");
-                    }}
+                          }, "clear stuck state");
+                        },
+                      })
+                    }
                   >
                     Clear stuck state (DB)
                   </Button>
@@ -623,132 +720,14 @@ export function SyncQueuePage(): JSX.Element {
             <CardHeader>
               <CardTitle className="text-base">MyAnimeList pipelines</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent>
               <p className="text-sm text-muted-foreground">
-                Large ingests can take a long time. Requires MAL client id in Integrations or{" "}
-                <code className="rounded bg-muted px-1">MAL_CLIENT_ID</code>. Each run fetches at most one batch of IDs
-                (default from server: {malConfig.data?.mal_max_ids_per_run ?? "…"} per batch). MAL and Jikan requests are
-                throttled per server settings (
-                {malConfig.data ? `${malConfig.data.mal_min_request_interval_seconds}s` : "…"} /{" "}
-                {malConfig.data ? `${malConfig.data.mal_jikan_min_request_interval_seconds}s` : "…"} Jikan).
+                Ingest, matching, tag sync, job history, and unmatched dubbed anime now live on the{" "}
+                <Link to={PATHS.mal} className="text-primary hover:underline">
+                  MyAnimeList page
+                </Link>
+                .
               </p>
-              <p className="text-sm text-muted-foreground">
-                <strong className="text-foreground/90">Matching:</strong> links use TVDB/TMDB/IMDB when Jikan exposes them.
-                If you have few externals, enable <strong className="text-foreground/90">allow title+year</strong> under
-                Integrations → MyAnimeList, then run match refresh — the matcher uses main title, alternate titles
-                (including Jikan variants), and year (±1 year) against your Sonarr/Radarr warehouse titles.
-              </p>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <label className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
-                  IDs per batch
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    className="w-[72px] rounded border border-input bg-background px-1.5 py-0.5"
-                    value={malBatchSize}
-                    onChange={(event) => setMalBatchSize(Math.max(1, Math.min(500, Number(event.target.value || 200))))}
-                    title="MAL_MAX_IDS_PER_RUN override for this action (1–500)"
-                  />
-                </label>
-                <label className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
-                  backlog cycles
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    className="w-20 rounded border border-input bg-background px-1.5 py-0.5"
-                    value={malBacklogCycles}
-                    onChange={(event) => setMalBacklogCycles(Number(event.target.value || 10))}
-                    disabled={malImportAll}
-                  />
-                </label>
-                <label className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
-                  delay between cycles (sec)
-                  <input
-                    type="number"
-                    min={0}
-                    max={30}
-                    step={0.5}
-                    className="w-20 rounded border border-input bg-background px-1.5 py-0.5"
-                    value={malCycleDelaySeconds}
-                    onChange={(event) => setMalCycleDelaySeconds(Number(event.target.value || 0))}
-                  />
-                </label>
-                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={malImportAll}
-                    onChange={(event) => setMalImportAll(event.target.checked)}
-                  />
-                  import all pending (auto cycles)
-                </label>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() =>
-                    void runMalPipeline(
-                      () => api.triggerMalIngest({ max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)) }),
-                      "MAL ingest",
-                    )
-                  }
-                >
-                  Run MAL ingest
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() =>
-                    void runMalPipeline(
-                      () =>
-                        api.triggerMalIngestBacklog({
-                          import_all: malImportAll,
-                          max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
-                          cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
-                          max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
-                        }),
-                      "MAL ingest backlog",
-                    )
-                  }
-                >
-                  Process pending backlog
-                </Button>
-                <Button
-                  variant="default"
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "Import all pending MAL fetches? This runs many batches until the queue is empty (or cap). Keep the tab open; it can take a long time.",
-                      )
-                    ) {
-                      return;
-                    }
-                    void runMalPipeline(
-                      () =>
-                        api.triggerMalIngestBacklog({
-                          import_all: true,
-                          max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
-                          cycle_delay_seconds: Math.max(1, Math.min(30, malCycleDelaySeconds)),
-                        }),
-                      "MAL import all pending",
-                    );
-                  }}
-                >
-                  Import all pending
-                </Button>
-                <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalMatchRefresh(), "MAL match refresh")}>
-                  Run match refresh
-                </Button>
-                <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalTagSync(), "MAL tag sync")}>
-                  Run tag sync
-                </Button>
-                <Button variant="outline" onClick={() => void runAllMalPipelines()}>
-                  Run all MAL pipelines
-                </Button>
-              </div>
-              {malPipelineResult ? (
-                <pre className="max-h-52 overflow-auto rounded-lg border border-border bg-muted/50 p-3 text-xs text-foreground/90">{malPipelineResult}</pre>
-              ) : null}
             </CardContent>
           </GlassCard>
         </TabsContent>
@@ -759,6 +738,7 @@ export function SyncQueuePage(): JSX.Element {
         description="All in-flight work: Sonarr/Radarr warehouse syncs (any trigger), MAL ingest/matcher/tag, and setup-wizard library import. Progress uses historical run times when available; MAL ingest shows batch position while running."
         dense
       />
+      {confirmDialog}
     </div>
   );
 }

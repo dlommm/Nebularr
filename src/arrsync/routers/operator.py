@@ -20,6 +20,26 @@ log = logging.getLogger(__name__)
 def build_operator_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/api/operator/integrity-audit")
+    async def list_integrity_audits(limit: int = 20) -> list[dict[str, Any]]:
+        with app_state.session_scope() as session:
+            return repo.list_integrity_audit_runs(session, limit=limit)
+
+    @router.post("/api/operator/integrity-audit")
+    async def run_integrity_audit(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        requested = str(payload.get("source", "all")).lower()
+        if requested not in {"all", "sonarr", "radarr"}:
+            raise HTTPException(status_code=400, detail="source must be sonarr, radarr, or all")
+        sources = ["sonarr", "radarr"] if requested == "all" else [requested]
+        results: list[dict[str, Any]] = []
+        for source in sources:
+            try:
+                results.extend(await app_state.sync_service.run_integrity_audit(source, reason="manual"))
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"integrity audit failed for {source}: {exc}") from exc
+        return {"status": "ok", "results": results}
+
     @router.get("/api/operator/stuck-state")
     def operator_stuck_state() -> dict[str, Any]:
         """Inspect job locks, running MAL jobs, and running warehouse job rows (read-only, for clear-stuck UI)."""
