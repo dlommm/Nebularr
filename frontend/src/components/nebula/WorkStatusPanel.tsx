@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { fmtDuration } from "@/hooks";
+import { useServerEventsStatus } from "@/hooks/useServerEvents";
 import type { WorkMalItem, WorkStatusItem, WorkWarehouseItem } from "@/types";
 import { ProgressBar } from "./ProgressBar";
 import { GlassCard, CardContent, CardDescription, CardHeader, CardTitle } from "./GlassCard";
@@ -54,10 +55,11 @@ export function WorkStatusPanel({
   description?: string;
   dense?: boolean;
 }): JSX.Element {
+  const { connected: sseConnected } = useServerEventsStatus();
   const q = useQuery({
     queryKey: ["work-status"],
     queryFn: api.workStatus,
-    refetchInterval: 2_000,
+    refetchInterval: sseConnected ? 30_000 : 2_000,
   });
 
   const items = q.data?.items ?? [];

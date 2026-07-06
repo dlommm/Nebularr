@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { fmtDate, useLocalStorageState } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
 import type { ReportingPanel } from "../types";
-import { MultiSelectFilter } from "../components/nebula/MultiSelectFilter";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { SavedViews } from "../components/nebula/SavedViews";
+import { ReportingDistributionPanel } from "./reporting/ReportingDistributionPanel";
+import { ReportingTablePanel } from "./reporting/ReportingTablePanel";
+import { ReportingTimeseriesPanel } from "./reporting/ReportingTimeseriesPanel";
+import { tokenizeFilter } from "./reporting/reportingShared";
 
 export function ReportingPage(): JSX.Element {
   usePageTitle("Reporting");
@@ -34,6 +40,44 @@ export function ReportingPage(): JSX.Element {
   const [reportingTableOffsets, setReportingTableOffsets] = useState<Record<string, number>>({});
   const [reportingPanelFilters, setReportingPanelFilters] = useState<Record<string, string>>({});
   const [reportingColumnFilters, setReportingColumnFilters] = useState<Record<string, string[]>>({});
+  const [searchParams, setSearchParams] = useSearchParams();
+  const lastWrittenSearch = useRef<string | null>(null);
+
+  // State → URL so dashboards and filters are linkable (SavedViews/Copy link).
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (reportingDashboardKey !== "overview") params.set("dash", reportingDashboardKey);
+    if (reportingGlobalFilter) params.set("q", reportingGlobalFilter);
+    const dashboardFilter = reportingDashboardFilters[reportingDashboardKey] ?? "";
+    if (dashboardFilter) params.set("dq", dashboardFilter);
+    if (reportingInstance) params.set("inst", reportingInstance);
+    if (reportingLimit !== 200) params.set("limit", String(reportingLimit));
+    const canonical = params.toString();
+    if (canonical !== searchParams.toString()) {
+      lastWrittenSearch.current = canonical;
+      setSearchParams(new URLSearchParams(canonical), { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportingDashboardKey, reportingGlobalFilter, reportingDashboardFilters, reportingInstance, reportingLimit]);
+
+  // External URL change (deep link, saved view, back/forward) → state.
+  useEffect(() => {
+    const current = searchParams.toString();
+    if (current === lastWrittenSearch.current || [...searchParams.keys()].length === 0) return;
+    const dash = searchParams.get("dash");
+    const nextKey = dash ?? "overview";
+    setReportingDashboardKey(nextKey);
+    setReportingGlobalFilter(searchParams.get("q") ?? "");
+    setReportingDashboardFilters({
+      ...reportingDashboardFilters,
+      [nextKey]: searchParams.get("dq") ?? "",
+    });
+    setReportingInstance(searchParams.get("inst") ?? "");
+    const limitRaw = searchParams.get("limit");
+    // limit=0 is a valid deep link (the "Max" setting), so don't || it away.
+    setReportingLimit(limitRaw != null && limitRaw !== "" && Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 200);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const reportingDashboards = useQuery({
     queryKey: ["reporting-dashboards"],
@@ -49,67 +93,14 @@ export function ReportingPage(): JSX.Element {
     refetchInterval: 30_000,
   });
 
-  const tokenizeFilter = (raw: string): string[] =>
-    raw
-      .toLowerCase()
-      .split(/\s+/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-  const rowMatchesFilters = (row: Record<string, unknown>, terms: string[]): boolean => {
-    if (terms.length === 0) return true;
-    const haystack = Object.values(row)
-      .map((value) => {
-        if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
-          return JSON.stringify(value);
-        }
-        return String(value ?? "");
-      })
-      .join(" ")
-      .toLowerCase();
-    return terms.every((term) => haystack.includes(term));
-  };
-
-  const stringifyCellValue = (value: unknown): string => {
-    if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
-      return JSON.stringify(value);
-    }
-    return String(value ?? "-");
-  };
-
-  const rowPassesSeasonFilter = (row: Record<string, unknown>): boolean => {
-    if (!reportingIgnoreSeasonZero) return true;
-    const seasonKeys = ["season_number", "season", "seasonNumber"];
-    for (const key of seasonKeys) {
-      if (!(key in row)) continue;
-      const raw = row[key];
-      const normalized = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
-      if (!Number.isNaN(normalized) && normalized === 0) return false;
-    }
-    return true;
-  };
-
   const reportingDashboardFilter = reportingDashboardFilters[reportingDashboardKey] ?? "";
+  const deferredGlobalFilter = useDeferredValue(reportingGlobalFilter);
+  const deferredDashboardFilter = useDeferredValue(reportingDashboardFilter);
   const reportingSharedTerms = useMemo(
-    () => [...tokenizeFilter(reportingGlobalFilter), ...tokenizeFilter(reportingDashboardFilter)],
-    [reportingGlobalFilter, reportingDashboardFilter],
+    () => [...tokenizeFilter(deferredGlobalFilter), ...tokenizeFilter(deferredDashboardFilter)],
+    [deferredGlobalFilter, deferredDashboardFilter],
   );
-  const reportingPageSizeUnlimited = reportingTablePageSize <= 0;
   const reportingLimitUnlimited = reportingLimit <= 0;
-
-  const rowMatchesColumnFilters = (
-    row: Record<string, unknown>,
-    panelStateKey: string,
-    columns: string[],
-  ): boolean => {
-    return columns.every((column) => {
-      const key = `${panelStateKey}:${column}`;
-      const rawFilters = (reportingColumnFilters[key] ?? []).map((item) => item.trim().toLowerCase()).filter(Boolean);
-      if (rawFilters.length === 0) return true;
-      const cellText = stringifyCellValue(row[column]).toLowerCase();
-      return rawFilters.includes(cellText);
-    });
-  };
 
   useEffect(() => {
     setReportingTableOffsets({});
@@ -118,262 +109,25 @@ export function ReportingPage(): JSX.Element {
     reportingInstance,
     reportingLimit,
     reportingTablePageSize,
-    reportingGlobalFilter,
-    reportingDashboardFilter,
+    deferredGlobalFilter,
+    deferredDashboardFilter,
     reportingPanelFilters,
     reportingColumnFilters,
   ]);
 
-  const renderDistributionPanel = (panel: ReportingPanel): JSX.Element => {
-    const rows = (panel.rows ?? []) as Array<Record<string, unknown>>;
-    const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
-    const panelFilter = reportingPanelFilters[panelStateKey] ?? "";
-    const terms = [...reportingSharedTerms, ...tokenizeFilter(panelFilter)];
-    const filteredRows = rows.filter((row) => rowPassesSeasonFilter(row) && rowMatchesFilters(row, terms));
-    const total = filteredRows.reduce((acc, row) => acc + Number(row.value ?? 0), 0);
-    const max = filteredRows.reduce((acc, row) => Math.max(acc, Number(row.value ?? 0)), 0);
-    const pieData = filteredRows.slice(0, 12).map((row, idx) => ({
-      name: String(row.label ?? "unknown").slice(0, 32),
-      value: Number(row.value ?? 0),
-      fill: `hsl(${220 + ((idx * 19) % 100)} 70% ${52 - (idx % 5) * 4}%)`,
-    }));
-    return (
-      <div className="card span-6 report-panel report-panel--chart" key={panel.id}>
-        <div className="report-panel-head">
-          <h3 className="report-panel-title">{panel.title}</h3>
-          <div className="report-panel-actions">
-            <input
-              className="report-input report-input--narrow"
-              placeholder="Filter this chart…"
-              value={panelFilter}
-              onChange={(event) =>
-                setReportingPanelFilters((prev) => ({
-                  ...prev,
-                  [panelStateKey]: event.target.value,
-                }))
-              }
-            />
-            <span className="report-panel-meta">
-              {filteredRows.length} / {rows.length}
-            </span>
-            <button
-              type="button"
-              className="secondary report-btn-icon"
-              title="Download CSV"
-              onClick={() => {
-                window.location.href = api.reportingPanelExportUrl(reportingDashboardKey, panel.id, {
-                  instance_name: reportingInstance,
-                  limit: reportingLimit,
-                });
-              }}
-            >
-              CSV
-            </button>
-          </div>
-        </div>
-        {pieData.length > 0 ? (
-          <div className="mb-4 h-56 w-full rounded-xl border border-border bg-muted/30 px-1 py-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={44} outerRadius={72} paddingAngle={2}>
-                  {pieData.map((entry, i) => (
-                    <Cell key={entry.name + i} fill={entry.fill} stroke="rgba(0,0,0,0.2)" />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ background: "#0e1630", border: "1px solid rgba(84,168,255,0.3)", borderRadius: 8 }}
-                  labelStyle={{ color: "#e8f1fa" }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        ) : null}
-        <div className="report-chart-body">
-          {filteredRows.slice(0, 20).map((row, idx) => {
-            const label = String(row.label ?? "unknown");
-            const value = Number(row.value ?? 0);
-            const pct = total > 0 ? (value / total) * 100 : 0;
-            const widthPct = max > 0 ? (value / max) * 100 : 0;
-            return (
-              <div className="report-bar-row" key={`${panel.id}-${label}-${idx}`}>
-                <div className="report-bar-top">
-                  <span className="report-bar-label" title={label}>
-                    {label}
-                  </span>
-                  <span className="report-bar-metric">
-                    <span className="report-bar-count">{value.toLocaleString()}</span>
-                    <span className="report-bar-pct">{pct.toFixed(1)}%</span>
-                  </span>
-                </div>
-                <div className="report-bar-track">
-                  <div className="report-bar-fill" style={{ width: `${Math.max(2, widthPct)}%` }} />
-                </div>
-              </div>
-            );
-          })}
-          {filteredRows.length === 0 ? <div className="report-empty">No rows match the current filters.</div> : null}
-        </div>
-      </div>
-    );
-  };
-
-  const renderTablePanel = (panel: ReportingPanel): JSX.Element => {
-    const rows = (panel.rows ?? []) as Array<Record<string, unknown>>;
-    const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
-    const panelFilter = reportingPanelFilters[panelStateKey] ?? "";
-    const terms = [...reportingSharedTerms, ...tokenizeFilter(panelFilter)];
-    const termFilteredRows = rows.filter((row) => rowPassesSeasonFilter(row) && rowMatchesFilters(row, terms));
-    const columns =
-      termFilteredRows.length > 0 ? Object.keys(termFilteredRows[0]) : rows.length > 0 ? Object.keys(rows[0]) : [];
-    const columnOptions = Object.fromEntries(
-      columns.map((column) => {
-        const counts = new Map<string, number>();
-        termFilteredRows.forEach((row) => {
-          const value = stringifyCellValue(row[column]);
-          counts.set(value, (counts.get(value) ?? 0) + 1);
-        });
-        const ranked = [...counts.entries()]
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-          .slice(0, 250)
-          .map(([value]) => value);
-        return [column, ranked];
-      }),
-    ) as Record<string, string[]>;
-    const filteredRows = termFilteredRows.filter((row) => rowMatchesColumnFilters(row, panelStateKey, columns));
-    const total = filteredRows.length;
-    const offset = Math.min(reportingTableOffsets[panelStateKey] ?? 0, Math.max(0, total - 1));
-    const pageSize = reportingTablePageSize <= 0 ? total : reportingTablePageSize;
-    const end = reportingTablePageSize <= 0 ? total : Math.min(offset + pageSize, total);
-    const pagedRows = reportingTablePageSize <= 0 ? filteredRows : filteredRows.slice(offset, end);
-    return (
-      <div className="card span-12 report-panel report-panel--table" key={panel.id}>
-        <div className="report-panel-head">
-          <h3 className="report-panel-title">{panel.title}</h3>
-          <div className="report-panel-actions report-panel-actions--wrap">
-            <input
-              className="report-input report-input--grow"
-              placeholder="Filter this table…"
-              value={panelFilter}
-              onChange={(event) =>
-                setReportingPanelFilters((prev) => ({
-                  ...prev,
-                  [panelStateKey]: event.target.value,
-                }))
-              }
-            />
-            <label className="report-inline-label">
-              <span>Page size</span>
-              <select value={reportingTablePageSize} onChange={(event) => setReportingTablePageSize(Number(event.target.value))}>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={25}>25</option>
-                <option value={40}>40</option>
-                <option value={50}>50</option>
-                <option value={75}>75</option>
-                <option value={100}>100</option>
-                <option value={200}>200</option>
-                <option value={0}>Unlimited</option>
-              </select>
-            </label>
-            <span className="report-panel-meta">
-              {total === 0 ? "0 rows" : `${offset + 1}–${end} of ${total}`}
-              {reportingPageSizeUnlimited ? " · all rows" : ""} · {rows.length} raw
-            </span>
-            <div className="report-pager-inline">
-              <button
-                type="button"
-                className="secondary"
-                disabled={offset <= 0 || reportingPageSizeUnlimited}
-                onClick={() =>
-                  setReportingTableOffsets((prev) => ({
-                    ...prev,
-                    [panelStateKey]: Math.max(0, (prev[panelStateKey] ?? 0) - pageSize),
-                  }))
-                }
-              >
-                Prev
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={reportingPageSizeUnlimited || offset + pageSize >= total}
-                onClick={() =>
-                  setReportingTableOffsets((prev) => ({
-                    ...prev,
-                    [panelStateKey]: (prev[panelStateKey] ?? 0) + pageSize,
-                  }))
-                }
-              >
-                Next
-              </button>
-            </div>
-            <button
-              type="button"
-              className="secondary"
-              title="Download CSV"
-              onClick={() => {
-                window.location.href = api.reportingPanelExportUrl(reportingDashboardKey, panel.id, {
-                  instance_name: reportingInstance,
-                  limit: reportingLimit,
-                });
-              }}
-            >
-              Export CSV
-            </button>
-          </div>
-        </div>
-        <div className="table-wrap report-table-wrap">
-          <table className="report-table">
-            <thead>
-              <tr>
-                {columns.map((column) => (
-                  <th key={`${panel.id}-${column}`}>
-                    <div className="report-th">
-                      <span className="report-th-name">{column}</span>
-                      <MultiSelectFilter
-                        className="report-th-filter"
-                        label={column}
-                        options={columnOptions[column] ?? []}
-                        selected={reportingColumnFilters[`${panelStateKey}:${column}`] ?? []}
-                        onChange={(next) =>
-                          setReportingColumnFilters((prev) => ({
-                            ...prev,
-                            [`${panelStateKey}:${column}`]: next,
-                          }))
-                        }
-                      />
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {pagedRows.map((row, idx) => (
-                <tr key={`${panel.id}-${offset + idx}`}>
-                  {columns.map((column) => {
-                    const value = row[column];
-                    const rendered = stringifyCellValue(value);
-                    return (
-                      <td key={`${panel.id}-${idx}-${column}`} className="report-td" title={rendered.length > 120 ? rendered : undefined}>
-                        {rendered}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              {pagedRows.length === 0 ? (
-                <tr>
-                  <td colSpan={Math.max(columns.length, 1)} className="report-empty-cell">
-                    No rows match the current filters.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
+  const handlePanelFilterChange = useCallback((panelStateKey: string, value: string) => {
+    setReportingPanelFilters((prev) => ({ ...prev, [panelStateKey]: value }));
+  }, []);
+  const handleOffsetChange = useCallback((panelStateKey: string, value: number) => {
+    setReportingTableOffsets((prev) => ({ ...prev, [panelStateKey]: value }));
+  }, []);
+  const handleColumnFilterChange = useCallback((panelStateKey: string, column: string, next: string[]) => {
+    setReportingColumnFilters((prev) => ({ ...prev, [`${panelStateKey}:${column}`]: next }));
+  }, []);
+  const handlePageSizeChange = useCallback(
+    (value: number) => setReportingTablePageSize(value),
+    [setReportingTablePageSize],
+  );
 
   const renderReportingPanelNodes = (): JSX.Element[] => {
     const panels = reportingDashboard.data?.panels ?? [];
@@ -388,12 +142,17 @@ export function ReportingPage(): JSX.Element {
           i += 1;
         }
         nodes.push(
-          <div className="span-12 report-stat-band" key={`report-stats-${batch[0]?.id ?? i}`}>
-            <div className="report-stat-grid">
+          <div className="col-span-12" key={`report-stats-${batch[0]?.id ?? i}`}>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               {batch.map((p) => (
-                <div className="report-stat-card" key={p.id}>
-                  <div className="report-stat-label">{p.title}</div>
-                  <div className="report-stat-value">
+                <div
+                  className="rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-card)]"
+                  key={p.id}
+                >
+                  <div className="truncate text-xs text-muted-foreground" title={p.title}>
+                    {p.title}
+                  </div>
+                  <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">
                     {typeof p.value === "number" ? p.value.toLocaleString() : (p.value ?? "—")}
                   </div>
                 </div>
@@ -401,11 +160,47 @@ export function ReportingPage(): JSX.Element {
             </div>
           </div>,
         );
-      } else if (panel.kind === "distribution") {
-        nodes.push(renderDistributionPanel(panel));
-        i += 1;
       } else {
-        nodes.push(renderTablePanel(panel));
+        const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
+        const exportUrl = api.reportingPanelExportUrl(reportingDashboardKey, panel.id, {
+          instance_name: reportingInstance,
+          limit: reportingLimit,
+        });
+        if (panel.kind === "timeseries") {
+          nodes.push(<ReportingTimeseriesPanel key={panel.id} panel={panel} />);
+        } else if (panel.kind === "distribution") {
+          nodes.push(
+            <ReportingDistributionPanel
+              key={panel.id}
+              panel={panel}
+              panelStateKey={panelStateKey}
+              sharedTerms={reportingSharedTerms}
+              ignoreSeasonZero={reportingIgnoreSeasonZero}
+              panelFilter={reportingPanelFilters[panelStateKey] ?? ""}
+              onPanelFilterChange={handlePanelFilterChange}
+              exportUrl={exportUrl}
+            />,
+          );
+        } else {
+          nodes.push(
+            <ReportingTablePanel
+              key={panel.id}
+              panel={panel}
+              panelStateKey={panelStateKey}
+              sharedTerms={reportingSharedTerms}
+              ignoreSeasonZero={reportingIgnoreSeasonZero}
+              panelFilter={reportingPanelFilters[panelStateKey] ?? ""}
+              onPanelFilterChange={handlePanelFilterChange}
+              pageSize={reportingTablePageSize}
+              onPageSizeChange={handlePageSizeChange}
+              offset={reportingTableOffsets[panelStateKey] ?? 0}
+              onOffsetChange={handleOffsetChange}
+              columnFilters={reportingColumnFilters}
+              onColumnFilterChange={handleColumnFilterChange}
+              exportUrl={exportUrl}
+            />,
+          );
+        }
         i += 1;
       }
     }
@@ -413,36 +208,40 @@ export function ReportingPage(): JSX.Element {
   };
 
   return (
-    <div className="grid-12 reporting-grid">
-      <div className="card span-12 sticky-toolbar report-toolbar-card">
-        <div className="report-dashboard-tabs" role="tablist" aria-label="Reporting dashboards">
+    <div className="grid grid-cols-12 gap-4">
+      <div className="col-span-12 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
+        <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="Reporting dashboards">
           {(reportingDashboards.data ?? []).map((dash) => (
             <button
               type="button"
               key={dash.key}
               role="tab"
               aria-selected={reportingDashboardKey === dash.key}
-              className={`report-tab ${reportingDashboardKey === dash.key ? "report-tab--active" : ""}`}
+              className={
+                reportingDashboardKey === dash.key
+                  ? "rounded-md bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
+                  : "rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              }
               onClick={() => setReportingDashboardKey(dash.key)}
             >
               {dash.title}
             </button>
           ))}
         </div>
-        <div className="report-toolbar">
-          <label className="report-field">
-            <span className="report-field-label">Global filter</span>
-            <input
-              className="report-input"
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
+            <span className="text-xs text-muted-foreground">Global filter</span>
+            <Input
+              className="h-9"
               placeholder="Apply to every panel…"
               value={reportingGlobalFilter}
               onChange={(event) => setReportingGlobalFilter(event.target.value)}
             />
           </label>
-          <label className="report-field">
-            <span className="report-field-label">This dashboard</span>
-            <input
-              className="report-input"
+          <label className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
+            <span className="text-xs text-muted-foreground">This dashboard</span>
+            <Input
+              className="h-9"
               placeholder="Narrow current report…"
               value={reportingDashboardFilter}
               onChange={(event) =>
@@ -453,60 +252,65 @@ export function ReportingPage(): JSX.Element {
               }
             />
           </label>
-          <label className="report-field">
-            <span className="report-field-label">Instance</span>
-            <input
-              className="report-input"
+          <label className="grid min-w-44 gap-1.5 sm:max-w-52">
+            <span className="text-xs text-muted-foreground">Instance</span>
+            <Input
+              className="h-9"
               placeholder="Optional warehouse instance"
               value={reportingInstance}
               onChange={(event) => setReportingInstance(event.target.value)}
             />
           </label>
-          <div className="report-field report-field--compact">
-            <span className="report-field-label">API row limit</span>
-            <div className="report-stepper">
-              <button
+          <div className="grid gap-1.5">
+            <span className="text-xs text-muted-foreground">API row limit</span>
+            <div className="flex items-center gap-1">
+              <Button
                 type="button"
-                className="secondary"
+                variant="secondary"
+                size="sm"
                 onClick={() => setReportingLimit(Math.max(100, (reportingLimitUnlimited ? 1000 : reportingLimit) - 100))}
               >
                 −
-              </button>
-              <span className="report-stepper-value">{reportingLimitUnlimited ? "∞" : reportingLimit}</span>
-              <button
+              </Button>
+              <span className="min-w-12 text-center text-sm tabular-nums text-foreground">
+                {reportingLimitUnlimited ? "∞" : reportingLimit}
+              </span>
+              <Button
                 type="button"
-                className="secondary"
+                variant="secondary"
+                size="sm"
                 onClick={() => setReportingLimit(reportingLimitUnlimited ? 1000 : reportingLimit + 100)}
               >
                 +
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className={reportingLimitUnlimited ? "report-stepper-max report-stepper-max--on" : "report-stepper-max secondary"}
+                variant={reportingLimitUnlimited ? "default" : "secondary"}
+                size="sm"
                 onClick={() => setReportingLimit(0)}
               >
                 Max
-              </button>
+              </Button>
             </div>
           </div>
-          <div className="report-field report-field--compact">
-            <span className="report-field-label">Season filter</span>
-            <label className="report-inline-label">
-              <input
-                type="checkbox"
-                checked={reportingIgnoreSeasonZero}
-                onChange={(event) => setReportingIgnoreSeasonZero(event.target.checked)}
-              />
-              <span>Ignore Season 0</span>
-            </label>
-          </div>
-          <div className="report-toolbar-actions">
-            <button type="button" onClick={() => void reportingDashboard.refetch()}>
+          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              className="accent-primary"
+              checked={reportingIgnoreSeasonZero}
+              onChange={(event) => setReportingIgnoreSeasonZero(event.target.checked)}
+            />
+            <span>Ignore Season 0</span>
+          </label>
+          <div className="ml-auto flex items-center gap-2">
+            <SavedViews storageKey="nebularr.savedViews.reporting" />
+            <Button type="button" size="sm" onClick={() => void reportingDashboard.refetch()}>
               Refresh
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="secondary"
+              variant="secondary"
+              size="sm"
               onClick={() => {
                 setReportingGlobalFilter("");
                 setReportingDashboardFilters({
@@ -523,19 +327,19 @@ export function ReportingPage(): JSX.Element {
               }}
             >
               Clear filters
-            </button>
+            </Button>
           </div>
         </div>
       </div>
 
       {reportingDashboard.data ? (
-        <div className="span-12 report-hero">
-          <div className="report-hero-text">
-            <h2 className="report-hero-title">{reportingDashboard.data.title}</h2>
-            <p className="report-hero-desc">{reportingDashboard.data.description}</p>
+        <div className="col-span-12 flex flex-wrap items-end justify-between gap-2 px-1">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">{reportingDashboard.data.title}</h2>
+            <p className="text-sm text-muted-foreground">{reportingDashboard.data.description}</p>
           </div>
           {reportingDashboard.data.generated_at ? (
-            <time className="report-hero-time" dateTime={reportingDashboard.data.generated_at}>
+            <time className="text-xs text-muted-foreground" dateTime={reportingDashboard.data.generated_at}>
               Generated {fmtDate(reportingDashboard.data.generated_at)}
             </time>
           ) : null}
@@ -545,8 +349,8 @@ export function ReportingPage(): JSX.Element {
       {renderReportingPanelNodes()}
 
       {reportingDashboard.isLoading ? (
-        <div className="card span-12 report-loading">
-          <div className="report-loading-dot" />
+        <div className="col-span-12 flex items-center gap-2 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+          <span className="size-2 animate-pulse rounded-full bg-primary" />
           <span>Loading dashboard…</span>
         </div>
       ) : null}

@@ -86,12 +86,14 @@ export function IntegrationsPage(): JSX.Element {
     timeoutSeconds: number;
     minState: "warning" | "critical";
     notifyRecovery: boolean;
+    events: { health: boolean; sync_failure: boolean; dead_letter: boolean };
   }>({
     webhookUrlsText: "",
     clearUrls: false,
     timeoutSeconds: 10,
     minState: "warning",
     notifyRecovery: true,
+    events: { health: true, sync_failure: true, dead_letter: true },
   });
 
   useEffect(() => {
@@ -128,6 +130,7 @@ export function IntegrationsPage(): JSX.Element {
       timeoutSeconds: alertWebhookConfig.data.timeout_seconds,
       minState: alertWebhookConfig.data.min_state,
       notifyRecovery: alertWebhookConfig.data.notify_recovery,
+      events: alertWebhookConfig.data.events ?? prev.events,
     }));
   }, [alertWebhookConfig.data]);
 
@@ -289,10 +292,12 @@ export function IntegrationsPage(): JSX.Element {
           timeout_seconds: number;
           min_state: "warning" | "critical";
           notify_recovery: boolean;
+          events: { health: boolean; sync_failure: boolean; dead_letter: boolean };
         } = {
           timeout_seconds: alertWebhookDraft.timeoutSeconds,
           min_state: alertWebhookDraft.minState,
           notify_recovery: alertWebhookDraft.notifyRecovery,
+          events: alertWebhookDraft.events,
         };
         const normalizedUrls = alertWebhookDraft.webhookUrlsText.trim();
         if (alertWebhookDraft.clearUrls) {
@@ -684,8 +689,52 @@ export function IntegrationsPage(): JSX.Element {
               notify on recovery to ok
             </Label>
           </div>
-          <Button type="button" variant="secondary" size="sm" className="mb-1" onClick={() => void saveAlertWebhooks()}>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="text-xs text-muted-foreground">Send notifications for</span>
+          {(
+            [
+              ["health", "health changes"],
+              ["sync_failure", "sync failures"],
+              ["dead_letter", "dead-letter jobs"],
+            ] as const
+          ).map(([key, label]) => (
+            <div className="flex items-center gap-2" key={key}>
+              <Checkbox
+                id={`alert-event-${key}`}
+                checked={alertWebhookDraft.events[key]}
+                onCheckedChange={(checked) =>
+                  setAlertWebhookDraft((prev) => ({
+                    ...prev,
+                    events: { ...prev.events, [key]: checked === true },
+                  }))
+                }
+              />
+              <Label htmlFor={`alert-event-${key}`} className="text-sm text-muted-foreground">
+                {label}
+              </Label>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Discord and Slack webhook URLs get native formatting automatically; other URLs receive a generic JSON
+          payload.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={() => void saveAlertWebhooks()}>
             Save alert webhooks
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              void runAction(async () => {
+                await api.sendAlertWebhookTest();
+              }, "send test notification")
+            }
+          >
+            Send test notification
           </Button>
         </div>
       </SectionCard>

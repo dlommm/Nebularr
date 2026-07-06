@@ -22,14 +22,37 @@ class SyncService:
         radarr: ArrClient,
         *,
         stop_event: asyncio.Event | None = None,
+        event_bus: Any | None = None,
     ):
         self.session_factory = session_factory
         self.default_clients = {"sonarr": sonarr, "radarr": radarr}
         self.lock_owner_id = str(uuid.uuid4())
         self.stop_event = stop_event
+        self.event_bus = event_bus
+        self._client_cache: dict[tuple[str, str, str, str], ArrClient] = {}
+
+    def _publish(self, event_type: str, data: dict[str, Any]) -> None:
+        if self.event_bus is not None:
+            self.event_bus.publish(event_type, data)
 
     def _should_stop(self) -> bool:
         return bool(self.stop_event and self.stop_event.is_set())
+
+    def _fetch_chunk_size(self, client: ArrClient) -> int:
+        # Twice the HTTP concurrency bound: enough fan-out to keep the
+        # semaphore saturated without spawning one task per series.
+        parallel = getattr(getattr(client, "settings", None), "http_max_parallel_requests", None)
+        return max(1, int(parallel or 4) * 2)
+
+    async def _run_db(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Run a repository call in a worker thread with its own short session,
+        so synchronous SQLAlchemy work never blocks the event loop."""
+
+        def _call() -> Any:
+            with session_scope(self.session_factory) as session:
+                return fn(session, *args, **kwargs)
+
+        return await asyncio.to_thread(_call)
 
     def _report_progress(
         self,
@@ -57,6 +80,20 @@ class SyncService:
                     "stage_note": stage_note or "",
                 },
             )
+        self._publish(
+            "sync.progress",
+            {
+                "run_id": run_id,
+                "source": source,
+                "mode": mode,
+                "instance_name": instance_name,
+                "records_processed": records_processed,
+                "stage": stage,
+            },
+        )
+
+    async def _report_progress_async(self, *args: Any, **kwargs: Any) -> None:
+        await asyncio.to_thread(self._report_progress, *args, **kwargs)
 
     async def detect_capabilities(self) -> None:
         for source in ("sonarr", "radarr"):
@@ -74,15 +111,24 @@ class SyncService:
                         supports_episode_include_files=False,
                         raw={"error": str(exc)},
                     )
-                finally:
-                    await client.aclose()
-                with session_scope(self.session_factory) as session:
-                    repo.record_capabilities(session, caps, instance_name=integration["name"])
-                    repo.update_watermark_for_instance(session, source, integration["name"], None, None)
+                await asyncio.to_thread(self._record_capabilities, source, integration["name"], caps)
                 log.info(
                     "capabilities detected",
                     extra={"sync_run_id": f"{source}:{integration['name']}:capabilities"},
                 )
+
+    def _record_capabilities(self, source: str, instance_name: str, caps: CapabilitySet) -> None:
+        with session_scope(self.session_factory) as session:
+            repo.record_capabilities(session, caps, instance_name=instance_name)
+            repo.update_watermark_for_instance(session, source, instance_name, None, None)
+
+    def _maybe_capture_stats_snapshot(self) -> None:
+        """At most one opportunistic snapshot per day, so trend charts populate
+        after the first successful full sync without waiting for the cron job."""
+        with session_scope(self.session_factory) as session:
+            if repo.has_library_stat_snapshot_today(session):
+                return
+            repo.capture_library_stat_snapshot(session)
 
     async def run_sync(self, source: str, mode: str, reason: str = "manual") -> SyncResult:
         started = datetime.now(timezone.utc)
@@ -102,24 +148,27 @@ class SyncService:
                 details={"reason": "shutting-down", "trigger": reason},
             )
         lock_name = f"{source}:{mode}"
-        with session_scope(self.session_factory) as lock_session:
-            if not repo.try_job_lock(lock_session, lock_name=lock_name, owner_id=self.lock_owner_id):
-                log.warning(
-                    "sync skipped (lock busy)",
-                    extra={"source": source, "mode": mode, "trigger": reason, "lock_name": lock_name},
-                )
-                return SyncResult(
-                    source=source,
-                    mode=mode,
-                    status="skipped",
-                    records_processed=0,
-                    started_at=started,
-                    finished_at=datetime.now(timezone.utc),
-                    details={"reason": "lock-busy", "trigger": reason},
-                )
+        lock_acquired = await self._run_db(
+            repo.try_job_lock, lock_name=lock_name, owner_id=self.lock_owner_id
+        )
+        if not lock_acquired:
+            log.warning(
+                "sync skipped (lock busy)",
+                extra={"source": source, "mode": mode, "trigger": reason, "lock_name": lock_name},
+            )
+            return SyncResult(
+                source=source,
+                mode=mode,
+                status="skipped",
+                records_processed=0,
+                started_at=started,
+                finished_at=datetime.now(timezone.utc),
+                details={"reason": "lock-busy", "trigger": reason},
+            )
         try:
             log.info("sync started", extra={"source": source, "mode": mode, "trigger": reason})
-            for integration in self._enabled_integrations(source):
+            integrations = await asyncio.to_thread(self._enabled_integrations, source)
+            for integration in integrations:
                 if self._should_stop():
                     break
                 instance_name = integration["name"]
@@ -128,21 +177,13 @@ class SyncService:
                     "sync instance",
                     extra={"source": source, "mode": mode, "instance_name": instance_name, "trigger": reason},
                 )
-                run_id: int | None = None
                 records_processed = 0
-                with session_scope(self.session_factory) as session:
-                    repo.heartbeat_job_lock(
-                        session,
-                        lock_name=lock_name,
-                        owner_id=self.lock_owner_id,
-                    )
-                    run_id = repo.create_sync_run(
-                        session,
-                        source,
-                        mode,
-                        instance_name=instance_name,
-                        trigger=reason,
-                    )
+                await self._run_db(
+                    repo.heartbeat_job_lock, lock_name=lock_name, owner_id=self.lock_owner_id
+                )
+                run_id: int = await self._run_db(
+                    repo.create_sync_run, source, mode, instance_name=instance_name, trigger=reason
+                )
                 try:
                     if source == "sonarr":
                         if mode in {"full", "reconcile"}:
@@ -154,42 +195,68 @@ class SyncService:
                             records_processed = await self._sync_radarr_full(client, run_id, mode, instance_name, reason)
                         else:
                             records_processed = await self._sync_incremental(source, client, run_id, instance_name, reason)
-                    with session_scope(self.session_factory) as session:
-                        interrupted = self._should_stop()
-                        repo.finish_sync_run(
-                            session,
-                            run_id=run_id,
-                            source=source,
-                            mode=mode,
-                            status="failed" if interrupted else "success",
-                            records_processed=records_processed,
-                            details={
-                                "trigger": reason,
-                                "instance_name": instance_name,
-                                "interrupted": interrupted,
-                            },
-                            error_message="stopped by shutdown signal" if interrupted else None,
-                            instance_name=instance_name,
-                        )
+                    interrupted = self._should_stop()
+                    await self._run_db(
+                        repo.finish_sync_run,
+                        run_id=run_id,
+                        source=source,
+                        mode=mode,
+                        status="failed" if interrupted else "success",
+                        records_processed=records_processed,
+                        details={
+                            "trigger": reason,
+                            "instance_name": instance_name,
+                            "interrupted": interrupted,
+                        },
+                        error_message="stopped by shutdown signal" if interrupted else None,
+                        instance_name=instance_name,
+                    )
+                    self._publish(
+                        "sync.finished",
+                        {
+                            "run_id": run_id,
+                            "source": source,
+                            "mode": mode,
+                            "instance_name": instance_name,
+                            "status": "failed" if interrupted else "success",
+                            "records_processed": records_processed,
+                            "trigger": reason,
+                        },
+                    )
                 except Exception as exc:
-                    with session_scope(self.session_factory) as session:
-                        repo.finish_sync_run(
-                            session,
-                            run_id=run_id,
-                            source=source,
-                            mode=mode,
-                            status="failed",
-                            records_processed=records_processed,
-                            details={"trigger": reason, "instance_name": instance_name},
-                            error_message=str(exc),
-                            instance_name=instance_name,
-                        )
+                    await self._run_db(
+                        repo.finish_sync_run,
+                        run_id=run_id,
+                        source=source,
+                        mode=mode,
+                        status="failed",
+                        records_processed=records_processed,
+                        details={"trigger": reason, "instance_name": instance_name},
+                        error_message=str(exc),
+                        instance_name=instance_name,
+                    )
+                    self._publish(
+                        "sync.finished",
+                        {
+                            "run_id": run_id,
+                            "source": source,
+                            "mode": mode,
+                            "instance_name": instance_name,
+                            "status": "failed",
+                            "records_processed": records_processed,
+                            "trigger": reason,
+                            "error": str(exc),
+                        },
+                    )
                     raise
-                finally:
-                    await client.aclose()
                 total_records += records_processed
                 if self._should_stop():
                     break
+            if mode in {"full", "reconcile"} and not self._should_stop():
+                try:
+                    await asyncio.to_thread(self._maybe_capture_stats_snapshot)
+                except Exception:
+                    log.warning("post-sync library stats snapshot failed", exc_info=True)
             finished = datetime.now(timezone.utc)
             log.info(
                 "sync finished",
@@ -211,8 +278,7 @@ class SyncService:
                 details={"trigger": reason, "interrupted": self._should_stop()},
             )
         finally:
-            with session_scope(self.session_factory) as session:
-                repo.release_job_lock(session, lock_name=lock_name, owner_id=self.lock_owner_id)
+            await self._run_db(repo.release_job_lock, lock_name=lock_name, owner_id=self.lock_owner_id)
 
     def _enabled_integrations(self, source: str) -> list[dict[str, Any]]:
         with session_scope(self.session_factory) as session:
@@ -220,13 +286,36 @@ class SyncService:
         return integrations
 
     def _client_for_integration(self, source: str, integration: dict[str, Any]) -> ArrClient:
-        return ArrClient(
-            self.default_clients[source].settings,
+        # Cache clients per integration identity so a run (and subsequent runs)
+        # reuse one warm httpx connection pool instead of re-handshaking.
+        # A changed base_url or api_key produces a new key, so config edits
+        # naturally get a fresh client; the stale one is closed lazily.
+        key = (
             source,
-            instance_name=integration["name"],
-            base_url=integration["base_url"],
-            api_key=integration.get("api_key", ""),
+            str(integration["name"]),
+            str(integration["base_url"]),
+            str(integration.get("api_key", "")),
         )
+        client = self._client_cache.get(key)
+        if client is None:
+            client = ArrClient(
+                self.default_clients[source].settings,
+                source,
+                instance_name=integration["name"],
+                base_url=integration["base_url"],
+                api_key=integration.get("api_key", ""),
+            )
+            self._client_cache[key] = client
+        return client
+
+    async def aclose(self) -> None:
+        clients = list(self._client_cache.values())
+        self._client_cache.clear()
+        for client in clients:
+            try:
+                await client.aclose()
+            except Exception:  # pragma: no cover - best-effort shutdown
+                log.debug("error closing cached arr client", exc_info=True)
 
     def _integration_by_name(self, source: str, instance_name: str) -> dict[str, Any]:
         candidates = self._enabled_integrations(source)
@@ -243,13 +332,13 @@ class SyncService:
         instance_name: str,
         trigger: str,
     ) -> int:
-        self._report_progress(run_id, "sonarr", mode, instance_name, 0, trigger, "fetching_series")
+        await self._report_progress_async(run_id, "sonarr", mode, instance_name, 0, trigger, "fetching_series")
         series = await client.list_series()
         records = 0
         seen_series: set[int] = set()
         seen_episodes: set[int] = set()
         seen_episode_files: set[int] = set()
-        self._report_progress(
+        await self._report_progress_async(
             run_id,
             "sonarr",
             mode,
@@ -259,17 +348,68 @@ class SyncService:
             "syncing_episodes",
             f"series_count={len(series)}",
         )
+        chunk_size = self._fetch_chunk_size(client)
+        for start in range(0, len(series), chunk_size):
+            if self._should_stop():
+                break
+            chunk = series[start : start + chunk_size]
+            episode_lists = await asyncio.gather(
+                *(client.list_episodes(int(series_row["id"])) for series_row in chunk)
+            )
+            records += await asyncio.to_thread(
+                self._write_sonarr_chunk,
+                list(zip(chunk, episode_lists)),
+                run_id,
+                mode,
+                instance_name,
+                seen_series,
+                seen_episodes,
+                seen_episode_files,
+            )
+            await self._report_progress_async(
+                run_id,
+                "sonarr",
+                mode,
+                instance_name,
+                records,
+                trigger,
+                "syncing_episodes",
+            )
+        if not self._should_stop():
+            # Tombstones require a complete seen-set; skipping them on an
+            # interrupted run prevents mass soft-deletes of unfetched rows.
+            await self._report_progress_async(
+                run_id, "sonarr", mode, instance_name, records, trigger, "reconciling_tombstones"
+            )
+            await asyncio.to_thread(
+                self._mark_full_sync_tombstones,
+                instance_name,
+                [
+                    ("warehouse.series", seen_series),
+                    ("warehouse.episode", seen_episodes),
+                    ("warehouse.episode_file", seen_episode_files),
+                ],
+            )
+        await self._report_progress_async(run_id, "sonarr", mode, instance_name, records, trigger, "finalizing")
+        return records
+
+    def _write_sonarr_chunk(
+        self,
+        chunk: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+        run_id: int,
+        mode: str,
+        instance_name: str,
+        seen_series: set[int],
+        seen_episodes: set[int],
+        seen_episode_files: set[int],
+    ) -> int:
+        records = 0
         with session_scope(self.session_factory) as session:
-            for series_row in series:
-                if self._should_stop():
-                    break
+            for series_row, episodes in chunk:
                 sid = int(series_row["id"])
                 seen_series.add(sid)
                 repo.upsert_series(session, instance_name, series_row, run_id, mode)
-                episodes = await client.list_episodes(sid)
                 for episode in episodes:
-                    if self._should_stop():
-                        break
                     eid = int(episode["id"])
                     seen_episodes.add(eid)
                     repo.upsert_episode(session, instance_name, episode, run_id, mode)
@@ -279,22 +419,16 @@ class SyncService:
                         seen_episode_files.add(efid)
                         repo.upsert_episode_file(session, instance_name, eid, episode_file, run_id, mode)
                     records += 1
-                    if records % 50 == 0:
-                        self._report_progress(
-                            run_id,
-                            "sonarr",
-                            mode,
-                            instance_name,
-                            records,
-                            trigger,
-                            "syncing_episodes",
-                        )
-            self._report_progress(run_id, "sonarr", mode, instance_name, records, trigger, "reconciling_tombstones")
-            repo.mark_tombstones(session, "warehouse.series", instance_name, seen_series)
-            repo.mark_tombstones(session, "warehouse.episode", instance_name, seen_episodes)
-            repo.mark_tombstones(session, "warehouse.episode_file", instance_name, seen_episode_files)
-        self._report_progress(run_id, "sonarr", mode, instance_name, records, trigger, "finalizing")
         return records
+
+    def _mark_full_sync_tombstones(
+        self,
+        instance_name: str,
+        tables_and_seen: list[tuple[str, set[int]]],
+    ) -> None:
+        with session_scope(self.session_factory) as session:
+            for table, seen_ids in tables_and_seen:
+                repo.mark_tombstones(session, table, instance_name, seen_ids)
 
     async def _sync_radarr_full(
         self,
@@ -304,12 +438,12 @@ class SyncService:
         instance_name: str,
         trigger: str,
     ) -> int:
-        self._report_progress(run_id, "radarr", mode, instance_name, 0, trigger, "fetching_movies")
+        await self._report_progress_async(run_id, "radarr", mode, instance_name, 0, trigger, "fetching_movies")
         movies = await client.list_movies()
         records = 0
         seen_movies: set[int] = set()
         seen_movie_files: set[int] = set()
-        self._report_progress(
+        await self._report_progress_async(
             run_id,
             "radarr",
             mode,
@@ -319,10 +453,56 @@ class SyncService:
             "syncing_movies",
             f"movie_count={len(movies)}",
         )
+        write_batch = 200
+        for start in range(0, len(movies), write_batch):
+            if self._should_stop():
+                break
+            batch = movies[start : start + write_batch]
+            records += await asyncio.to_thread(
+                self._write_radarr_chunk,
+                batch,
+                run_id,
+                mode,
+                instance_name,
+                seen_movies,
+                seen_movie_files,
+            )
+            await self._report_progress_async(
+                run_id,
+                "radarr",
+                mode,
+                instance_name,
+                records,
+                trigger,
+                "syncing_movies",
+            )
+        if not self._should_stop():
+            await self._report_progress_async(
+                run_id, "radarr", mode, instance_name, records, trigger, "reconciling_tombstones"
+            )
+            await asyncio.to_thread(
+                self._mark_full_sync_tombstones,
+                instance_name,
+                [
+                    ("warehouse.movie", seen_movies),
+                    ("warehouse.movie_file", seen_movie_files),
+                ],
+            )
+        await self._report_progress_async(run_id, "radarr", mode, instance_name, records, trigger, "finalizing")
+        return records
+
+    def _write_radarr_chunk(
+        self,
+        batch: list[dict[str, Any]],
+        run_id: int,
+        mode: str,
+        instance_name: str,
+        seen_movies: set[int],
+        seen_movie_files: set[int],
+    ) -> int:
+        records = 0
         with session_scope(self.session_factory) as session:
-            for movie in movies:
-                if self._should_stop():
-                    break
+            for movie in batch:
                 mid = int(movie["id"])
                 seen_movies.add(mid)
                 repo.upsert_movie(session, instance_name, movie, run_id, mode)
@@ -332,20 +512,6 @@ class SyncService:
                     seen_movie_files.add(mfid)
                     repo.upsert_movie_file(session, instance_name, mid, movie_file, run_id, mode)
                 records += 1
-                if records % 50 == 0:
-                    self._report_progress(
-                        run_id,
-                        "radarr",
-                        mode,
-                        instance_name,
-                        records,
-                        trigger,
-                        "syncing_movies",
-                    )
-            self._report_progress(run_id, "radarr", mode, instance_name, records, trigger, "reconciling_tombstones")
-            repo.mark_tombstones(session, "warehouse.movie", instance_name, seen_movies)
-            repo.mark_tombstones(session, "warehouse.movie_file", instance_name, seen_movie_files)
-        self._report_progress(run_id, "radarr", mode, instance_name, records, trigger, "finalizing")
         return records
 
     async def _sync_incremental(
@@ -356,9 +522,8 @@ class SyncService:
         instance_name: str,
         trigger: str,
     ) -> int:
-        self._report_progress(run_id, source, "incremental", instance_name, 0, trigger, "fetching_history")
-        with session_scope(self.session_factory) as session:
-            since, _ = repo.get_watermark_for_instance(session, source, instance_name)
+        await self._report_progress_async(run_id, source, "incremental", instance_name, 0, trigger, "fetching_history")
+        since, _ = await self._run_db(repo.get_watermark_for_instance, source, instance_name)
         events = await client.list_history_since(since)
         log.debug(
             "incremental history batch",
@@ -367,7 +532,7 @@ class SyncService:
         records = 0
         latest_time: datetime | None = None
         latest_id: int | None = None
-        self._report_progress(
+        await self._report_progress_async(
             run_id,
             source,
             "incremental",
@@ -377,43 +542,42 @@ class SyncService:
             "processing_history",
             f"event_count={len(events)}",
         )
-        with session_scope(self.session_factory) as session:
-            for event in events:
-                if self._should_stop():
-                    break
-                event_id = int(event.get("id", 0) or 0)
-                records += 1
-                date_str = event.get("date")
-                if date_str:
-                    try:
-                        parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                    except ValueError:
-                        # One malformed date from the Arr API must not fail the whole
-                        # incremental run; the id watermark still advances below.
-                        log.warning(
-                            "skipping unparsable history event date",
-                            extra={
-                                "source": source,
-                                "instance_name": instance_name,
-                                "event_id": event_id,
-                                "date": str(date_str)[:64],
-                            },
-                        )
-                    else:
-                        latest_time = max(latest_time, parsed) if latest_time else parsed
-                latest_id = max(latest_id, event_id) if latest_id else event_id
-                if records % 100 == 0:
-                    self._report_progress(
-                        run_id,
-                        source,
-                        "incremental",
-                        instance_name,
-                        records,
-                        trigger,
-                        "processing_history",
+        for event in events:
+            if self._should_stop():
+                break
+            event_id = int(event.get("id", 0) or 0)
+            records += 1
+            date_str = event.get("date")
+            if date_str:
+                try:
+                    parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                except ValueError:
+                    # One malformed date from the Arr API must not fail the whole
+                    # incremental run; the id watermark still advances below.
+                    log.warning(
+                        "skipping unparsable history event date",
+                        extra={
+                            "source": source,
+                            "instance_name": instance_name,
+                            "event_id": event_id,
+                            "date": str(date_str)[:64],
+                        },
                     )
-            repo.update_watermark_for_instance(session, source, instance_name, latest_time, latest_id)
-        self._report_progress(run_id, source, "incremental", instance_name, records, trigger, "finalizing")
+                else:
+                    latest_time = max(latest_time, parsed) if latest_time else parsed
+            latest_id = max(latest_id, event_id) if latest_id else event_id
+            if records % 100 == 0:
+                await self._report_progress_async(
+                    run_id,
+                    source,
+                    "incremental",
+                    instance_name,
+                    records,
+                    trigger,
+                    "processing_history",
+                )
+        await self._run_db(repo.update_watermark_for_instance, source, instance_name, latest_time, latest_id)
+        await self._report_progress_async(run_id, source, "incremental", instance_name, records, trigger, "finalizing")
         return records
 
     async def process_webhook_queue(self, source: str) -> dict[str, Any]:
@@ -424,8 +588,7 @@ class SyncService:
         for round_idx in range(max_rounds):
             if self._should_stop():
                 break
-            with session_scope(self.session_factory) as session:
-                jobs = repo.claim_webhook_jobs(session, source, batch_size=batch_size)
+            jobs = await self._run_db(repo.claim_webhook_jobs, source, batch_size=batch_size)
             if not jobs:
                 break
             log.debug(
@@ -435,7 +598,6 @@ class SyncService:
             for job in jobs:
                 if self._should_stop():
                     break
-                client: ArrClient | None = None
                 try:
                     payload = job["payload"] or {}
                     event_type = str(job.get("event_type", "unknown"))
@@ -446,88 +608,73 @@ class SyncService:
                         client = self._client_for_integration(
                             job_source, self._integration_by_name(job_source, instance_name)
                         )
-                        with session_scope(self.session_factory) as session:
-                            run_id = repo.create_sync_run(
-                                session,
-                                job_source,
-                                mode,
-                                instance_name=instance_name,
-                                trigger="webhook",
-                            )
+                        run_id = await self._run_db(
+                            repo.create_sync_run,
+                            job_source,
+                            mode,
+                            instance_name=instance_name,
+                            trigger="webhook",
+                        )
                         series_id = payload.get("series", {}).get("id")
                         if series_id:
                             episodes = await client.list_episodes(int(series_id))
-                            with session_scope(self.session_factory) as session:
-                                for episode in episodes:
-                                    repo.upsert_episode(session, instance_name, episode, run_id, mode)
-                                    ep_file = episode.get("episodeFile")
-                                    if ep_file and ep_file.get("id"):
-                                        repo.upsert_episode_file(
-                                            session, instance_name, int(episode["id"]), ep_file, run_id, mode
-                                        )
+                            await asyncio.to_thread(
+                                self._write_webhook_episodes, instance_name, episodes, run_id, mode
+                            )
                         if "delete" in event_type.lower():
                             deleted_episode_ids = (
                                 [int(payload["episode"]["id"])] if payload.get("episode", {}).get("id") else []
                             )
-                            with session_scope(self.session_factory) as session:
-                                repo.mark_deleted_source_ids(
-                                    session, "warehouse.episode", instance_name, deleted_episode_ids
-                                )
-                        with session_scope(self.session_factory) as session:
-                            repo.finish_sync_run(
-                                session,
-                                run_id=run_id,
-                                source=job_source,
-                                mode=mode,
-                                status="success",
-                                records_processed=1,
-                                details={"event_type": event_type, "instance_name": instance_name},
-                                instance_name=instance_name,
+                            await self._run_db(
+                                repo.mark_deleted_source_ids,
+                                "warehouse.episode",
+                                instance_name,
+                                deleted_episode_ids,
                             )
+                        await self._run_db(
+                            repo.finish_sync_run,
+                            run_id=run_id,
+                            source=job_source,
+                            mode=mode,
+                            status="success",
+                            records_processed=1,
+                            details={"event_type": event_type, "instance_name": instance_name},
+                            instance_name=instance_name,
+                        )
                     else:
                         instance_name = payload.get("instance_name", "default")
                         client = self._client_for_integration(
                             job_source, self._integration_by_name(job_source, instance_name)
                         )
-                        with session_scope(self.session_factory) as session:
-                            run_id = repo.create_sync_run(
-                                session,
-                                job_source,
-                                mode,
-                                instance_name=instance_name,
-                                trigger="webhook",
-                            )
+                        run_id = await self._run_db(
+                            repo.create_sync_run,
+                            job_source,
+                            mode,
+                            instance_name=instance_name,
+                            trigger="webhook",
+                        )
                         movie_id = payload.get("movie", {}).get("id")
                         if movie_id:
                             movie_row = await client.get_movie(int(movie_id))
                             movies = [movie_row] if movie_row else []
                         else:
                             movies = await client.list_movies()
-                        with session_scope(self.session_factory) as session:
-                            for movie in movies:
-                                repo.upsert_movie(session, instance_name, movie, run_id, mode)
-                                movie_file = movie.get("movieFile")
-                                if movie_file and movie_file.get("id"):
-                                    repo.upsert_movie_file(
-                                        session, instance_name, int(movie["id"]), movie_file, run_id, mode
-                                    )
-                            if "delete" in event_type.lower():
-                                deleted_movie_ids = (
-                                    [int(payload["movie"]["id"])] if payload.get("movie", {}).get("id") else []
-                                )
-                                repo.mark_deleted_source_ids(session, "warehouse.movie", instance_name, deleted_movie_ids)
-                            repo.finish_sync_run(
-                                session,
-                                run_id=run_id,
-                                source=job_source,
-                                mode=mode,
-                                status="success",
-                                records_processed=len(movies),
-                                details={"event_type": event_type, "instance_name": instance_name},
-                                instance_name=instance_name,
-                            )
-                    with session_scope(self.session_factory) as session:
-                        repo.mark_webhook_done(session, int(job["id"]))
+                        deleted_movie_ids = (
+                            [int(payload["movie"]["id"])]
+                            if "delete" in event_type.lower() and payload.get("movie", {}).get("id")
+                            else []
+                        )
+                        await asyncio.to_thread(
+                            self._write_webhook_movies,
+                            instance_name,
+                            movies,
+                            run_id,
+                            mode,
+                            deleted_movie_ids,
+                            job_source,
+                            event_type,
+                        )
+                    await self._run_db(repo.mark_webhook_done, int(job["id"]))
                     processed += 1
                 except Exception as exc:
                     log.warning(
@@ -539,21 +686,74 @@ class SyncService:
                             "error": str(exc),
                         },
                     )
-                    with session_scope(self.session_factory) as session:
-                        repo.mark_webhook_failed(
-                            session,
-                            queue_id=int(job["id"]),
-                            attempts=int(job["attempts"]),
-                            error_message=str(exc),
+                    await self._run_db(
+                        repo.mark_webhook_failed,
+                        queue_id=int(job["id"]),
+                        attempts=int(job["attempts"]),
+                        error_message=str(exc),
+                    )
+                    # Mirrors the >= 5 dead-letter threshold in repo.mark_webhook_failed.
+                    if int(job["attempts"]) >= 5:
+                        self._publish(
+                            "webhook.dead_letter",
+                            {
+                                "job_id": int(job["id"]),
+                                "source": str(job.get("source", source)),
+                                "event_type": str(job.get("event_type", "")),
+                                "error": str(exc),
+                            },
                         )
                     failed += 1
-                finally:
-                    if client is not None:
-                        await client.aclose()
-        with session_scope(self.session_factory) as session:
-            repo.prune_old_rows(session)
+        await self._run_db(repo.prune_old_rows)
         log.info(
             "webhook queue drain finished",
             extra={"source": source, "processed": processed, "failed": failed},
         )
         return {"processed": processed, "failed": failed}
+
+    def _write_webhook_episodes(
+        self,
+        instance_name: str,
+        episodes: list[dict[str, Any]],
+        run_id: int,
+        mode: str,
+    ) -> None:
+        with session_scope(self.session_factory) as session:
+            for episode in episodes:
+                repo.upsert_episode(session, instance_name, episode, run_id, mode)
+                ep_file = episode.get("episodeFile")
+                if ep_file and ep_file.get("id"):
+                    repo.upsert_episode_file(
+                        session, instance_name, int(episode["id"]), ep_file, run_id, mode
+                    )
+
+    def _write_webhook_movies(
+        self,
+        instance_name: str,
+        movies: list[dict[str, Any]],
+        run_id: int,
+        mode: str,
+        deleted_movie_ids: list[int],
+        job_source: str,
+        event_type: str,
+    ) -> None:
+        with session_scope(self.session_factory) as session:
+            for movie in movies:
+                repo.upsert_movie(session, instance_name, movie, run_id, mode)
+                movie_file = movie.get("movieFile")
+                if movie_file and movie_file.get("id"):
+                    repo.upsert_movie_file(
+                        session, instance_name, int(movie["id"]), movie_file, run_id, mode
+                    )
+            if deleted_movie_ids:
+                repo.mark_deleted_source_ids(session, "warehouse.movie", instance_name, deleted_movie_ids)
+            repo.finish_sync_run(
+                session,
+                run_id=run_id,
+                source=job_source,
+                mode=mode,
+                status="success",
+                records_processed=len(movies),
+                details={"event_type": event_type, "instance_name": instance_name},
+                instance_name=instance_name,
+            )

@@ -374,12 +374,19 @@ export type SetupStatus = {
   };
 };
 
+export type AlertEventFlags = {
+  health: boolean;
+  sync_failure: boolean;
+  dead_letter: boolean;
+};
+
 export type AlertWebhookConfig = {
   urls_configured: boolean;
   url_count: number;
   timeout_seconds: number;
   min_state: "warning" | "critical";
   notify_recovery: boolean;
+  events: AlertEventFlags;
 };
 
 export type ReportingDashboardMeta = {
@@ -391,7 +398,7 @@ export type ReportingDashboardMeta = {
 export type ReportingPanel = {
   id: string;
   title: string;
-  kind: "stat" | "distribution" | "table";
+  kind: "stat" | "distribution" | "table" | "timeseries";
   value?: number | string;
   rows?: Array<Record<string, unknown>>;
 };

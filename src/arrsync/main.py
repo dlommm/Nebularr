@@ -26,6 +26,7 @@ from arrsync.database_lifecycle import (
 )
 from arrsync.db import session_scope
 from arrsync.deferred_session import DeferredSessionFactory
+from arrsync.events import EventBus
 from arrsync.logging import apply_root_log_level, configure_logging
 from arrsync.metrics import Metrics
 from arrsync.services.arr_client import ArrClient
@@ -50,11 +51,13 @@ class AppState:
     stop_event: asyncio.Event
     session_factory: DeferredSessionFactory
     alert_notifier: AlertNotifier
+    event_bus: EventBus
     mal_ingest_service: MalIngestService | None = None
     mal_matcher_service: MalMatcherService | None = None
     mal_tag_sync_service: MalTagSyncService | None = None
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
+    notification_task: asyncio.Task[None] | None = None
     auth_config_cache: Any | None = field(default=None, repr=False)
     auth_config_cached_at: float = field(default=0.0, repr=False)
     _engine: Any | None = field(default=None, repr=False)
@@ -74,9 +77,12 @@ session_factory_holder = DeferredSessionFactory()
 metrics = Metrics()
 stop_event = asyncio.Event()
 
+event_bus = EventBus()
 sonarr_client = ArrClient(settings, "sonarr")
 radarr_client = ArrClient(settings, "radarr")
-sync_service = SyncService(session_factory_holder, sonarr_client, radarr_client, stop_event=stop_event)
+sync_service = SyncService(
+    session_factory_holder, sonarr_client, radarr_client, stop_event=stop_event, event_bus=event_bus
+)
 mal_ingest_service = MalIngestService(settings, session_factory_holder)
 mal_matcher_service = MalMatcherService(settings, session_factory_holder)
 mal_tag_sync_service = MalTagSyncService(settings, session_factory_holder)
@@ -113,6 +119,7 @@ app_state = AppState(
     stop_event=stop_event,
     session_factory=session_factory_holder,
     alert_notifier=alert_notifier,
+    event_bus=event_bus,
     mal_ingest_service=mal_ingest_service,
     mal_matcher_service=mal_matcher_service,
     mal_tag_sync_service=mal_tag_sync_service,
@@ -210,6 +217,7 @@ def _log_security_posture() -> None:
 
 async def _startup() -> None:
     _register_signal_handlers()
+    event_bus.bind_loop(asyncio.get_running_loop())
     if not settings.database_url:
         validate_settings(settings, require_database_url=False)
         apply_root_log_level(settings.log_level)
@@ -235,6 +243,11 @@ async def _shutdown() -> None:
         app_state.health_alert_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.health_alert_task
+    if app_state.notification_task and not app_state.notification_task.done():
+        app_state.notification_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await app_state.notification_task
+    await sync_service.aclose()
     await sonarr_client.aclose()
     await radarr_client.aclose()
     dispose_bound_engine(app_state)

@@ -57,7 +57,7 @@ export function LogsPage(): JSX.Element {
         {uiLogs.isError ? (
           <p className="text-sm text-critical">Could not load logs: {String(uiLogs.error)}</p>
         ) : null}
-        <div className="log-viewport">
+        <div className="max-h-[min(70vh,720px)] overflow-y-auto rounded-[10px] border border-border bg-card p-2 font-mono text-xs">
           {uiLogs.isLoading && items.length === 0 ? (
             <p className="m-0 px-1 py-2 text-sm text-muted-foreground">Loading…</p>
           ) : null}

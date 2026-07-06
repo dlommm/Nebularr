@@ -32,3 +32,5 @@ Backlog/
 
 # Cursor IDE/agent — entire tree stays local-only (never GitHub/Git remotes).
 .cursor/
+# Vitest coverage output
+frontend/coverage/

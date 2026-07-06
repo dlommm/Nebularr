@@ -45,9 +45,9 @@ jobs:
       - name: Frontend Lint
         working-directory: frontend
         run: npm run lint
-      - name: Frontend Tests
+      - name: Frontend Tests (with coverage report)
         working-directory: frontend
-        run: npm run test
+        run: npm run test:coverage
       - name: Frontend Build
         working-directory: frontend
         run: npm run build
@@ -64,8 +64,9 @@ jobs:
         run: ruff check src tests
       - name: Mypy
         run: mypy src
-      - name: Tests
-        run: pytest -q
+      - name: Tests (with coverage report)
+        # Coverage is report-only for now; no threshold gate.
+        run: pytest -q --cov=arrsync --cov-report=term
       - name: Integration tests (real Postgres)
         env:
           NEBULARR_TEST_DATABASE_URL: postgresql+psycopg://nebularr:nebularr@localhost:5432/nebularr_test

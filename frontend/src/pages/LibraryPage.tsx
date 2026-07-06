@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { fmtDate, fmtSize, useDebouncedValue, useLocalStorageState } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
 import type { EpisodeRow, MovieRow, ShowRow } from "../types";
 import { Pagination } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
+import { MediaCompareGrid, MediaDetailSheet } from "../components/nebula/MediaDetailSheet";
 import { StatusBadge } from "../components/nebula/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,18 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Clapperboard, Film, ListVideo } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type LibraryMode = "drilldown" | "all-episodes" | "movies";
-
-type LibraryFilters = {
-  search: string;
-  instance: string;
-  limit: number;
-  offset: number;
-  sortBy: string;
-  sortDir: "asc" | "desc";
-  showSeason: number | null;
-};
+import { SavedViews } from "../components/nebula/SavedViews";
+import { serializeLibraryState } from "./libraryUrlState";
+import type { LibraryFilters, LibraryMode } from "./libraryUrlState";
 
 export function LibraryPage(): JSX.Element {
   usePageTitle("Library");
@@ -47,6 +40,45 @@ export function LibraryPage(): JSX.Element {
   const [compareRows, setCompareRows] = useState<EpisodeRow[]>([]);
   const [detailDrawer, setDetailDrawer] = useState<Record<string, unknown> | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const lastWrittenSearch = useRef<string | null>(null);
+
+  // State → URL so the current view is always linkable (SavedViews/Copy link).
+  useEffect(() => {
+    const canonical = serializeLibraryState(libraryMode, libraryFilters, selectedShow).toString();
+    if (canonical !== searchParams.toString()) {
+      lastWrittenSearch.current = canonical;
+      setSearchParams(new URLSearchParams(canonical), { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libraryMode, libraryFilters, selectedShow]);
+
+  // External URL change (deep link, saved view, back/forward) → state.
+  useEffect(() => {
+    const current = searchParams.toString();
+    if (current === lastWrittenSearch.current || [...searchParams.keys()].length === 0) return;
+    const mode = searchParams.get("mode");
+    if (mode === "drilldown" || mode === "all-episodes" || mode === "movies") setLibraryMode(mode);
+    else if (mode === null) setLibraryMode("drilldown");
+    const show = searchParams.get("show");
+    if (show) {
+      const [idPart, instance, ...titleParts] = show.split("|");
+      const id = Number(idPart);
+      if (Number.isFinite(id) && instance) setSelectedShow({ id, instance, title: titleParts.join("|") });
+    } else {
+      setSelectedShow(null);
+    }
+    setLibraryFilters({
+      search: searchParams.get("q") ?? "",
+      instance: searchParams.get("inst") ?? "",
+      limit: Number(searchParams.get("limit") ?? 50) || 50,
+      offset: Number(searchParams.get("offset") ?? 0) || 0,
+      sortBy: searchParams.get("sort") ?? "title",
+      sortDir: searchParams.get("dir") === "desc" ? "desc" : "asc",
+      showSeason: searchParams.get("season") != null ? Number(searchParams.get("season")) : null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     const pending = sessionStorage.getItem("nebularr.library.pendingSearch");
@@ -190,24 +222,13 @@ export function LibraryPage(): JSX.Element {
       <GlassCard>
         <CardHeader>
           <CardTitle className="text-base">Compare mode</CardTitle>
+          <p className="text-xs text-muted-foreground">Differing fields are highlighted.</p>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-              <p className="font-medium">A: {compareRows[0].series_title}</p>
-              <p className="text-xs text-muted-foreground">
-                S{compareRows[0].season_number}E{compareRows[0].episode_number} · {compareRows[0].video_codec} / {compareRows[0].audio_codec} /{" "}
-                {fmtSize(compareRows[0].size_bytes)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-              <p className="font-medium">B: {compareRows[1].series_title}</p>
-              <p className="text-xs text-muted-foreground">
-                S{compareRows[1].season_number}E{compareRows[1].episode_number} · {compareRows[1].video_codec} / {compareRows[1].audio_codec} /{" "}
-                {fmtSize(compareRows[1].size_bytes)}
-              </p>
-            </div>
-          </div>
+          <MediaCompareGrid
+            a={compareRows[0] as unknown as Record<string, unknown>}
+            b={compareRows[1] as unknown as Record<string, unknown>}
+          />
         </CardContent>
       </GlassCard>
     ) : null;
@@ -236,6 +257,7 @@ export function LibraryPage(): JSX.Element {
                   </TabsTrigger>
                 </TabsList>
                 <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                  <SavedViews storageKey="nebularr.savedViews.library" />
                   <div className="flex shrink-0 items-center gap-2">
                     <Checkbox
                       id="lib-compare"
@@ -520,17 +542,7 @@ export function LibraryPage(): JSX.Element {
         </Tabs>
       </div>
 
-      {detailDrawer ? (
-        <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-md border-l border-border glass-panel-strong p-4 shadow-2xl">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <strong className="text-sm">Details</strong>
-            <Button type="button" variant="secondary" size="sm" onClick={() => setDetailDrawer(null)}>
-              Close
-            </Button>
-          </div>
-          <pre className="max-h-[calc(100vh-6rem)] overflow-auto rounded-lg bg-muted/50 p-3 text-xs text-foreground/90">{JSON.stringify(detailDrawer, null, 2)}</pre>
-        </aside>
-      ) : null}
+      {detailDrawer ? <MediaDetailSheet row={detailDrawer} onClose={() => setDetailDrawer(null)} /> : null}
     </>
   );
 }

@@ -19,6 +19,7 @@ from arrsync.routers.shared import (
 from arrsync.security import encrypt_secret, hash_secret
 from arrsync.services.alert_config_store import (
     read_alert_webhook_config,
+    store_alert_webhook_events,
     store_alert_webhook_options,
     store_alert_webhook_urls,
 )
@@ -206,6 +207,7 @@ def build_config_router(app_state: Any) -> APIRouter:
             "timeout_seconds": config["timeout_seconds"],
             "min_state": config["min_state"],
             "notify_recovery": config["notify_recovery"],
+            "events": config["events"],
         }
 
     @router.put("/api/config/alert-webhooks")
@@ -238,6 +240,13 @@ def build_config_router(app_state: Any) -> APIRouter:
                 min_state=min_state,
                 notify_recovery=notify_recovery,
             )
+            events = dict(current["events"])
+            provided_events = payload.get("events", None)
+            if isinstance(provided_events, dict):
+                for name in events:
+                    if name in provided_events:
+                        events[name] = to_bool(provided_events[name], events[name])
+                store_alert_webhook_events(session, events)
         alert_notifier = getattr(app_state, "alert_notifier", None)
         if alert_notifier is not None:
             await alert_notifier.configure(
@@ -245,8 +254,19 @@ def build_config_router(app_state: Any) -> APIRouter:
                 timeout_seconds=timeout_seconds,
                 min_state=min_state,
                 notify_recovery=notify_recovery,
+                events=events,
             )
-        return {"status": "ok", "url_count": len(webhook_urls)}
+        return {"status": "ok", "url_count": len(webhook_urls), "events": events}
+
+    @router.post("/api/config/alert-webhooks/test")
+    async def send_alert_webhook_test() -> dict[str, Any]:
+        alert_notifier = getattr(app_state, "alert_notifier", None)
+        if alert_notifier is None:
+            raise HTTPException(status_code=503, detail="alert notifier unavailable")
+        delivered = await alert_notifier.send_test_message()
+        if not delivered:
+            raise HTTPException(status_code=400, detail="no webhook accepted the test message (none configured, or all failed)")
+        return {"status": "ok"}
 
     @router.get("/api/config/schedules")
     async def list_schedules() -> list[dict[str, Any]]:

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Iterator
 
+from arrsync.events import EventBus
+
 
 class FakeResult:
     def __init__(self, scalar_value: Any = None, rows: list[Any] | None = None) -> None:
@@ -63,6 +65,16 @@ class FakeSession:
             return FakeResult()
         raise RuntimeError(f"unexpected SQL in fake session: {sql}")
 
+    # No-ops so this fake also works under the real db.session_scope().
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
 
 @dataclass
 class FakeSettings:
@@ -114,6 +126,7 @@ class FakeAppState:
         )
         self.session = FakeSession()
         self.session_factory = SimpleNamespace(ready=True, unbind=lambda: None)
+        self.event_bus = EventBus()
 
     @contextmanager
     def session_scope(self) -> Iterator[FakeSession]:

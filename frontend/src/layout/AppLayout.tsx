@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { useActionError } from "../hooks/useActionError";
+import { ServerEventsContext, useServerEvents } from "../hooks/useServerEvents";
 import { useLocalStorageState } from "../hooks";
 import { LegacyViewRedirect } from "./LegacyViewRedirect";
 import { pathTitle, PATHS } from "../routes/paths";
@@ -81,10 +82,11 @@ export function AppLayout(): JSX.Element {
   const [commandPalette, setCommandPalette] = useState(false);
   const [headerSearch, setHeaderSearch] = useState("");
 
+  const serverEvents = useServerEvents();
   const status = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
-    refetchInterval: 15_000,
+    refetchInterval: serverEvents.connected ? 60_000 : 15_000,
   });
   const currentTitle = pathTitle(location.pathname);
 
@@ -197,6 +199,7 @@ export function AppLayout(): JSX.Element {
   );
 
   return (
+    <ServerEventsContext.Provider value={serverEvents}>
     <div className={cn("flex min-h-svh w-full min-w-0", density === "compact" && "density-compact")}>
       <a href="#main-content" className="skip-to-main">
         Skip to content
@@ -441,5 +444,6 @@ export function AppLayout(): JSX.Element {
         </div>
       ) : null}
     </div>
+    </ServerEventsContext.Provider>
   );
 }

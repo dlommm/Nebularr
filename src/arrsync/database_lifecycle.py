@@ -113,6 +113,7 @@ async def finalize_application_services(app_state: Any) -> None:
         timeout_seconds=alert_config["timeout_seconds"],
         min_state=alert_config["min_state"],
         notify_recovery=alert_config["notify_recovery"],
+        events=alert_config.get("events"),
     )
 
     async def _detect_capabilities_background() -> None:
@@ -121,13 +122,33 @@ async def finalize_application_services(app_state: Any) -> None:
         except Exception:
             log.exception("capability detection background task failed")
 
+    def _compute_health_payload() -> dict[str, Any]:
+        with session_scope(app_state.session_factory) as session:  # type: ignore[arg-type]
+            return compute_health_status(session, app_state.settings, app_state.metrics)
+
     async def _run_health_alerts_background() -> None:
         stop_event = app_state.stop_event
+        previous_health: tuple[str, tuple[str, ...]] | None = None
         while not stop_event.is_set():
             try:
-                with session_scope(app_state.session_factory) as session:  # type: ignore[arg-type]
-                    status_payload = compute_health_status(session, app_state.settings, app_state.metrics)
+                status_payload = await asyncio.to_thread(_compute_health_payload)
                 await app_state.alert_notifier.maybe_send_health_alert(status_payload)
+                event_bus = getattr(app_state, "event_bus", None)
+                if event_bus is not None:
+                    current = (
+                        str(status_payload.get("health_state", "")),
+                        tuple(status_payload.get("health_reasons") or ()),
+                    )
+                    if previous_health is not None and current != previous_health:
+                        event_bus.publish(
+                            "health.changed",
+                            {
+                                "health_state": current[0],
+                                "health_reasons": list(current[1]),
+                                "previous_state": previous_health[0],
+                            },
+                        )
+                    previous_health = current
             except Exception:
                 log.exception("health alert background task failed")
             try:
@@ -135,8 +156,27 @@ async def finalize_application_services(app_state: Any) -> None:
             except TimeoutError:
                 continue
 
+    async def _route_events_to_notifications_background() -> None:
+        event_bus = getattr(app_state, "event_bus", None)
+        if event_bus is None:
+            return
+        async with event_bus.subscribe() as queue:
+            while not app_state.stop_event.is_set():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=5.0)
+                except TimeoutError:
+                    continue
+                try:
+                    if event["type"] == "sync.finished" and event["data"].get("status") == "failed":
+                        await app_state.alert_notifier.send_event("sync_failure", event["data"])
+                    elif event["type"] == "webhook.dead_letter":
+                        await app_state.alert_notifier.send_event("dead_letter", event["data"])
+                except Exception:
+                    log.exception("notification dispatch failed", extra={"event_type": event.get("type")})
+
     app_state.capability_task = asyncio.create_task(_detect_capabilities_background())
     app_state.health_alert_task = asyncio.create_task(_run_health_alerts_background())
+    app_state.notification_task = asyncio.create_task(_route_events_to_notifications_background())
     app_state.scheduler.start()
     app_state.scheduler_started = True
     log.info("scheduler and background tasks started")

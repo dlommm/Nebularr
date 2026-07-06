@@ -68,6 +68,9 @@ class FakeAlertNotifier:
     async def maybe_send_health_alert(self, _payload: dict[str, Any]) -> bool:
         return False
 
+    async def send_test_message(self) -> bool:
+        return False  # nothing configured in these tests
+
 
 class FakeAppState:
     def __init__(self) -> None:
@@ -115,3 +118,29 @@ def test_alert_webhook_config_get_and_put_roundtrip() -> None:
     assert body["timeout_seconds"] == 12.0
     assert body["min_state"] == "critical"
     assert body["notify_recovery"] is False
+
+
+def test_alert_webhook_event_flags_roundtrip() -> None:
+    client = _build_client()
+
+    get_before = client.get("/api/config/alert-webhooks")
+    assert get_before.status_code == 200
+    assert get_before.json()["events"] == {"health": True, "sync_failure": True, "dead_letter": True}
+
+    update = client.put(
+        "/api/config/alert-webhooks",
+        json={"events": {"sync_failure": False}},
+    )
+    assert update.status_code == 200
+    assert update.json()["events"]["sync_failure"] is False
+    assert update.json()["events"]["health"] is True
+
+    get_after = client.get("/api/config/alert-webhooks")
+    assert get_after.status_code == 200
+    assert get_after.json()["events"] == {"health": True, "sync_failure": False, "dead_letter": True}
+
+
+def test_alert_webhook_test_route_reports_failure_when_unconfigured() -> None:
+    client = _build_client()
+    response = client.post("/api/config/alert-webhooks/test")
+    assert response.status_code == 400

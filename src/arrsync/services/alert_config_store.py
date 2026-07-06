@@ -13,6 +13,9 @@ ALERT_WEBHOOK_URLS_KEY = "app.alert_webhook_urls_enc_json"
 ALERT_WEBHOOK_TIMEOUT_KEY = "app.alert_webhook_timeout_seconds"
 ALERT_WEBHOOK_MIN_STATE_KEY = "app.alert_webhook_min_state"
 ALERT_WEBHOOK_NOTIFY_RECOVERY_KEY = "app.alert_webhook_notify_recovery"
+ALERT_WEBHOOK_EVENTS_KEY = "app.alert_webhook_events_json"
+
+ALERT_EVENT_TYPES = ("health", "sync_failure", "dead_letter")
 
 
 class AlertWebhookConfig(TypedDict):
@@ -20,6 +23,7 @@ class AlertWebhookConfig(TypedDict):
     timeout_seconds: float
     min_state: Literal["warning", "critical"]
     notify_recovery: bool
+    events: dict[str, bool]
 
 
 def _get_setting(session: Session, key: str, default: str = "") -> str:
@@ -87,11 +91,23 @@ def read_alert_webhook_config(session: Session, settings: Settings) -> AlertWebh
     else:
         min_state = settings.alert_webhook_min_state
     notify_recovery = _parse_bool(notify_raw, settings.alert_webhook_notify_recovery) if notify_raw else settings.alert_webhook_notify_recovery
+    events = {name: True for name in ALERT_EVENT_TYPES}
+    events_raw = _get_setting(session, ALERT_WEBHOOK_EVENTS_KEY, "").strip()
+    if events_raw:
+        try:
+            stored_events = json.loads(events_raw)
+            if isinstance(stored_events, dict):
+                for name in ALERT_EVENT_TYPES:
+                    if name in stored_events:
+                        events[name] = _parse_bool(stored_events[name], True)
+        except Exception:
+            pass
     return {
         "webhook_urls": urls,
         "timeout_seconds": timeout_seconds,
         "min_state": min_state,
         "notify_recovery": notify_recovery,
+        "events": events,
     }
 
 
@@ -110,3 +126,8 @@ def store_alert_webhook_options(
     _set_setting(session, ALERT_WEBHOOK_TIMEOUT_KEY, str(timeout_seconds))
     _set_setting(session, ALERT_WEBHOOK_MIN_STATE_KEY, min_state)
     _set_setting(session, ALERT_WEBHOOK_NOTIFY_RECOVERY_KEY, "true" if notify_recovery else "false")
+
+
+def store_alert_webhook_events(session: Session, events: dict[str, bool]) -> None:
+    normalized = {name: bool(events.get(name, True)) for name in ALERT_EVENT_TYPES}
+    _set_setting(session, ALERT_WEBHOOK_EVENTS_KEY, json.dumps(normalized))

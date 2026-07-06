@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from arrsync.routers.auth_routes import build_auth_router
 from arrsync.routers.config import build_config_router
+from arrsync.routers.events import build_events_router
 from arrsync.routers.hooks import build_hooks_router
 from arrsync.routers.library import build_library_router
 from arrsync.routers.mal_routes import build_mal_router
@@ -31,6 +32,7 @@ def build_router(app_state: Any) -> APIRouter:
     router.include_router(build_setup_router(app_state))
     router.include_router(build_config_router(app_state))
     router.include_router(build_sync_ops_router(app_state))
+    router.include_router(build_events_router(app_state))
     router.include_router(build_library_router(app_state))
     router.include_router(build_mal_router(app_state))
     router.include_router(build_operator_router(app_state))

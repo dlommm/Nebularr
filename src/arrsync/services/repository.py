@@ -770,3 +770,57 @@ def fail_stuck_running_warehouse_work(session: Session) -> dict[str, int]:
         "warehouse_sync_runs_marked_failed": len(r_sync.all()),
         "job_run_summary_rows_marked_failed": len(r_sum.all()),
     }
+
+
+def capture_library_stat_snapshot(session: Session) -> None:
+    """One snapshot row per (instance, source) with live entity/file counts and
+    total file bytes; feeds the storage-growth reporting dashboard."""
+    session.execute(
+        text(
+            """
+            insert into warehouse.library_stat_snapshot
+                (instance_name, source, entity_count, file_count, file_bytes)
+            select instance_name, 'sonarr',
+                   coalesce(max(entity_count), 0), coalesce(max(file_count), 0), coalesce(max(file_bytes), 0)
+            from (
+                select instance_name, count(*) as entity_count, null::bigint as file_count, null::bigint as file_bytes
+                from warehouse.series where not deleted group by instance_name
+                union all
+                select instance_name, null, count(*), coalesce(sum(size_bytes), 0)
+                from warehouse.episode_file where not deleted group by instance_name
+            ) stats
+            group by instance_name
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            insert into warehouse.library_stat_snapshot
+                (instance_name, source, entity_count, file_count, file_bytes)
+            select instance_name, 'radarr',
+                   coalesce(max(entity_count), 0), coalesce(max(file_count), 0), coalesce(max(file_bytes), 0)
+            from (
+                select instance_name, count(*) as entity_count, null::bigint as file_count, null::bigint as file_bytes
+                from warehouse.movie where not deleted group by instance_name
+                union all
+                select instance_name, null, count(*), coalesce(sum(size_bytes), 0)
+                from warehouse.movie_file where not deleted group by instance_name
+            ) stats
+            group by instance_name
+            """
+        )
+    )
+
+
+def has_library_stat_snapshot_today(session: Session) -> bool:
+    row = session.execute(
+        text(
+            """
+            select 1 from warehouse.library_stat_snapshot
+            where captured_at >= date_trunc('day', now())
+            limit 1
+            """
+        )
+    ).scalar_one_or_none()
+    return row is not None

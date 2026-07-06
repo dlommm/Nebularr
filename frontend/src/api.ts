@@ -1,4 +1,5 @@
 import type {
+  AlertEventFlags,
   AlertWebhookConfig,
   AuthConfigResponse,
   AuthStatusResponse,
@@ -195,7 +196,9 @@ export const api = {
     timeout_seconds: number;
     min_state: "warning" | "critical";
     notify_recovery: boolean;
+    events?: Partial<AlertEventFlags>;
   }) => requestJson<{ status: string; url_count: number }>("/api/config/alert-webhooks", "PUT", payload),
+  sendAlertWebhookTest: () => requestJson<{ status: string }>("/api/config/alert-webhooks/test", "POST"),
   runSync: (source: string, mode: string) =>
     requestJson<{ status: string }>(`/api/sync/${source}/${mode}`, "POST"),
   replayDeadLetter: (source: string) =>

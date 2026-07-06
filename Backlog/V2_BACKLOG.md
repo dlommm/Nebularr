@@ -53,7 +53,7 @@ flowchart LR
 - `v2-perf-002` (`proposed`): Add batched upsert paths for high-volume sync runs and tune statement size dynamically.
 - `v2-perf-003` (`proposed`): Add API rate tuning profiles (small, medium, large library presets) in UI.
 - `v2-perf-004` (`proposed`): Add query budget instrumentation for expensive API and DB operations.
-- `v2-perf-005` (`proposed`): Add pagination and virtualization for large UI tables (runs, queue, media drilldowns).
+- `v2-perf-005` (`done`, v2.2.0): Reporting tables memoized with a 500-row render cap ("All" page size) and CSV escape hatch; library tables already server-paged. True windowed virtualization deferred.
 - `v2-perf-006` (`proposed`): Add benchmark suite with reproducible synthetic datasets and tracked baseline results.
 
 ### Security And Access
@@ -68,7 +68,7 @@ flowchart LR
 ### UI And Operator Experience
 
 - `v2-ui-001` (`proposed`): Add dedicated media explorer pages (series, episodes, movies, files) with advanced filters.
-- `v2-ui-002` (`proposed`): Add saved filters and shareable deep links for troubleshooting workflows.
+- `v2-ui-002` (`done`, v2.2.0): Library/Reporting state now URL-driven with a Saved Views menu and Copy Link.
 - `v2-ui-003` (`proposed`): Add dashboard customization (widget visibility, compact mode, refresh intervals).
 - `v2-ui-004` (`proposed`): Add CSV/JSON export actions for table datasets.
 - `v2-ui-005` (`proposed`): Add retention and queue policy editing in UI with validation and previews.
@@ -79,7 +79,7 @@ flowchart LR
 
 - `v2-int-001` (`proposed`): Add outbound automation hooks for actions like tagging media when quality/language rules match.
 - `v2-int-002` (`proposed`): Add pluggable rules engine for policy-based recommendations (example: oversized files with same quality alternatives).
-- `v2-int-003` (`proposed`): Add notification integrations (Discord, Slack, email) for alert events and sync failures.
+- `v2-int-003` (`done`, v2.2.0): Discord/Slack-formatted alert webhooks with per-event toggles (health, sync failure, dead-letter) and a test route; email still open.
 - `v2-int-004` (`proposed`): Add optional metadata enrichment from external providers for richer analytics dimensions.
 - `v2-int-005` (`proposed`): Add import/export for configuration bundles across environments.
 

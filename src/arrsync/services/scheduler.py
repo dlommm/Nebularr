@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from arrsync.config import Settings
 from arrsync.db import session_scope
+from arrsync.services import repository as repo
 from arrsync.services.mal_config_store import read_mal_feature_flags
 from arrsync.services.sync_service import SyncService
 
@@ -42,6 +43,7 @@ class SyncScheduler:
         mal_flags = self._read_mal_feature_flags()
         incremental_cron = jobs.get("incremental", self.settings.incremental_cron)
         reconcile_cron = jobs.get("reconcile", self.settings.full_reconcile_cron)
+        stats_snapshot_cron = jobs.get("stats_snapshot", self.settings.stats_snapshot_cron)
         mal_ingest_cron = jobs.get("mal_ingest", self.settings.mal_ingest_cron)
         mal_matcher_cron = jobs.get("mal_matcher", self.settings.mal_matcher_cron)
         mal_tag_sync_cron = jobs.get("mal_tag_sync", self.settings.mal_tag_sync_cron)
@@ -57,6 +59,13 @@ class SyncScheduler:
             id="reconcile",
             replace_existing=True,
         )
+        if "stats_snapshot" in jobs:
+            self.scheduler.add_job(
+                self._run_stats_snapshot_tick,
+                CronTrigger.from_crontab(stats_snapshot_cron, timezone=self.settings.scheduler_timezone),
+                id="stats_snapshot",
+                replace_existing=True,
+            )
         if self._mal_ingest_coro and mal_flags["ingest_enabled"] and "mal_ingest" in jobs:
             self.scheduler.add_job(
                 self._mal_ingest_coro,
@@ -109,6 +118,7 @@ class SyncScheduler:
                     values
                       ('incremental', :incremental_cron, :tz, true, now()),
                       ('reconcile', :reconcile_cron, :tz, true, now()),
+                      ('stats_snapshot', :stats_snapshot_cron, :tz, true, now()),
                       ('mal_ingest', :mal_ingest_cron, :tz, true, now()),
                       ('mal_matcher', :mal_matcher_cron, :tz, true, now()),
                       ('mal_tag_sync', :mal_tag_sync_cron, :tz, true, now())
@@ -118,6 +128,7 @@ class SyncScheduler:
                 {
                     "incremental_cron": self.settings.incremental_cron,
                     "reconcile_cron": self.settings.full_reconcile_cron,
+                    "stats_snapshot_cron": self.settings.stats_snapshot_cron,
                     "mal_ingest_cron": self.settings.mal_ingest_cron,
                     "mal_matcher_cron": self.settings.mal_matcher_cron,
                     "mal_tag_sync_cron": self.settings.mal_tag_sync_cron,
@@ -155,3 +166,13 @@ class SyncScheduler:
             self.sync_service.run_sync("radarr", "reconcile", reason="cron"),
         )
         log.debug("scheduler tick: reconcile complete")
+
+    async def _run_stats_snapshot_tick(self) -> None:
+        log.debug("scheduler tick: library stats snapshot")
+
+        def _capture() -> None:
+            with session_scope(self.session_factory) as session:
+                repo.capture_library_stat_snapshot(session)
+
+        await asyncio.to_thread(_capture)
+        log.debug("scheduler tick: library stats snapshot complete")

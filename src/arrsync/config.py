@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8080
     app_timezone: str = "UTC"
-    app_version: str = "2.1.1"
+    app_version: str = "2.2.0"
     app_git_sha: str = "release"
 
     database_url: str = Field(
@@ -72,6 +72,7 @@ class Settings(BaseSettings):
 
     incremental_cron: str = "*/30 * * * *"
     full_reconcile_cron: str = "0 4 * * 0"
+    stats_snapshot_cron: str = "10 3 * * *"
     scheduler_timezone: str = "UTC"
     alert_sync_lag_warning_seconds: int = 3600
     alert_sync_lag_critical_seconds: int = 7200

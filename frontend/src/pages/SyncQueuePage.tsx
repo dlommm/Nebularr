@@ -5,6 +5,7 @@ import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
+import { useServerEventsStatus } from "../hooks/useServerEvents";
 import { StatusPill } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { ProgressBar } from "../components/nebula/ProgressBar";
@@ -47,16 +48,39 @@ export function SyncQueuePage(): JSX.Element {
   const [stuckClearWhLocks, setStuckClearWhLocks] = useState(false);
   const [stuckFailWhSync, setStuckFailWhSync] = useState(false);
 
-  const runs = useQuery({ queryKey: ["runs"], queryFn: api.recentRuns, refetchInterval: 15_000 });
-  const webhookQueue = useQuery({ queryKey: ["webhook-queue"], queryFn: api.webhookQueue, refetchInterval: 15_000 });
+  // While the SSE stream is connected, events drive cache invalidation and
+  // polling relaxes to a slow safety net; on disconnect the old cadence returns.
+  const { connected: sseConnected } = useServerEventsStatus();
+  const runs = useQuery({
+    queryKey: ["runs"],
+    queryFn: api.recentRuns,
+    refetchInterval: sseConnected ? 60_000 : 15_000,
+  });
+  const webhookQueue = useQuery({
+    queryKey: ["webhook-queue"],
+    queryFn: api.webhookQueue,
+    refetchInterval: sseConnected ? 60_000 : 15_000,
+  });
   const webhookJobs = useQuery({
     queryKey: ["webhook-jobs"],
     queryFn: () => api.webhookJobs(),
-    refetchInterval: 15_000,
+    refetchInterval: sseConnected ? 60_000 : 15_000,
   });
-  const syncProgress = useQuery({ queryKey: ["sync-progress"], queryFn: api.syncProgress, refetchInterval: 2_000 });
-  const workStatus = useQuery({ queryKey: ["work-status"], queryFn: api.workStatus, refetchInterval: 2_000 });
-  const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 15_000 });
+  const syncProgress = useQuery({
+    queryKey: ["sync-progress"],
+    queryFn: api.syncProgress,
+    refetchInterval: sseConnected ? 30_000 : 2_000,
+  });
+  const workStatus = useQuery({
+    queryKey: ["work-status"],
+    queryFn: api.workStatus,
+    refetchInterval: sseConnected ? 30_000 : 2_000,
+  });
+  const status = useQuery({
+    queryKey: ["status"],
+    queryFn: api.status,
+    refetchInterval: sseConnected ? 60_000 : 15_000,
+  });
   const stuckState = useQuery({
     queryKey: ["stuck-state"],
     queryFn: api.stuckState,

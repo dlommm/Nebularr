@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "./nebula/GlassCard";
 
 export function StatusPill({ status }: { status: string }): JSX.Element {
-  return <StatusBadge status={status} className="status-pill-legacy" />;
+  return <StatusBadge status={status} />;
 }
 
 export function Pagination({
@@ -35,19 +35,31 @@ export function Pagination({
   );
 }
 
+const LOG_LEVEL_TEXT: Record<string, string> = {
+  debug: "text-muted-foreground",
+  info: "text-ok",
+  warning: "text-warn",
+  error: "text-critical",
+  critical: "text-critical",
+};
+
 export function LogViewerRow({ entry }: { entry: Record<string, unknown> }): JSX.Element {
   const lvl = String(entry.level ?? "?");
-  const levelClass = `log-lvl-${lvl.toLowerCase()}`;
+  const levelClass = LOG_LEVEL_TEXT[lvl.toLowerCase()] ?? "text-muted-foreground";
   const extra = formatLogExtras(entry);
   return (
-    <div className={`log-row ${levelClass} text-foreground`}>
-      <div className="log-row-main">
-        <span className="log-ts text-muted-foreground">{String(entry.ts ?? "")}</span>
-        <span className="log-level-badge">{lvl}</span>
-        <span className="log-logger">{String(entry.logger ?? "")}</span>
-        <span className="log-message text-foreground">{String(entry.message ?? "")}</span>
+    <div className="border-b border-border px-1 py-1.5 text-foreground last:border-b-0">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{String(entry.ts ?? "")}</span>
+        <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${levelClass}`}>{lvl}</span>
+        <span className="min-w-0 break-all text-[11px] text-primary">{String(entry.logger ?? "")}</span>
+        <span className="min-w-[200px] flex-1 break-words">{String(entry.message ?? "")}</span>
       </div>
-      {extra ? <pre className="log-row-extra text-muted-foreground">{extra}</pre> : null}
+      {extra ? (
+        <pre className="mt-1.5 whitespace-pre-wrap rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
+          {extra}
+        </pre>
+      ) : null}
     </div>
   );
 }

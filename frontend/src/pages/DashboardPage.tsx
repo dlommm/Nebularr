@@ -4,6 +4,7 @@ import { ArrowRight, Film, GitBranch, HeartPulse, Inbox, LayoutList, ListVideo, 
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
+import { useServerEventsStatus } from "../hooks/useServerEvents";
 import { MAL_JOB_TYPE_ORDER } from "../constants/domain";
 import { StatusPill } from "../components/ui";
 import { useActionError } from "../hooks/useActionError";
@@ -23,15 +24,16 @@ export function DashboardPage(): JSX.Element {
   usePageTitle("Dashboard");
   const navigate = useNavigate();
   const { runAction } = useActionError();
+  const { connected: sseConnected } = useServerEventsStatus();
   const status = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
-    refetchInterval: 15_000,
+    refetchInterval: sseConnected ? 60_000 : 15_000,
   });
   const syncActivity = useQuery({
     queryKey: ["sync-activity"],
     queryFn: api.syncActivity,
-    refetchInterval: 5_000,
+    refetchInterval: sseConnected ? 30_000 : 5_000,
   });
   const malSync = status.data?.mal_sync;
   const healthOk = status.data?.health_state === "ok";

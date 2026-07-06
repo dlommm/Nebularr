@@ -15,6 +15,7 @@ GET /api/setup/status
 GET /api/status
 GET /api/ui/episodes
 GET /api/ui/episodes/export.csv
+GET /api/ui/events
 GET /api/ui/logs
 GET /api/ui/movies
 GET /api/ui/movies/export.csv
@@ -40,6 +41,7 @@ GET /{frontend_path:path}
 POST /api/admin/reset-data
 POST /api/auth/login
 POST /api/auth/logout
+POST /api/config/alert-webhooks/test
 POST /api/mal/ingest
 POST /api/mal/ingest-backlog
 POST /api/mal/match-refresh

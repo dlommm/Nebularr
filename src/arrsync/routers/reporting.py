@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -2116,10 +2117,171 @@ def build_reporting_router(app_state: Any) -> APIRouter:
             ],
         }
 
-    @router.get("/api/reporting/dashboards")
-    async def list_reporting_dashboards() -> list[dict[str, str]]:
-        # Browser receives a fixed dashboard catalog only; no SQL text or dynamic query execution is exposed.
-        return [
+    def _fmt_bytes(num_bytes: float) -> str:
+        value = float(num_bytes)
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB", "PiB"):
+            if abs(value) < 1024.0 or unit == "PiB":
+                return f"{value:,.1f} {unit}"
+            value /= 1024.0
+        return f"{value:,.1f} PiB"
+
+    def _query_reporting_storage_growth(instance_name: str, limit: int) -> dict[str, Any]:
+        normalized_instance = instance_name.strip()
+        bounded_limit = clamp_limit(limit, default=100, max_limit=REPORTING_MAX_LIMIT)
+        with app_state.session_scope() as session:
+            current_totals = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select source, sum(file_bytes)::bigint as file_bytes, sum(file_count)::bigint as file_count
+                        from (
+                          select 'sonarr' as source, coalesce(sum(size_bytes), 0) as file_bytes, count(*) as file_count
+                          from warehouse.v_episode_files
+                          where (:instance_name = '' or instance_name = :instance_name)
+                          union all
+                          select 'radarr', coalesce(sum(size_bytes), 0), count(*)
+                          from warehouse.v_movie_files
+                          where (:instance_name = '' or instance_name = :instance_name)
+                        ) totals
+                        group by source
+                        """
+                    ),
+                    {"instance_name": normalized_instance},
+                ).mappings()
+            ]
+            # One point per day per source: the day's latest snapshot values.
+            growth_rows = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select to_char(day, 'YYYY-MM-DD') as ts,
+                               source as label,
+                               sum(file_bytes)::bigint as value
+                        from (
+                          select distinct on (date_trunc('day', captured_at), instance_name, source)
+                                 date_trunc('day', captured_at) as day,
+                                 instance_name,
+                                 source,
+                                 file_bytes
+                          from warehouse.library_stat_snapshot
+                          where (:instance_name = '' or instance_name = :instance_name)
+                          order by date_trunc('day', captured_at), instance_name, source, captured_at desc
+                        ) daily
+                        group by day, source
+                        order by day asc
+                        """
+                    ),
+                    {"instance_name": normalized_instance},
+                ).mappings()
+            ]
+            growth_delta_30d = session.execute(
+                text(
+                    """
+                    with daily as (
+                      select date_trunc('day', captured_at) as day, sum(file_bytes)::bigint as total
+                      from (
+                        select distinct on (date_trunc('day', captured_at), instance_name, source)
+                               captured_at, instance_name, source, file_bytes
+                        from warehouse.library_stat_snapshot
+                        where captured_at >= now() - interval '30 days'
+                          and (:instance_name = '' or instance_name = :instance_name)
+                        order by date_trunc('day', captured_at), instance_name, source, captured_at desc
+                      ) latest_per_day
+                      group by 1
+                    )
+                    select coalesce(
+                      (select total from daily order by day desc limit 1)
+                      - (select total from daily order by day asc limit 1),
+                      0
+                    )
+                    """
+                ),
+                {"instance_name": normalized_instance},
+            ).scalar_one()
+            storage_by_quality = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select coalesce(quality, 'unknown') as label, sum(size_bytes)::bigint as value
+                        from (
+                          select quality, size_bytes from warehouse.v_episode_files
+                          where size_bytes is not null
+                            and (:instance_name = '' or instance_name = :instance_name)
+                          union all
+                          select quality, size_bytes from warehouse.v_movie_files
+                          where size_bytes is not null
+                            and (:instance_name = '' or instance_name = :instance_name)
+                        ) files
+                        group by 1
+                        order by value desc
+                        """
+                    ),
+                    {"instance_name": normalized_instance},
+                ).mappings()
+            ]
+            top_series = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select series_title, instance_name,
+                               count(*) as episode_files,
+                               sum(size_bytes)::bigint as total_bytes,
+                               round(sum(size_bytes) / 1073741824.0, 2) as total_gib
+                        from warehouse.v_episode_files
+                        where size_bytes is not null
+                          and (:instance_name = '' or instance_name = :instance_name)
+                        group by series_title, instance_name
+                        order by total_bytes desc
+                        limit :limit
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "limit": bounded_limit},
+                ).mappings()
+            ]
+            top_movies = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select movie_title, year, instance_name, quality,
+                               size_bytes,
+                               round(size_bytes / 1073741824.0, 2) as size_gib
+                        from warehouse.v_movie_files
+                        where size_bytes is not null
+                          and (:instance_name = '' or instance_name = :instance_name)
+                        order by size_bytes desc
+                        limit :limit
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "limit": bounded_limit},
+                ).mappings()
+            ]
+        totals_by_source = {str(row["source"]): row for row in current_totals}
+        tv_bytes = int(totals_by_source.get("sonarr", {}).get("file_bytes", 0) or 0)
+        movie_bytes = int(totals_by_source.get("radarr", {}).get("file_bytes", 0) or 0)
+        return {
+            "key": "storage-growth",
+            "title": "Storage & Growth",
+            "description": "Library disk usage over time, storage share by quality, and the biggest consumers.",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "panels": [
+                {"id": "total_storage", "title": "Total Library Size", "kind": "stat", "value": _fmt_bytes(tv_bytes + movie_bytes)},
+                {"id": "tv_storage", "title": "TV Library Size", "kind": "stat", "value": _fmt_bytes(tv_bytes)},
+                {"id": "movie_storage", "title": "Movie Library Size", "kind": "stat", "value": _fmt_bytes(movie_bytes)},
+                {"id": "growth_30d", "title": "Growth (last 30 days)", "kind": "stat", "value": _fmt_bytes(int(growth_delta_30d or 0))},
+                {"id": "storage_over_time", "title": "Library Size Over Time (bytes)", "kind": "timeseries", "rows": growth_rows},
+                {"id": "storage_by_quality", "title": "Storage Share By Quality (bytes)", "kind": "distribution", "rows": storage_by_quality},
+                {"id": "top_series_by_storage", "title": "Top Series By Disk Usage", "kind": "table", "rows": top_series},
+                {"id": "top_movies_by_storage", "title": "Largest Movie Files", "kind": "table", "rows": top_movies},
+            ],
+        }
+
+    # Browser receives a fixed dashboard catalog only; no SQL text or dynamic query execution is exposed.
+    dashboard_catalog: list[dict[str, str]] = [
             {
                 "key": "overview",
                 "title": "Overview",
@@ -2161,11 +2323,20 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 "description": "Movie-level distributions and storage profile.",
             },
             {
+                "key": "storage-growth",
+                "title": "Storage & Growth",
+                "description": "Library disk usage over time, storage share by quality, and the biggest consumers.",
+            },
+            {
                 "key": "mal",
                 "title": "MAL-Dubs ↔ MAL ↔ library",
                 "description": "dubInfo.json dubbed[] IDs, titles, Sonarr/Radarr links, and dub tag sync targets.",
             },
         ]
+
+    @router.get("/api/reporting/dashboards")
+    async def list_reporting_dashboards() -> list[dict[str, str]]:
+        return dashboard_catalog
 
     report_handlers: dict[str, Any] = {
         "overview": _query_reporting_overview,
@@ -2176,8 +2347,17 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         "monitoring-audit": _query_reporting_monitoring_audit,
         "sonarr-forensics": _query_reporting_sonarr_forensics,
         "radarr-forensics": _query_reporting_radarr_forensics,
+        "storage-growth": _query_reporting_storage_growth,
         "mal": _query_reporting_mal,
     }
+
+    catalog_keys = {entry["key"] for entry in dashboard_catalog}
+    if catalog_keys != set(report_handlers):
+        raise RuntimeError(
+            "reporting dashboard catalog and handlers are out of sync: "
+            f"catalog-only={sorted(catalog_keys - set(report_handlers))} "
+            f"handler-only={sorted(set(report_handlers) - catalog_keys)}"
+        )
 
     @router.get("/api/reporting/dashboards/{dashboard_key}")
     async def get_reporting_dashboard(
@@ -2189,7 +2369,8 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         handler = report_handlers.get(dashboard_key)
         if not handler:
             raise HTTPException(status_code=404, detail="unknown dashboard")
-        return handler(instance_name=instance_name, limit=effective_limit)
+        # Dashboard handlers run many synchronous queries; keep them off the event loop.
+        return await asyncio.to_thread(handler, instance_name=instance_name, limit=effective_limit)
 
     @router.get("/api/reporting/dashboards/{dashboard_key}/panels/{panel_id}/export.csv")
     async def export_reporting_panel_csv(
@@ -2202,7 +2383,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         handler = report_handlers.get(dashboard_key)
         if not handler:
             raise HTTPException(status_code=404, detail="unknown dashboard")
-        dashboard = handler(instance_name=instance_name, limit=effective_limit)
+        dashboard = await asyncio.to_thread(handler, instance_name=instance_name, limit=effective_limit)
         panel = next((entry for entry in dashboard.get("panels", []) if entry.get("id") == panel_id), None)
         if not panel:
             raise HTTPException(status_code=404, detail="unknown panel")

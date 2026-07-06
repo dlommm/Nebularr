@@ -4,6 +4,64 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-07-05
+
+Performance and feature release: faster syncs, a responsive server during heavy
+work, live UI updates, notifications, and new analytics. Existing stacks upgrade
+with zero config changes (one additive DB migration runs automatically).
+
+### Added
+- **Live updates (SSE)**: new `GET /api/ui/events` server-sent-events stream
+  (sync progress/completion, dead-letter transitions, health changes). The UI
+  subscribes automatically and relaxes its polling from 2s–15s to a 30s–60s
+  safety net while connected; polling cadence returns on disconnect.
+- **Discord/Slack notifications**: alert webhooks now auto-detect Discord and
+  Slack URLs and send natively formatted messages (generic URLs keep the old
+  payload). New per-event toggles (health changes, sync failures, dead-letter
+  jobs) on the Integrations page, a "Send test notification" button, and a
+  `POST /api/config/alert-webhooks/test` route. Sync failures and dead-lettered
+  webhook jobs now notify, not just health transitions.
+- **Storage & Growth dashboard**: library size over time (stacked area chart),
+  storage share by quality, top series by disk usage, and largest movie files.
+  Backed by a new `warehouse.library_stat_snapshot` table (migration 0007), a
+  daily `stats_snapshot` schedule, and an automatic snapshot after the first
+  successful full/reconcile sync each day. New `timeseries` reporting panel kind.
+- **Media detail sheet**: clicking a library row now opens a designed
+  Overview/File/Media/Schedule detail panel (path, size, quality, release group,
+  custom-format score, codecs, language badges) with raw JSON tucked behind a
+  disclosure. Compare mode renders both selections field-by-field with
+  differences highlighted.
+- **Saved views + shareable links**: Library and Reporting filter state now
+  lives in the URL; a "Views" menu saves named snapshots and copies deep links.
+- Coverage reporting: `pytest-cov` and `@vitest/coverage-v8` wired into CI
+  (report-only, no threshold gate).
+
+### Changed
+- **Full syncs are much faster**: Sonarr per-series episode fetches now run
+  concurrently (bounded by `HTTP_MAX_PARALLEL_REQUESTS`), and all sync database
+  writes moved off the event loop into worker threads with per-chunk commits —
+  the API and UI stay responsive during a full sync. A full sync is no longer
+  one single transaction; chunks commit as they complete (upserts are
+  idempotent, and tombstones still only run after a complete pass).
+- Arr HTTP clients (and their connection pools) are now cached per integration
+  across sync runs and webhook jobs instead of being rebuilt each run.
+- Reporting dashboard queries run in worker threads instead of blocking the
+  event loop.
+- Reporting tables: memoized filtering/column options with deferred filter
+  input (smooth typing on large result sets); the "Unlimited" page size is now
+  "All (first 500)" with a CSV-export notice; charts and tooltips use the theme
+  tokens (fixes hard-coded dark colors in light mode).
+- Compact density is preserved via design tokens; the legacy `styles.css`
+  (724 lines) is fully retired — reporting and log views now render on the
+  shared design system.
+
+### Fixed
+- An interrupted full sync (for example a container stop mid-run) could
+  soft-delete every not-yet-fetched series/episode/movie because tombstones ran
+  against a partial seen-set. Tombstones are now skipped when a run is
+  interrupted.
+- Reporting pie-chart tooltips and slice colors were unreadable in light mode.
+
 ## [2.1.1] - 2026-07-04
 
 ### Changed

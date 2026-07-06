@@ -40,6 +40,7 @@ DASHBOARD_KEYS = [
     "monitoring-audit",
     "sonarr-forensics",
     "radarr-forensics",
+    "storage-growth",
     "mal",
 ]
 
@@ -176,3 +177,24 @@ def test_library_endpoints_execute_real_sql(client) -> None:  # type: ignore[no-
 
     movies = client.get("/api/ui/movies", params={"paged": True, "limit": 10})
     assert movies.status_code == 200
+
+
+def test_library_stat_snapshot_capture_and_daily_guard(app_state) -> None:  # type: ignore[no-untyped-def]
+    with app_state.session_scope() as session:
+        session.execute(text("delete from warehouse.library_stat_snapshot"))
+    with app_state.session_scope() as session:
+        assert repo.has_library_stat_snapshot_today(session) is False
+        repo.capture_library_stat_snapshot(session)
+    with app_state.session_scope() as session:
+        assert repo.has_library_stat_snapshot_today(session) is True
+        rows = session.execute(
+            text(
+                "select source, entity_count, file_count, file_bytes"
+                " from warehouse.library_stat_snapshot where instance_name = 'itest'"
+            )
+        ).mappings().all()
+    # The series upserted by the roundtrip test above must be counted.
+    by_source = {row["source"]: row for row in rows}
+    assert "sonarr" in by_source
+    assert by_source["sonarr"]["entity_count"] >= 1
+    assert by_source["sonarr"]["file_bytes"] >= 0
