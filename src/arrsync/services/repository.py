@@ -300,6 +300,15 @@ def upsert_episode(session: Session, instance: str, row: dict[str, Any], run_id:
     )
 
 
+def _split_language_list(raw: Any) -> list[str]:
+    # Sonarr/Radarr mediaInfo joins multi-track languages with "/" (e.g. "jpn/eng"
+    # for dual audio); commas and "|" appear in older payloads.
+    normalized = str(raw).lower()
+    for sep in (",", "/", "|"):
+        normalized = normalized.replace(sep, " ")
+    return normalized.split()
+
+
 def _extract_media_languages(episode_or_movie_file: dict[str, Any]) -> tuple[list[str], list[str]]:
     media_info = episode_or_movie_file.get("mediaInfo") or {}
     langs = episode_or_movie_file.get("languages") or []
@@ -310,10 +319,10 @@ def _extract_media_languages(episode_or_movie_file: dict[str, Any]) -> tuple[lis
             if value:
                 audio_languages.append(str(value).lower())
     if media_info.get("audioLanguages"):
-        audio_languages.extend(str(media_info.get("audioLanguages")).lower().replace(",", " ").split())
+        audio_languages.extend(_split_language_list(media_info.get("audioLanguages")))
     subtitle_languages: list[str] = []
     if media_info.get("subtitles"):
-        subtitle_languages = str(media_info.get("subtitles")).lower().replace(",", " ").split()
+        subtitle_languages = _split_language_list(media_info.get("subtitles"))
     return sorted(set(audio_languages)), sorted(set(subtitle_languages))
 
 

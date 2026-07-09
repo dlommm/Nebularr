@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.4.1] - 2026-07-08
+
+### Fixed
+- **Dual-audio files were counted as non-English**: Sonarr/Radarr join
+  multi-track `mediaInfo.audioLanguages` with slashes (e.g. `jpn/eng`), but the
+  sync parser only split on commas, so a dual-audio file whose release-parsed
+  language was Japanese ended up stored as `["japanese", "jpn/eng"]` and failed
+  the English match — flagging fully dubbed dual-audio seasons as
+  `partial-english` and inflating the "Episodes Missing English Audio" report.
+  The parser now splits audio and subtitle language strings on `/`, `,`, and
+  `|`. **After upgrading, run a Reconcile (or Full) sync** so stored episode/
+  movie file rows are re-parsed, then run the coverage tag sync; affected
+  series flip to `fully-english`.
+
 ## [2.4.0] - 2026-07-08
 
 Dubbed-anime curation release: a multi-source English-dub database and
