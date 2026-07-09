@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import type { MalJobRunRow } from "../types";
 import { PATHS } from "../routes/paths";
 
-const JOB_TYPES = ["all", "ingest", "matcher", "tag_sync"] as const;
+const JOB_TYPES = ["all", "ingest", "matcher", "tag_sync", "coverage_tag_sync"] as const;
 type JobTypeFilter = (typeof JOB_TYPES)[number];
 
 function runDurationSeconds(run: MalJobRunRow): number | null {
@@ -101,12 +101,16 @@ export function MalPage(): JSX.Element {
       });
       const matcher = await api.triggerMalMatchRefresh();
       const tagSync = await api.triggerMalTagSync();
+      const coverageTagSync = malConfig.data?.coverage_tagging_enabled
+        ? await api.triggerCoverageTagSync()
+        : null;
       setMalPipelineResult({
         label: "MAL run all",
         details: {
           ingest_backlog: ingestBacklog.details ?? {},
           match_refresh: matcher.details ?? {},
           tag_sync: tagSync.details ?? {},
+          ...(coverageTagSync ? { coverage_tag_sync: coverageTagSync.details ?? {} } : {}),
         },
       });
       await refreshMalQueries();
@@ -135,7 +139,16 @@ export function MalPage(): JSX.Element {
       ) : null}
 
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 2xl:grid-cols-6">
-        <MetricCard label="Dubbed anime" value={overview.data?.dubbed_total ?? "—"} icon={Clapperboard} />
+        <MetricCard
+          label="Dubbed anime"
+          value={overview.data?.dubbed_total ?? "—"}
+          hint={
+            overview.data?.partial_total
+              ? `${overview.data.partial_total} with partial dubs`
+              : undefined
+          }
+          icon={Clapperboard}
+        />
         <MetricCard
           label="Metadata fetched"
           value={overview.data?.fetched_success ?? "—"}
@@ -280,6 +293,13 @@ export function MalPage(): JSX.Element {
             </Button>
             <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalTagSync(), "MAL tag sync")}>
               Run tag sync
+            </Button>
+            <Button
+              variant="secondary"
+              title="Reconciles fully-english / partial-english tags from your episode files. First run PUTs every anime series/movie that needs a tag."
+              onClick={() => void runMalPipeline(() => api.triggerCoverageTagSync(), "Coverage tag sync")}
+            >
+              Run coverage tag sync
             </Button>
             <Button variant="outline" onClick={() => void runAllMalPipelines()}>
               Run all MAL pipelines
@@ -456,6 +476,31 @@ export function MalPage(): JSX.Element {
           Integrations → MyAnimeList
         </Link>
         .
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Dub-list data:{" "}
+        <a
+          href="https://github.com/MAL-Dubs/MAL-Dubs"
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary hover:underline"
+        >
+          MAL-Dubs
+        </a>{" "}
+        ·{" "}
+        <a href="https://mydublist.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+          MyDubList
+        </a>{" "}
+        by Joelis57 (
+        <a
+          href="https://creativecommons.org/licenses/by/4.0/"
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary hover:underline"
+        >
+          CC BY 4.0
+        </a>
+        ).
       </p>
       {confirmDialog}
     </div>

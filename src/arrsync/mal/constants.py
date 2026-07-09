@@ -14,3 +14,11 @@ JIKAN_API_BASE = "https://api.jikan.moe/v4"
 DEFAULT_DUB_INFO_URL = (
     "https://raw.githubusercontent.com/MAL-Dubs/MAL-Dubs/main/data/dubInfo.json"
 )
+
+# MyDubList (https://mydublist.com, CC BY 4.0): per-confidence-tier English dub
+# lists keyed by MAL id. Tiers: low (>=1 source), normal (>=2), high (>=3),
+# very-high (>=4).
+DEFAULT_MYDUBLIST_URL_TEMPLATE = (
+    "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/confidence/{tier}/dubbed_english.json"
+)
+MYDUBLIST_CONFIDENCE_TIERS = ("low", "normal", "high", "very-high")

@@ -163,6 +163,10 @@ export const api = {
     matcher_enabled?: boolean;
     tagging_enabled?: boolean;
     allow_title_year_match?: boolean;
+    source_mal_dubs_enabled?: boolean;
+    source_mydublist_enabled?: boolean;
+    coverage_tagging_enabled?: boolean;
+    mydublist_tier?: string;
   }) =>
     requestJson<{ status: string }>("/api/config/mal", "PUT", payload),
   loggingConfig: () => requestJson<LoggingConfigResponse>("/api/config/logging"),
@@ -179,6 +183,8 @@ export const api = {
   }) => requestJson<{ status: string; details: unknown }>("/api/mal/ingest-backlog", "POST", payload ?? {}),
   triggerMalMatchRefresh: () => requestJson<{ status: string; details: unknown }>("/api/mal/match-refresh", "POST"),
   triggerMalTagSync: () => requestJson<{ status: string; details: unknown }>("/api/mal/tag-sync", "POST"),
+  triggerCoverageTagSync: () =>
+    requestJson<{ status: string; details: unknown }>("/api/mal/coverage-tag-sync", "POST"),
   resetMalData: () =>
     requestJson<{ status: string; message?: string }>("/api/mal/reset-data", "POST", {
       confirmation: "RESET_MAL",

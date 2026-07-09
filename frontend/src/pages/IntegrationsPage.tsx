@@ -63,6 +63,10 @@ export function IntegrationsPage(): JSX.Element {
   const [malMatcherEnabled, setMalMatcherEnabled] = useState(false);
   const [malTaggingEnabled, setMalTaggingEnabled] = useState(false);
   const [malAllowTitleYearMatch, setMalAllowTitleYearMatch] = useState(false);
+  const [malSourceMalDubsEnabled, setMalSourceMalDubsEnabled] = useState(true);
+  const [malSourceMydublistEnabled, setMalSourceMydublistEnabled] = useState(true);
+  const [malCoverageTaggingEnabled, setMalCoverageTaggingEnabled] = useState(false);
+  const [malMydublistTier, setMalMydublistTier] = useState("normal");
   const [loggingLevelChoice, setLoggingLevelChoice] = useState<string>("INFO");
   const [loggingUseEnvDefault, setLoggingUseEnvDefault] = useState(false);
   const [alertWebhookDraft, setAlertWebhookDraft] = useState<{
@@ -125,6 +129,10 @@ export function IntegrationsPage(): JSX.Element {
     setMalMatcherEnabled(Boolean(malConfig.data.matcher_enabled));
     setMalTaggingEnabled(Boolean(malConfig.data.tagging_enabled));
     setMalAllowTitleYearMatch(Boolean(malConfig.data.allow_title_year_match));
+    setMalSourceMalDubsEnabled(Boolean(malConfig.data.source_mal_dubs_enabled));
+    setMalSourceMydublistEnabled(Boolean(malConfig.data.source_mydublist_enabled));
+    setMalCoverageTaggingEnabled(Boolean(malConfig.data.coverage_tagging_enabled));
+    setMalMydublistTier(malConfig.data.mydublist_tier || "normal");
   }, [malConfig.data]);
 
   useEffect(() => {
@@ -257,7 +265,11 @@ export function IntegrationsPage(): JSX.Element {
         malIngestEnabled !== Boolean(malConfig.data.ingest_enabled) ||
         malMatcherEnabled !== Boolean(malConfig.data.matcher_enabled) ||
         malTaggingEnabled !== Boolean(malConfig.data.tagging_enabled) ||
-        malAllowTitleYearMatch !== Boolean(malConfig.data.allow_title_year_match);
+        malAllowTitleYearMatch !== Boolean(malConfig.data.allow_title_year_match) ||
+        malSourceMalDubsEnabled !== Boolean(malConfig.data.source_mal_dubs_enabled) ||
+        malSourceMydublistEnabled !== Boolean(malConfig.data.source_mydublist_enabled) ||
+        malCoverageTaggingEnabled !== Boolean(malConfig.data.coverage_tagging_enabled) ||
+        malMydublistTier !== (malConfig.data.mydublist_tier || "normal");
       if (!toggleChanged) {
         setError("Make a change before saving.", "save MyAnimeList settings");
         return;
@@ -275,6 +287,10 @@ export function IntegrationsPage(): JSX.Element {
           matcher_enabled: malMatcherEnabled,
           tagging_enabled: malTaggingEnabled,
           allow_title_year_match: malAllowTitleYearMatch,
+          source_mal_dubs_enabled: malSourceMalDubsEnabled,
+          source_mydublist_enabled: malSourceMydublistEnabled,
+          coverage_tagging_enabled: malCoverageTaggingEnabled,
+          mydublist_tier: malMydublistTier,
           ...(malClearClientId ? {} : { client_id: malClientIdInput.trim() }),
         });
         setMalClientIdInput("");
@@ -534,6 +550,19 @@ export function IntegrationsPage(): JSX.Element {
                 malAllowTitleYearMatch,
                 setMalAllowTitleYearMatch,
               ],
+              ["mal-source-mal-dubs", "use MAL-Dubs as a dub-list source", malSourceMalDubsEnabled, setMalSourceMalDubsEnabled],
+              [
+                "mal-source-mydublist",
+                "use MyDubList as a dub-list source (CC BY 4.0)",
+                malSourceMydublistEnabled,
+                setMalSourceMydublistEnabled,
+              ],
+              [
+                "mal-coverage-tagging",
+                "enable coverage tag sync scheduler (fully-english / partial-english from your files)",
+                malCoverageTaggingEnabled,
+                setMalCoverageTaggingEnabled,
+              ],
             ] as const
           ).map(([id, label, checked, setter]) => (
             <div className="flex items-center gap-2" key={id}>
@@ -543,6 +572,25 @@ export function IntegrationsPage(): JSX.Element {
               </Label>
             </div>
           ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Label htmlFor="mal-mydublist-tier" className="text-xs text-muted-foreground">
+            MyDubList confidence tier (how many of its sources must agree a dub exists)
+          </Label>
+          <select
+            id="mal-mydublist-tier"
+            aria-label="MyDubList confidence tier"
+            className={SELECT_CLASS}
+            value={malMydublistTier}
+            disabled={!malSourceMydublistEnabled}
+            onChange={(event) => setMalMydublistTier(event.target.value)}
+          >
+            {(["low", "normal", "high", "very-high"] as const).map((tier) => (
+              <option key={tier} value={tier}>
+                {tier}
+              </option>
+            ))}
+          </select>
         </div>
       </SectionCard>
 

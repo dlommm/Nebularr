@@ -39,10 +39,14 @@ def _build_settings(**overrides: Any) -> Any:
         mal_ingest_cron="0 5 * * *",
         mal_matcher_cron="30 5 * * *",
         mal_tag_sync_cron="0 6 * * *",
+        coverage_tag_sync_cron="30 6 * * *",
         mal_ingest_enabled=False,
         mal_matcher_enabled=False,
         mal_tagging_enabled=False,
         mal_allow_title_year_match=False,
+        mal_dubs_source_enabled=True,
+        mydublist_enabled=True,
+        coverage_tagging_enabled=False,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -141,5 +145,44 @@ async def test_mal_job_skipped_when_flag_disabled() -> None:
     try:
         job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
         assert "mal_ingest" not in job_ids
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_coverage_tag_sync_registered_when_flag_row_and_coro_present() -> None:
+    async def coverage_tag_sync() -> None:
+        return None
+
+    session = ScheduleFakeSession(
+        schedule_rows=[
+            {"mode": "incremental", "cron": "*/30 * * * *"},
+            {"mode": "reconcile", "cron": "0 4 * * 0"},
+            {"mode": "coverage_tag_sync", "cron": "30 6 * * *"},
+        ]
+    )
+    settings = _build_settings(coverage_tagging_enabled=True)
+    scheduler = _build_scheduler(session, settings, coverage_tag_sync_coro=coverage_tag_sync)
+    scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert "coverage_tag_sync" in job_ids
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_coverage_tag_sync_skipped_when_flag_disabled() -> None:
+    async def coverage_tag_sync() -> None:
+        return None
+
+    session = ScheduleFakeSession(
+        schedule_rows=[{"mode": "coverage_tag_sync", "cron": "30 6 * * *"}]
+    )
+    scheduler = _build_scheduler(session, _build_settings(), coverage_tag_sync_coro=coverage_tag_sync)
+    scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert "coverage_tag_sync" not in job_ids
     finally:
         scheduler.shutdown()

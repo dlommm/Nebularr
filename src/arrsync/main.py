@@ -34,6 +34,7 @@ from arrsync.services.alert_notifier import AlertNotifier
 from arrsync.mal.ingest_service import MalIngestService
 from arrsync.mal.matcher_service import MalMatcherService
 from arrsync.mal.tag_sync_service import MalTagSyncService
+from arrsync.services.coverage_tag_service import CoverageTagSyncService
 from arrsync.services.scheduler import SyncScheduler
 from arrsync.services.sync_service import SyncService
 from arrsync.validation import validate_settings
@@ -55,6 +56,7 @@ class AppState:
     mal_ingest_service: MalIngestService | None = None
     mal_matcher_service: MalMatcherService | None = None
     mal_tag_sync_service: MalTagSyncService | None = None
+    coverage_tag_service: CoverageTagSyncService | None = None
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
     notification_task: asyncio.Task[None] | None = None
@@ -88,6 +90,7 @@ sync_service = SyncService(
 mal_ingest_service = MalIngestService(settings, session_factory_holder)
 mal_matcher_service = MalMatcherService(settings, session_factory_holder)
 mal_tag_sync_service = MalTagSyncService(settings, session_factory_holder)
+coverage_tag_service = CoverageTagSyncService(settings, session_factory_holder)
 
 
 async def _cron_mal_ingest() -> None:
@@ -102,6 +105,10 @@ async def _cron_mal_tag_sync() -> None:
     await mal_tag_sync_service.run(reason="cron")
 
 
+async def _cron_coverage_tag_sync() -> None:
+    await coverage_tag_service.run(reason="cron")
+
+
 scheduler = SyncScheduler(
     settings,
     sync_service,
@@ -109,6 +116,7 @@ scheduler = SyncScheduler(
     mal_ingest_coro=_cron_mal_ingest,
     mal_matcher_coro=_cron_mal_matcher,
     mal_tag_sync_coro=_cron_mal_tag_sync,
+    coverage_tag_sync_coro=_cron_coverage_tag_sync,
 )
 alert_notifier = AlertNotifier(settings)
 
@@ -125,6 +133,7 @@ app_state = AppState(
     mal_ingest_service=mal_ingest_service,
     mal_matcher_service=mal_matcher_service,
     mal_tag_sync_service=mal_tag_sync_service,
+    coverage_tag_service=coverage_tag_service,
 )
 
 @asynccontextmanager

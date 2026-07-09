@@ -42,6 +42,7 @@ DASHBOARD_KEYS = [
     "radarr-forensics",
     "storage-growth",
     "mal",
+    "english-dub-coverage",
 ]
 
 
@@ -75,6 +76,8 @@ def app_state(engine):  # type: ignore[no-untyped-def]
                 alert_webhook_min_state="warning",
                 alert_webhook_notify_recovery=True,
                 arr_dub_tag_label="English-Dubbed-Anime",
+                arr_coverage_full_tag_label="fully-english",
+                arr_coverage_partial_tag_label="partial-english",
                 database_url=DATABASE_URL,
                 mal_client_id="",
                 mal_dub_info_url="",
@@ -244,6 +247,259 @@ def test_retention_policy_store_and_prune(app_state) -> None:  # type: ignore[no
     assert remaining == 0
     # stat_snapshot_days=0 means keep forever — the snapshot test's rows survive.
     assert snapshots >= 1
+
+
+def test_dub_source_union_recompute(app_state) -> None:  # type: ignore[no-untyped-def]
+    from arrsync.mal import repository as mal_repo
+
+    def snapshot(session: Any, source: str, dubbed: list[int], partial: list[int]) -> None:
+        fetch_id = mal_repo.insert_dub_list_fetch(
+            session,
+            source_url=f"http://example/{source}.json",
+            content_sha256=f"sha-{source}-{len(dubbed)}-{len(partial)}",
+            id_count=len(dubbed) + len(partial),
+            raw=None,
+            http_status=200,
+            error_message=None,
+            source_name=source,
+        )
+        mal_repo.upsert_dub_source_snapshot(
+            session, fetch_id=fetch_id, source_name=source, dubbed_ids=dubbed, partial_ids=partial
+        )
+
+    def anime_state(session: Any, mal_id: int) -> tuple[str, int, bool]:
+        row = session.execute(
+            text(
+                "select dub_status, dub_source_count, is_english_dubbed"
+                " from mal.anime where mal_id = :mal_id"
+            ),
+            {"mal_id": mal_id},
+        ).mappings().one()
+        return str(row["dub_status"]), int(row["dub_source_count"]), bool(row["is_english_dubbed"])
+
+    both = ["mal_dubs", "mydublist"]
+    with app_state.session_scope() as session:
+        snapshot(session, "mal_dubs", dubbed=[910100, 910101], partial=[910102])
+        snapshot(session, "mydublist", dubbed=[910101, 910103], partial=[910100])
+        mal_repo.recompute_dub_union(session, both)
+    with app_state.session_scope() as session:
+        # dubbed in one source beats partial in the other
+        assert anime_state(session, 910100) == ("dubbed", 2, True)
+        assert anime_state(session, 910101) == ("dubbed", 2, True)
+        assert anime_state(session, 910102) == ("partial", 1, True)
+        assert anime_state(session, 910103) == ("dubbed", 1, True)
+
+    with app_state.session_scope() as session:
+        # 910102 drops off the MAL-Dubs list entirely -> flag clears
+        snapshot(session, "mal_dubs", dubbed=[910100, 910101], partial=[])
+        mal_repo.recompute_dub_union(session, both)
+    with app_state.session_scope() as session:
+        assert anime_state(session, 910102) == ("none", 0, False)
+
+    with app_state.session_scope() as session:
+        # disabling MyDubList removes its contribution without deleting its rows
+        mal_repo.recompute_dub_union(session, ["mal_dubs"])
+    with app_state.session_scope() as session:
+        assert anime_state(session, 910103) == ("none", 0, False)
+        assert anime_state(session, 910100) == ("dubbed", 1, True)
+        mydublist_rows = session.execute(
+            text("select count(*) from mal.anime_dub_source where source = 'mydublist'")
+        ).scalar_one()
+        assert int(mydublist_rows) >= 2
+
+
+def test_series_and_movie_coverage_views(app_state) -> None:  # type: ignore[no-untyped-def]
+    instance = "covtest"
+
+    def add_series(session: Any, source_id: int, series_type: str) -> None:
+        session.execute(
+            text(
+                """
+                insert into warehouse.series (source_id, instance_name, title, monitored, payload)
+                values (:sid, :inst, :title, true, cast(:payload as jsonb))
+                on conflict (source_id, instance_name) do nothing
+                """
+            ),
+            {
+                "sid": source_id,
+                "inst": instance,
+                "title": f"Series {source_id}",
+                "payload": f'{{"seriesType": "{series_type}"}}',
+            },
+        )
+
+    def add_episode(
+        session: Any,
+        source_id: int,
+        series_source_id: int,
+        *,
+        monitored: bool = True,
+        aired: bool = True,
+        has_file: bool = True,
+        audio: list[str] | None = None,
+    ) -> None:
+        session.execute(
+            text(
+                """
+                insert into warehouse.episode (
+                    source_id, instance_name, series_source_id, season_number, episode_number,
+                    title, air_date, monitored, payload
+                )
+                values (
+                    :sid, :inst, :series_sid, 1, :sid,
+                    'ep', case when :aired then now() - interval '30 days' else now() + interval '30 days' end,
+                    :monitored, cast(:payload as jsonb)
+                )
+                on conflict (source_id, instance_name) do nothing
+                """
+            ),
+            {
+                "sid": source_id,
+                "inst": instance,
+                "series_sid": series_source_id,
+                "aired": aired,
+                "monitored": monitored,
+                "payload": '{"hasFile": true}' if has_file else '{"hasFile": false}',
+            },
+        )
+        if has_file and audio is not None:
+            session.execute(
+                text(
+                    """
+                    insert into warehouse.episode_file (
+                        source_id, instance_name, episode_source_id, audio_languages
+                    )
+                    values (:sid, :inst, :episode_sid, cast(:audio as text[]))
+                    on conflict (source_id, instance_name) do nothing
+                    """
+                ),
+                {"sid": source_id, "inst": instance, "episode_sid": source_id, "audio": audio},
+            )
+
+    def add_movie(
+        session: Any,
+        source_id: int,
+        *,
+        genres: list[str],
+        has_file: bool,
+        audio: list[str] | None = None,
+    ) -> None:
+        import json as _json
+
+        session.execute(
+            text(
+                """
+                insert into warehouse.movie (source_id, instance_name, title, monitored, payload)
+                values (:sid, :inst, :title, true, cast(:payload as jsonb))
+                on conflict (source_id, instance_name) do nothing
+                """
+            ),
+            {
+                "sid": source_id,
+                "inst": instance,
+                "title": f"Movie {source_id}",
+                "payload": _json.dumps({"hasFile": has_file, "genres": genres}),
+            },
+        )
+        if has_file and audio is not None:
+            session.execute(
+                text(
+                    """
+                    insert into warehouse.movie_file (
+                        source_id, instance_name, movie_source_id, audio_languages
+                    )
+                    values (:sid, :inst, :movie_sid, cast(:audio as text[]))
+                    on conflict (source_id, instance_name) do nothing
+                    """
+                ),
+                {"sid": source_id, "inst": instance, "movie_sid": source_id, "audio": audio},
+            )
+
+    with app_state.session_scope() as session:
+        # Series A: one english file, one japanese-only file, one missing -> partial
+        add_series(session, 800, "anime")
+        add_episode(session, 8001, 800, audio=["english", "japanese"])
+        add_episode(session, 8002, 800, audio=["japanese"])
+        add_episode(session, 8003, 800, has_file=False)
+        # Series B: everything monitored+aired downloaded with english; unmonitored
+        # japanese file and an unaired episode must not break 'full'
+        add_series(session, 810, "anime")
+        add_episode(session, 8101, 810, audio=["eng"])
+        add_episode(session, 8102, 810, monitored=False, audio=["japanese"])
+        add_episode(session, 8103, 810, aired=False, has_file=False)
+        # Series C: all downloaded files english but one aired episode missing -> none
+        add_series(session, 820, "anime")
+        add_episode(session, 8201, 820, audio=["english"])
+        add_episode(session, 8202, 820, has_file=False)
+        # Series D: not anime -> out of scope
+        add_series(session, 830, "standard")
+        add_episode(session, 8301, 830, audio=["japanese"])
+
+        add_movie(session, 900, genres=["Anime"], has_file=True, audio=["english"])
+        add_movie(session, 901, genres=["Anime"], has_file=True, audio=["japanese"])
+        add_movie(session, 902, genres=["Anime"], has_file=False)
+        add_movie(session, 903, genres=["Action"], has_file=True, audio=["japanese"])
+        # MAL-linked movie without an anime genre is still in scope
+        add_movie(session, 904, genres=[], has_file=True, audio=["japanese"])
+        session.execute(
+            text(
+                """
+                insert into mal.anime (mal_id, is_english_dubbed, dub_status, dub_source_count)
+                values (910200, true, 'dubbed', 1)
+                on conflict (mal_id) do nothing
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                insert into mal.warehouse_link (
+                    mal_id, instance_name, arr_entity, warehouse_source_id, match_method, confidence
+                )
+                values (910200, :inst, 'radarr_movie', 904, 'manual', 'high')
+                on conflict (mal_id, instance_name, arr_entity) do nothing
+                """
+            ),
+            {"inst": instance},
+        )
+
+    with app_state.session_scope() as session:
+        series_rows = {
+            int(r["source_id"]): dict(r)
+            for r in session.execute(
+                text(
+                    "select * from warehouse.v_anime_series_english_coverage"
+                    " where instance_name = :inst"
+                ),
+                {"inst": instance},
+            ).mappings()
+        }
+        movie_rows = {
+            int(r["source_id"]): dict(r)
+            for r in session.execute(
+                text(
+                    "select * from warehouse.v_anime_movie_english_coverage"
+                    " where instance_name = :inst"
+                ),
+                {"inst": instance},
+            ).mappings()
+        }
+
+    assert set(series_rows) == {800, 810, 820}
+    a = series_rows[800]
+    assert a["coverage_status"] == "partial"
+    assert a["aired_monitored_episodes"] == 3
+    assert a["downloaded_episodes"] == 2
+    assert a["non_english_episodes"] == 1
+    assert series_rows[810]["coverage_status"] == "full"
+    assert series_rows[820]["coverage_status"] == "none"
+    assert series_rows[820]["non_english_episodes"] == 0
+
+    assert set(movie_rows) == {900, 901, 902, 904}
+    assert movie_rows[900]["coverage_status"] == "full"
+    assert movie_rows[901]["coverage_status"] == "partial"
+    assert movie_rows[902]["coverage_status"] == "none"
+    assert movie_rows[904]["coverage_status"] == "partial"
 
 
 def test_webhook_ingest_allowed_follows_integration_flags(app_state) -> None:  # type: ignore[no-untyped-def]

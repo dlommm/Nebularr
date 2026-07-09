@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from typing import Any, cast
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -59,12 +59,24 @@ def get_mal_sync_ui_snapshot(session: Session) -> dict[str, Any]:
             text("select count(*) from mal.anime where is_english_dubbed = true")
         ).scalar_one()
     )
+    partial_total = int(
+        session.execute(
+            text("select count(*) from mal.anime where dub_status = 'partial'")
+        ).scalar_one()
+    )
+    source_counts: dict[str, int] = {}
+    for r in session.execute(
+        text("select source, count(*) as cnt from mal.anime_dub_source group by source")
+    ).mappings():
+        source_counts[str(r["source"])] = int(r["cnt"])
     return {
         "running": running,
         "last_finished": last_finished,
         "pending_fetch_count": pending_fetch_count,
         "fetched_success_count": fetched_success_count,
         "dubbed_total": dubbed_total,
+        "partial_total": partial_total,
+        "source_counts": source_counts,
     }
 
 
@@ -157,17 +169,19 @@ def finish_mal_job_run(
     )
 
 
-def latest_dub_list_sha(session: Session) -> str | None:
+def latest_dub_list_sha(session: Session, source_name: str = "mal_dubs") -> str | None:
     row = session.execute(
         text(
             """
             select content_sha256
             from mal.dub_list_fetch
             where error_message is null and http_status is not null and http_status < 400
+              and source_name = :source_name
             order by id desc
             limit 1
             """
-        )
+        ),
+        {"source_name": source_name},
     ).scalar_one_or_none()
     return str(row) if row else None
 
@@ -491,63 +505,121 @@ def count_dubbed_without_link(session: Session) -> int:
     return int(row or 0)
 
 
-def mark_dubbed_from_snapshot(session: Session, fetch_id: int, mal_ids: list[int]) -> None:
-    if not mal_ids:
-        return
-    for mid in mal_ids:
+def upsert_dub_source_snapshot(
+    session: Session,
+    *,
+    fetch_id: int,
+    source_name: str,
+    dubbed_ids: list[int],
+    partial_ids: list[int],
+) -> dict[str, int]:
+    """Record one dub source's list: snapshot items, bare ``mal.anime`` rows, and
+    per-source membership rows. Rows for ids no longer listed by this source are
+    removed; ``mal.anime`` dub flags are only touched by :func:`recompute_dub_union`.
+    """
+    dubbed = sorted(set(dubbed_ids))
+    partial = sorted(set(partial_ids) - set(dubbed_ids))
+    out: dict[str, int] = {"dubbed": len(dubbed), "partial": len(partial), "removed": 0}
+    for ids, status in ((dubbed, "dubbed"), (partial, "partial")):
+        if not ids:
+            continue
         session.execute(
             text(
                 """
-                insert into mal.dub_list_snapshot_item (dub_list_fetch_id, mal_id)
-                values (:fetch_id, :mid)
+                insert into mal.dub_list_snapshot_item (dub_list_fetch_id, mal_id, status)
+                select :fetch_id, x.mal_id, :status
+                from unnest(cast(:ids as int[])) as x(mal_id)
                 on conflict (dub_list_fetch_id, mal_id) do nothing
                 """
             ),
-            {"fetch_id": fetch_id, "mid": mid},
+            {"fetch_id": fetch_id, "status": status, "ids": ids},
         )
         session.execute(
             text(
                 """
                 insert into mal.anime (
-                    mal_id, is_english_dubbed, dub_list_seen_at, dub_list_last_present_at, mal_fetch_status
+                    mal_id, dub_list_seen_at, dub_list_last_present_at, mal_fetch_status
                 )
-                values (:mid, true, now(), now(), 'pending')
+                select x.mal_id, now(), now(), 'pending'
+                from unnest(cast(:ids as int[])) as x(mal_id)
                 on conflict (mal_id) do update
-                set is_english_dubbed = true,
-                    dub_list_seen_at = now(),
+                set dub_list_seen_at = now(),
                     dub_list_last_present_at = now()
                 """
             ),
-            {"mid": mid},
+            {"ids": ids},
         )
-
-
-def clear_dub_flag_not_in_list(session: Session, active_ids: list[int]) -> int:
-    if not active_ids:
+        session.execute(
+            text(
+                """
+                insert into mal.anime_dub_source (mal_id, source, status, last_seen_at, last_fetch_id)
+                select x.mal_id, :source, :status, now(), :fetch_id
+                from unnest(cast(:ids as int[])) as x(mal_id)
+                on conflict (mal_id, source) do update
+                set status = excluded.status,
+                    last_seen_at = now(),
+                    last_fetch_id = excluded.last_fetch_id
+                """
+            ),
+            {"source": source_name, "status": status, "ids": ids, "fetch_id": fetch_id},
+        )
+    all_ids = dubbed + partial
+    if all_ids:
         result = session.execute(
             text(
                 """
-                update mal.anime
-                set is_english_dubbed = false
-                where is_english_dubbed = true
+                delete from mal.anime_dub_source
+                where source = :source
+                  and not (mal_id = any(cast(:ids as int[])))
                 """
-            )
+            ),
+            {"source": source_name, "ids": all_ids},
         )
-        cr0 = cast(CursorResult[Any], result)
-        return int(cr0.rowcount or 0)
+    else:
+        result = session.execute(
+            text("delete from mal.anime_dub_source where source = :source"),
+            {"source": source_name},
+        )
+    cr = cast(CursorResult[Any], result)
+    out["removed"] = int(cr.rowcount or 0)
+    return out
+
+
+def recompute_dub_union(session: Session, enabled_sources: list[str]) -> dict[str, int]:
+    """Derive ``mal.anime`` dub flags from the per-source rows of the enabled sources.
+
+    ``is_english_dubbed`` is true when any enabled source lists the id (dubbed or
+    partial); ``dub_status`` prefers 'dubbed' over 'partial'; ``dub_source_count``
+    is the number of enabled sources listing the id. Disabled sources keep their
+    ``anime_dub_source`` rows but stop contributing here.
+    """
     result = session.execute(
         text(
             """
-            update mal.anime
-            set is_english_dubbed = false
-            where is_english_dubbed = true
-              and mal_id not in :ids
+            with agg as (
+                select mal_id,
+                       case when bool_or(status = 'dubbed') then 'dubbed' else 'partial' end as status,
+                       count(*)::int as cnt
+                from mal.anime_dub_source
+                where source = any(cast(:sources as text[]))
+                group by mal_id
+            )
+            update mal.anime a
+            set dub_status = coalesce(g.status, 'none'),
+                dub_source_count = coalesce(g.cnt, 0),
+                is_english_dubbed = (g.mal_id is not null)
+            from mal.anime x
+            left join agg g on g.mal_id = x.mal_id
+            where a.mal_id = x.mal_id
+              and (a.dub_status is distinct from coalesce(g.status, 'none')
+                   or a.dub_source_count is distinct from coalesce(g.cnt, 0)
+                   or a.is_english_dubbed is distinct from (g.mal_id is not null))
             """
-        ).bindparams(bindparam("ids", expanding=True)),
-        {"ids": active_ids},
+        ),
+        {"sources": list(enabled_sources)},
     )
     cr = cast(CursorResult[Any], result)
-    return int(cr.rowcount or 0)
+    return {"changed": int(cr.rowcount or 0)}
 
 
 def insert_dub_list_fetch(
@@ -559,12 +631,17 @@ def insert_dub_list_fetch(
     raw: dict[str, Any] | None,
     http_status: int | None,
     error_message: str | None,
+    source_name: str = "mal_dubs",
 ) -> int:
     row = session.execute(
         text(
             """
-            insert into mal.dub_list_fetch (source_url, content_sha256, id_count, raw, http_status, error_message)
-            values (:source_url, :sha, :id_count, cast(:raw as jsonb), :http_status, :error_message)
+            insert into mal.dub_list_fetch (
+                source_url, content_sha256, id_count, raw, http_status, error_message, source_name
+            )
+            values (
+                :source_url, :sha, :id_count, cast(:raw as jsonb), :http_status, :error_message, :source_name
+            )
             returning id
             """
         ),
@@ -575,6 +652,7 @@ def insert_dub_list_fetch(
             "raw": json.dumps(raw, default=str) if raw is not None else None,
             "http_status": http_status,
             "error_message": error_message,
+            "source_name": source_name,
         },
     ).scalar_one()
     return int(row)

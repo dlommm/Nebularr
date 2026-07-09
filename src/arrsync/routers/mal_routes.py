@@ -24,7 +24,7 @@ def build_mal_router(app_state: Any) -> APIRouter:
     @router.get("/api/mal/job-runs")
     async def list_mal_job_runs(job_type: str = "all", limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         normalized = job_type.lower()
-        allowed = {"all", "ingest", "matcher", "tag_sync"}
+        allowed = {"all", "ingest", "matcher", "tag_sync", "coverage_tag_sync"}
         if normalized not in allowed:
             raise HTTPException(status_code=400, detail="invalid job_type filter")
         bounded_limit = max(1, min(limit, 200))
@@ -73,6 +73,38 @@ def build_mal_router(app_state: Any) -> APIRouter:
                     )
                 ).scalar_one()
             )
+            partial_total = int(
+                session.execute(
+                    text("select count(*) from mal.anime where dub_status = 'partial'")
+                ).scalar_one()
+            )
+            source_counts = {
+                str(r["source"]): int(r["cnt"])
+                for r in session.execute(
+                    text("select source, count(*) as cnt from mal.anime_dub_source group by source")
+                ).mappings()
+            }
+            coverage: dict[str, int] = {}
+            for r in session.execute(
+                text(
+                    """
+                    select coverage_status, count(*) as cnt
+                    from warehouse.v_anime_series_english_coverage
+                    group by coverage_status
+                    """
+                )
+            ).mappings():
+                coverage[f"series_{r['coverage_status']}"] = int(r["cnt"])
+            for r in session.execute(
+                text(
+                    """
+                    select coverage_status, count(*) as cnt
+                    from warehouse.v_anime_movie_english_coverage
+                    group by coverage_status
+                    """
+                )
+            ).mappings():
+                coverage[f"movies_{r['coverage_status']}"] = int(r["cnt"])
             manual_link_count = int(session.execute(text("select count(*) from mal.manual_link")).scalar_one())
             unmatched = session.execute(
                 text(
@@ -97,6 +129,9 @@ def build_mal_router(app_state: Any) -> APIRouter:
             ).mappings()
             return {
                 "dubbed_total": dubbed_total,
+                "partial_total": partial_total,
+                "source_counts": source_counts,
+                "coverage": coverage,
                 "fetched_success": fetched_success,
                 "pending_fetch": pending_fetch,
                 "linked": linked,
@@ -263,6 +298,17 @@ def build_mal_router(app_state: Any) -> APIRouter:
             details = await svc.run(reason="manual")
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"mal tag-sync failed: {exc}") from exc
+        return {"status": "ok", "details": details}
+
+    @router.post("/api/mal/coverage-tag-sync")
+    async def trigger_coverage_tag_sync() -> dict[str, Any]:
+        svc = app_state.coverage_tag_service
+        if svc is None:
+            raise HTTPException(status_code=501, detail="coverage tag sync service unavailable")
+        try:
+            details = await svc.run(reason="manual")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"coverage tag-sync failed: {exc}") from exc
         return {"status": "ok", "details": details}
 
     @router.post("/api/mal/reset-data")

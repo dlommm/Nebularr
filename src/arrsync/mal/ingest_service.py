@@ -6,10 +6,15 @@ from typing import Any
 from arrsync.config import Settings
 from arrsync.db import session_scope
 from arrsync.mal import repository as mal_repo
+from arrsync.mal.dub_sources import enabled_dub_sources, parse_dub_source_payload
 from arrsync.mal.externals import externals_from_jikan_data
-from arrsync.mal.http_clients import DubInfoClient, JikanClient, MalApiClient
+from arrsync.mal.http_clients import DubListClient, JikanClient, MalApiClient
 from arrsync.services import repository as repo
-from arrsync.services.mal_config_store import read_mal_client_id
+from arrsync.services.mal_config_store import (
+    read_mal_client_id,
+    read_mal_feature_flags,
+    read_mydublist_tier,
+)
 
 log = logging.getLogger(__name__)
 
@@ -25,10 +30,16 @@ def _ingest_batch_limit(settings: Settings, max_ids_per_run: int | None) -> int:
 
 
 class MalIngestService:
-    def __init__(self, settings: Settings, session_factory: Any) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        session_factory: Any,
+        *,
+        dub_client_class: type[DubListClient] = DubListClient,
+    ) -> None:
         self.settings = settings
         self.session_factory = session_factory
-        self.dub_client = DubInfoClient(settings)
+        self.dub_client_class = dub_client_class
         self.jikan_client = JikanClient(settings)
 
     async def run(
@@ -40,6 +51,7 @@ class MalIngestService:
         details: dict[str, Any] = {
             "reason": reason,
             "dub_list_unchanged": False,
+            "sources": {},
             "mal_api_calls": 0,
             "jikan_calls": 0,
         }
@@ -52,42 +64,75 @@ class MalIngestService:
                 raise MalIngestAlreadyRunningError("MAL ingest is already running")
             run_id = mal_repo.insert_mal_job_run(session, "ingest")
             resolved_mal_client_id = read_mal_client_id(session, self.settings)
+            flags = read_mal_feature_flags(session, self.settings)
+            tier = read_mydublist_tier(session, self.settings)
+        specs = enabled_dub_sources(self.settings, flags, tier)
         mal_client = MalApiClient(self.settings, client_id=resolved_mal_client_id)
         try:
-            raw_json, sha, http_status = await self.dub_client.fetch()
-            dubbed = raw_json.get("dubbed")
-            if not isinstance(dubbed, list):
-                raise ValueError("dubInfo.json missing dubbed array")
-            mal_ids = sorted({int(x) for x in dubbed})
-            log.debug(
-                "mal ingest: dub list fetched",
-                extra={"dub_id_count": len(mal_ids), "http_status": http_status},
-            )
-
-            pending: list[int] = []
-            with session_scope(self.session_factory) as session:
-                prev_sha = mal_repo.latest_dub_list_sha(session)
-                if prev_sha == sha:
-                    details["dub_list_unchanged"] = True
-                    log.info("mal ingest: dub list unchanged (sha256), skipping list sync")
-                else:
+            source_errors: list[str] = []
+            all_unchanged = bool(specs)
+            for spec in specs:
+                try:
+                    client = self.dub_client_class(self.settings, url=spec.url)
+                    raw_json, sha, http_status = await client.fetch()
+                    dubbed_ids, partial_ids = parse_dub_source_payload(spec, raw_json)
+                except Exception as exc:
+                    source_errors.append(f"{spec.name}: {exc}")
+                    details["sources"][spec.name] = {"error": str(exc)}
+                    all_unchanged = False
+                    log.warning("mal ingest: dub source %s failed: %s", spec.name, exc)
+                    continue
+                log.debug(
+                    "mal ingest: dub list fetched",
+                    extra={
+                        "source": spec.name,
+                        "dubbed_count": len(dubbed_ids),
+                        "partial_count": len(partial_ids),
+                        "http_status": http_status,
+                    },
+                )
+                with session_scope(self.session_factory) as session:
+                    prev_sha = mal_repo.latest_dub_list_sha(session, spec.name)
+                    if prev_sha == sha:
+                        details["sources"][spec.name] = {
+                            "unchanged": True,
+                            "dubbed": len(dubbed_ids),
+                            "partial": len(partial_ids),
+                        }
+                        log.info(
+                            "mal ingest: %s list unchanged (sha256), skipping list sync", spec.name
+                        )
+                        continue
+                    all_unchanged = False
                     fetch_id = mal_repo.insert_dub_list_fetch(
                         session,
-                        source_url=self.dub_client.url,
+                        source_url=spec.url,
                         content_sha256=sha,
-                        id_count=len(mal_ids),
+                        id_count=len(dubbed_ids) + len(partial_ids),
                         raw=raw_json,
                         http_status=http_status,
                         error_message=None,
+                        source_name=spec.name,
                     )
-                    mal_repo.mark_dubbed_from_snapshot(session, fetch_id, mal_ids)
-                    cleared = mal_repo.clear_dub_flag_not_in_list(session, mal_ids)
-                    details["dub_ids_active"] = len(mal_ids)
-                    details["dub_flags_cleared"] = cleared
-                    details["dub_list_fetch_id"] = fetch_id
+                    counts = mal_repo.upsert_dub_source_snapshot(
+                        session,
+                        fetch_id=fetch_id,
+                        source_name=spec.name,
+                        dubbed_ids=dubbed_ids,
+                        partial_ids=partial_ids,
+                    )
+                    details["sources"][spec.name] = {"fetch_id": fetch_id, **counts}
+            if source_errors:
+                details["source_errors"] = source_errors
+            if specs and len(source_errors) == len(specs):
+                raise RuntimeError("all dub list sources failed: " + "; ".join(source_errors))
+            details["dub_list_unchanged"] = all_unchanged
 
-                limit = batch_size
-                pending = mal_repo.list_anime_needing_mal_fetch(session, limit)
+            pending: list[int] = []
+            with session_scope(self.session_factory) as session:
+                union = mal_repo.recompute_dub_union(session, [s.name for s in specs])
+                details["dub_union_changed"] = union["changed"]
+                pending = mal_repo.list_anime_needing_mal_fetch(session, batch_size)
                 details["mal_fetch_pending_batch"] = len(pending)
 
             if pending and not (mal_client.client_id or "").strip():

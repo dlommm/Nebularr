@@ -81,6 +81,10 @@ export type MalConfigResponse = {
   matcher_enabled: boolean;
   tagging_enabled: boolean;
   allow_title_year_match: boolean;
+  source_mal_dubs_enabled: boolean;
+  source_mydublist_enabled: boolean;
+  coverage_tagging_enabled: boolean;
+  mydublist_tier: string;
   /** One batch of MAL fetches per ingest run; default from server env `MAL_MAX_IDS_PER_RUN`. */
   mal_max_ids_per_run: number;
   mal_min_request_interval_seconds: number;
@@ -252,6 +256,9 @@ export type IntegrityAuditResult = {
 
 export type MalOverview = {
   dubbed_total: number;
+  partial_total: number;
+  source_counts: Record<string, number>;
+  coverage: Record<string, number>;
   fetched_success: number;
   pending_fetch: number;
   linked: number;

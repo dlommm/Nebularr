@@ -101,6 +101,17 @@ class Settings(BaseSettings):
     mal_allow_title_year_match: bool = False
     arr_dub_tag_label: str = "English-Dubbed-Anime"
 
+    mal_dubs_source_enabled: bool = True
+    mydublist_enabled: bool = True
+    mydublist_url_template: str = (
+        "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/confidence/{tier}/dubbed_english.json"
+    )
+    mydublist_confidence_tier: str = "normal"
+    coverage_tagging_enabled: bool = False
+    coverage_tag_sync_cron: str = "30 4 * * *"
+    arr_coverage_full_tag_label: str = "fully-english"
+    arr_coverage_partial_tag_label: str = "partial-english"
+
 @lru_cache
 def get_settings() -> Settings:
     apply_runtime_database_url_to_environ()

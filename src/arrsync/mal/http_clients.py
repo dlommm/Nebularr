@@ -14,9 +14,9 @@ from arrsync.mal.constants import DEFAULT_DUB_INFO_URL, JIKAN_API_BASE, MAL_ANIM
 log = logging.getLogger(__name__)
 
 
-class DubInfoClient:
-    def __init__(self, settings: Settings) -> None:
-        self.url = settings.mal_dub_info_url or DEFAULT_DUB_INFO_URL
+class DubListClient:
+    def __init__(self, settings: Settings, *, url: str | None = None) -> None:
+        self.url = url or settings.mal_dub_info_url or DEFAULT_DUB_INFO_URL
         self.timeout = settings.http_timeout_seconds
         self.retry = settings.http_retry_attempts
 
@@ -41,6 +41,10 @@ class DubInfoClient:
                     break
                 await asyncio.sleep(0.5 * attempt)
         raise RuntimeError(f"dub info fetch failed: {self.url}") from last_err
+
+
+# Backward-compatible alias from the single-source (MAL-Dubs only) era.
+DubInfoClient = DubListClient
 
 
 class MalApiClient:

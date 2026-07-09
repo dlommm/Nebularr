@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Dubbed-anime curation release: a multi-source English-dub database and
+episode-level coverage tags that surface, inside Sonarr/Radarr, which series
+actually have all-English files. One additive DB migration (0009) runs
+automatically.
+
+### Added
+- **Multi-source dub database**: ingest now reads MAL-Dubs' previously ignored
+  `incomplete` array and adds [MyDubList](https://mydublist.com) (CC BY 4.0,
+  MAL-id keyed, configurable confidence tier `low|normal|high|very-high`) as a
+  second source. Per-source membership is stored in `mal.anime_dub_source`
+  (migration 0009) so the union and per-title source agreement stay queryable;
+  each source is individually toggleable under Integrations → MyAnimeList and
+  fetches skip unchanged lists per source (SHA-256). A single source failing no
+  longer fails the ingest run.
+- **English coverage tags** (`fully-english` / `partial-english`): a new
+  `coverage_tag_sync` job computes per-series English-audio coverage from your
+  own episode files (view `warehouse.v_anime_series_english_coverage`, scoped
+  to monitored, already-aired episodes of `seriesType: anime`) and reconciles
+  the two mutually exclusive tags in Sonarr. `fully-english` means every
+  monitored aired episode is downloaded with an English audio track;
+  `partial-english` means at least one downloaded file lacks one (empty audio
+  metadata counts as lacking, consistent with the language audit). Radarr anime
+  movies (MAL-linked or `anime` genre) get the same tags via
+  `warehouse.v_anime_movie_english_coverage`. Off by default — enable under
+  Integrations → MyAnimeList; runs at 04:30 UTC after the dub tag sync, or on
+  demand via `POST /api/mal/coverage-tag-sync` / the MAL page button.
+- **English Dub Coverage dashboard** (`english-dub-coverage`): per-series
+  "N non-English of M aired" table with dub-list fixability (dubbed / partial /
+  not-listed + how many sources agree), the same for movies, an episode-level
+  "files to replace" drilldown, and stat tiles for fully/partially covered
+  series and movies. CSV export works like every other panel.
+- `GET /api/mal/overview` now reports `partial_total`, per-source id counts,
+  and coverage tallies; `GET /api/mal/job-runs` accepts
+  `job_type=coverage_tag_sync`; the MAL page shows partial-dub counts and the
+  MAL-Dubs / MyDubList attribution.
+
+### Changed
+- `mal.anime.is_english_dubbed` is now derived from the union of enabled
+  sources (dubbed **or** partially dubbed counts). Titles that are only
+  partially dubbed or only known to MyDubList now receive the
+  `English-Dubbed-Anime` tag and enter the MAL/Jikan enrichment backlog —
+  expect a one-time backlog bump after upgrading. A new `mal.anime.dub_status`
+  (`none|partial|dubbed`) and `dub_source_count` record the distinction. An id
+  now loses the flag only when **no** enabled source lists it.
+
 ## [2.3.0] - 2026-07-06
 
 Operator-experience release: near-real-time webhook processing, a dedicated

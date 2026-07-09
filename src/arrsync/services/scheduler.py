@@ -28,6 +28,7 @@ class SyncScheduler:
         mal_ingest_coro: Callable[[], Awaitable[Any]] | None = None,
         mal_matcher_coro: Callable[[], Awaitable[Any]] | None = None,
         mal_tag_sync_coro: Callable[[], Awaitable[Any]] | None = None,
+        coverage_tag_sync_coro: Callable[[], Awaitable[Any]] | None = None,
     ):
         self.settings = settings
         self.sync_service = sync_service
@@ -35,6 +36,7 @@ class SyncScheduler:
         self._mal_ingest_coro = mal_ingest_coro
         self._mal_matcher_coro = mal_matcher_coro
         self._mal_tag_sync_coro = mal_tag_sync_coro
+        self._coverage_tag_sync_coro = coverage_tag_sync_coro
         self.scheduler = AsyncIOScheduler(timezone=settings.scheduler_timezone)
 
     def start(self) -> None:
@@ -47,6 +49,7 @@ class SyncScheduler:
         mal_ingest_cron = jobs.get("mal_ingest", self.settings.mal_ingest_cron)
         mal_matcher_cron = jobs.get("mal_matcher", self.settings.mal_matcher_cron)
         mal_tag_sync_cron = jobs.get("mal_tag_sync", self.settings.mal_tag_sync_cron)
+        coverage_tag_sync_cron = jobs.get("coverage_tag_sync", self.settings.coverage_tag_sync_cron)
         self.scheduler.add_job(
             self._run_incremental_tick,
             CronTrigger.from_crontab(incremental_cron, timezone=self.settings.scheduler_timezone),
@@ -103,6 +106,17 @@ class SyncScheduler:
                 id="mal_tag_sync",
                 replace_existing=True,
             )
+        if (
+            self._coverage_tag_sync_coro
+            and mal_flags["coverage_tagging_enabled"]
+            and "coverage_tag_sync" in jobs
+        ):
+            self.scheduler.add_job(
+                self._coverage_tag_sync_coro,
+                CronTrigger.from_crontab(coverage_tag_sync_cron, timezone=self.settings.scheduler_timezone),
+                id="coverage_tag_sync",
+                replace_existing=True,
+            )
         self.scheduler.start()
         log.info(
             "scheduler started",
@@ -112,6 +126,9 @@ class SyncScheduler:
                 "mal_ingest": bool(self._mal_ingest_coro and mal_flags["ingest_enabled"]),
                 "mal_matcher": bool(self._mal_matcher_coro and mal_flags["matcher_enabled"]),
                 "mal_tag_sync": bool(self._mal_tag_sync_coro and mal_flags["tagging_enabled"]),
+                "coverage_tag_sync": bool(
+                    self._coverage_tag_sync_coro and mal_flags["coverage_tagging_enabled"]
+                ),
             },
         )
 
@@ -138,7 +155,8 @@ class SyncScheduler:
                       ('integrity_audit', :integrity_audit_cron, :tz, false, now()),
                       ('mal_ingest', :mal_ingest_cron, :tz, true, now()),
                       ('mal_matcher', :mal_matcher_cron, :tz, true, now()),
-                      ('mal_tag_sync', :mal_tag_sync_cron, :tz, true, now())
+                      ('mal_tag_sync', :mal_tag_sync_cron, :tz, true, now()),
+                      ('coverage_tag_sync', :coverage_tag_sync_cron, :tz, true, now())
                     on conflict (mode) do nothing
                     """
                 ),
@@ -150,6 +168,7 @@ class SyncScheduler:
                     "mal_ingest_cron": self.settings.mal_ingest_cron,
                     "mal_matcher_cron": self.settings.mal_matcher_cron,
                     "mal_tag_sync_cron": self.settings.mal_tag_sync_cron,
+                    "coverage_tag_sync_cron": self.settings.coverage_tag_sync_cron,
                     "tz": self.settings.scheduler_timezone,
                 },
             )

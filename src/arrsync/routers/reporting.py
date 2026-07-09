@@ -1213,6 +1213,187 @@ def build_reporting_router(app_state: Any) -> APIRouter:
             ],
         }
 
+    def _query_reporting_english_dub_coverage(instance_name: str, limit: int) -> dict[str, Any]:
+        normalized_instance = instance_name.strip()
+        bounded_limit = clamp_limit(limit, default=300, max_limit=REPORTING_MAX_LIMIT)
+        full_label = app_state.settings.arr_coverage_full_tag_label
+        partial_label = app_state.settings.arr_coverage_partial_tag_label
+        with app_state.session_scope() as session:
+            series_stats = session.execute(
+                text(
+                    """
+                    select
+                        count(*)::int as series_total,
+                        (count(*) filter (where coverage_status = 'full'))::int as series_full,
+                        (count(*) filter (where coverage_status = 'partial'))::int as series_partial,
+                        (count(*) filter (
+                            where coverage_status = 'none'
+                              and aired_monitored_episodes > 0
+                              and downloaded_episodes < aired_monitored_episodes
+                        ))::int as series_missing_only,
+                        coalesce(sum(non_english_episodes), 0)::int as non_english_episode_files
+                    from warehouse.v_anime_series_english_coverage
+                    where (:instance_name = '' or instance_name = :instance_name)
+                    """
+                ),
+                {"instance_name": normalized_instance},
+            ).mappings().one()
+            movie_stats = session.execute(
+                text(
+                    """
+                    select
+                        count(*)::int as movies_total,
+                        (count(*) filter (where coverage_status = 'full'))::int as movies_full,
+                        (count(*) filter (where coverage_status = 'partial'))::int as movies_partial
+                    from warehouse.v_anime_movie_english_coverage
+                    where (:instance_name = '' or instance_name = :instance_name)
+                    """
+                ),
+                {"instance_name": normalized_instance},
+            ).mappings().one()
+            series_coverage = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select
+                            c.instance_name,
+                            c.title,
+                            c.aired_monitored_episodes,
+                            c.downloaded_episodes,
+                            c.english_episodes,
+                            c.non_english_episodes,
+                            c.coverage_status,
+                            coalesce(d.dub_list_status, 'not-listed') as dub_list_status,
+                            coalesce(d.dub_sources, 0) as dub_sources
+                        from warehouse.v_anime_series_english_coverage c
+                        left join lateral (
+                            select
+                                case max(case a.dub_status when 'dubbed' then 2 when 'partial' then 1 else 0 end)
+                                    when 2 then 'dubbed'
+                                    when 1 then 'partial'
+                                end as dub_list_status,
+                                max(a.dub_source_count) as dub_sources
+                            from mal.warehouse_link l
+                            join mal.anime a on a.mal_id = l.mal_id
+                            where l.arr_entity = 'sonarr_series'
+                              and l.instance_name = c.instance_name
+                              and l.warehouse_source_id = c.source_id
+                        ) d on true
+                        where (:instance_name = '' or c.instance_name = :instance_name)
+                        order by (c.coverage_status = 'partial') desc, c.non_english_episodes desc, c.title
+                        limit :limit
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "limit": bounded_limit},
+                ).mappings()
+            ]
+            movie_coverage = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select
+                            c.instance_name,
+                            c.title,
+                            c.has_file,
+                            c.coverage_status,
+                            coalesce(d.dub_list_status, 'not-listed') as dub_list_status,
+                            coalesce(d.dub_sources, 0) as dub_sources
+                        from warehouse.v_anime_movie_english_coverage c
+                        left join lateral (
+                            select
+                                case max(case a.dub_status when 'dubbed' then 2 when 'partial' then 1 else 0 end)
+                                    when 2 then 'dubbed'
+                                    when 1 then 'partial'
+                                end as dub_list_status,
+                                max(a.dub_source_count) as dub_sources
+                            from mal.warehouse_link l
+                            join mal.anime a on a.mal_id = l.mal_id
+                            where l.arr_entity = 'radarr_movie'
+                              and l.instance_name = c.instance_name
+                              and l.warehouse_source_id = c.source_id
+                        ) d on true
+                        where (:instance_name = '' or c.instance_name = :instance_name)
+                        order by (c.coverage_status = 'partial') desc, c.title
+                        limit :limit
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "limit": bounded_limit},
+                ).mappings()
+            ]
+            non_english_episodes = [
+                dict(r)
+                for r in session.execute(
+                    text(
+                        """
+                        select e.instance_name, s.title as series_title, e.season_number, e.episode_number,
+                               e.title as episode_title, e.monitored as episode_monitored,
+                               ef.quality, ef.audio_languages, ef.path
+                        from warehouse.episode e
+                        join warehouse.series s
+                          on s.source_id = e.series_source_id
+                         and s.instance_name = e.instance_name
+                         and not s.deleted
+                        left join warehouse.episode_file ef
+                          on ef.episode_source_id = e.source_id
+                         and ef.instance_name = e.instance_name
+                         and not ef.deleted
+                        where not e.deleted
+                          and e.monitored
+                          and lower(coalesce(s.payload->>'seriesType', '')) = 'anime'
+                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
+                          and not ('english' = any(coalesce(ef.audio_languages, array[]::text[]))
+                                or 'eng' = any(coalesce(ef.audio_languages, array[]::text[])))
+                          and (:instance_name = '' or e.instance_name = :instance_name)
+                        order by s.title, e.season_number, e.episode_number
+                        limit :limit
+                        """
+                    ),
+                    {"instance_name": normalized_instance, "limit": bounded_limit},
+                ).mappings()
+            ]
+        return {
+            "key": "english-dub-coverage",
+            "title": "English Dub Coverage",
+            "description": (
+                "Per-series English audio coverage computed from your own files: "
+                f"'{full_label}' series have every monitored aired episode downloaded with English audio; "
+                f"'{partial_label}' series have downloaded episodes lacking it. "
+                "Dub-list status shows whether a dub exists to fix partial series. "
+                "Dub-list data: MAL-Dubs · MyDubList by Joelis57 (CC BY 4.0, https://mydublist.com)."
+            ),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "panels": [
+                {"id": "series_total", "title": "Anime Series In Scope", "kind": "stat", "value": int(series_stats["series_total"])},
+                {"id": "series_full", "title": f"Series {full_label}", "kind": "stat", "value": int(series_stats["series_full"])},
+                {"id": "series_partial", "title": f"Series {partial_label}", "kind": "stat", "value": int(series_stats["series_partial"])},
+                {
+                    "id": "series_missing_only",
+                    "title": "Series Only Missing Episodes (files OK)",
+                    "kind": "stat",
+                    "value": int(series_stats["series_missing_only"]),
+                },
+                {
+                    "id": "non_english_episode_files",
+                    "title": "Episode Files Lacking English Audio",
+                    "kind": "stat",
+                    "value": int(series_stats["non_english_episode_files"]),
+                },
+                {"id": "movies_total", "title": "Anime Movies In Scope", "kind": "stat", "value": int(movie_stats["movies_total"])},
+                {"id": "movies_full", "title": f"Movies {full_label}", "kind": "stat", "value": int(movie_stats["movies_full"])},
+                {"id": "movies_partial", "title": f"Movies {partial_label}", "kind": "stat", "value": int(movie_stats["movies_partial"])},
+                {"id": "series_coverage", "title": "Series Coverage (N non-English of M aired)", "kind": "table", "rows": series_coverage},
+                {"id": "movie_coverage", "title": "Movie Coverage", "kind": "table", "rows": movie_coverage},
+                {
+                    "id": "non_english_episodes",
+                    "title": "Anime Episodes Lacking English Audio (files to replace)",
+                    "kind": "table",
+                    "rows": non_english_episodes,
+                },
+            ],
+        }
+
     def _query_reporting_ops_overview(instance_name: str, limit: int) -> dict[str, Any]:
         normalized_instance = instance_name.strip()
         bounded_limit = clamp_limit(limit, default=300, max_limit=REPORTING_MAX_LIMIT)
@@ -2358,6 +2539,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 "title": "MAL-Dubs ↔ MAL ↔ library",
                 "description": "dubInfo.json dubbed[] IDs, titles, Sonarr/Radarr links, and dub tag sync targets.",
             },
+            {
+                "key": "english-dub-coverage",
+                "title": "English Dub Coverage",
+                "description": "Per-series/movie English audio coverage from your files, with dub-list fixability.",
+            },
         ]
 
     @router.get("/api/reporting/dashboards")
@@ -2375,6 +2561,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         "radarr-forensics": _query_reporting_radarr_forensics,
         "storage-growth": _query_reporting_storage_growth,
         "mal": _query_reporting_mal,
+        "english-dub-coverage": _query_reporting_english_dub_coverage,
     }
 
     catalog_keys = {entry["key"] for entry in dashboard_catalog}

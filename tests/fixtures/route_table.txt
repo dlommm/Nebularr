@@ -46,6 +46,7 @@ POST /api/admin/reset-data
 POST /api/auth/login
 POST /api/auth/logout
 POST /api/config/alert-webhooks/test
+POST /api/mal/coverage-tag-sync
 POST /api/mal/ingest
 POST /api/mal/ingest-backlog
 POST /api/mal/match-refresh

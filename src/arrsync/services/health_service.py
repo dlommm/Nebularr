@@ -147,6 +147,7 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
         "ingest_enabled": bool(mal_flags["ingest_enabled"]),
         "matcher_enabled": bool(mal_flags["matcher_enabled"]),
         "tagging_enabled": bool(mal_flags["tagging_enabled"]),
+        "coverage_tagging_enabled": bool(mal_flags["coverage_tagging_enabled"]),
     }
     mal_state, mal_r = _eval_mal(mal_sync)
 

@@ -32,12 +32,15 @@ from arrsync.services.log_level_store import (
     read_stored_log_level,
     store_log_level,
 )
+from arrsync.mal.constants import MYDUBLIST_CONFIDENCE_TIERS
 from arrsync.services.mal_config_store import (
     clear_mal_client_id,
     mal_client_id_is_configured,
     read_mal_feature_flags,
+    read_mydublist_tier,
     store_mal_client_id,
     store_mal_feature_flags,
+    store_mydublist_tier,
 )
 from arrsync.services.retention_store import (
     MAX_RETENTION_DAYS,
@@ -112,6 +115,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         with app_state.session_scope() as session:
             client_id_configured = mal_client_id_is_configured(session, app_state.settings)
             mal_flags = read_mal_feature_flags(session, app_state.settings)
+            mydublist_tier = read_mydublist_tier(session, app_state.settings)
         env_fallback = bool((app_state.settings.mal_client_id or "").strip())
         return {
             "client_id_configured": client_id_configured,
@@ -120,6 +124,10 @@ def build_config_router(app_state: Any) -> APIRouter:
             "matcher_enabled": bool(mal_flags["matcher_enabled"]),
             "tagging_enabled": bool(mal_flags["tagging_enabled"]),
             "allow_title_year_match": bool(mal_flags["allow_title_year_match"]),
+            "source_mal_dubs_enabled": bool(mal_flags["source_mal_dubs_enabled"]),
+            "source_mydublist_enabled": bool(mal_flags["source_mydublist_enabled"]),
+            "coverage_tagging_enabled": bool(mal_flags["coverage_tagging_enabled"]),
+            "mydublist_tier": mydublist_tier,
             "mal_max_ids_per_run": int(app_state.settings.mal_max_ids_per_run),
             "mal_min_request_interval_seconds": float(app_state.settings.mal_min_request_interval_seconds),
             "mal_jikan_min_request_interval_seconds": float(
@@ -135,6 +143,12 @@ def build_config_router(app_state: Any) -> APIRouter:
         matcher_enabled = payload.get("matcher_enabled", None)
         tagging_enabled = payload.get("tagging_enabled", None)
         allow_title_year_match = payload.get("allow_title_year_match", None)
+        source_mal_dubs_enabled = payload.get("source_mal_dubs_enabled", None)
+        source_mydublist_enabled = payload.get("source_mydublist_enabled", None)
+        coverage_tagging_enabled = payload.get("coverage_tagging_enabled", None)
+        mydublist_tier = payload.get("mydublist_tier", None)
+        if mydublist_tier is not None and str(mydublist_tier).strip().lower() not in MYDUBLIST_CONFIDENCE_TIERS:
+            raise HTTPException(status_code=400, detail="invalid mydublist_tier")
         with app_state.session_scope() as session:
             if clear_flag:
                 clear_mal_client_id(session)
@@ -154,7 +168,18 @@ def build_config_router(app_state: Any) -> APIRouter:
                 allow_title_year_match=(
                     to_bool(allow_title_year_match, False) if allow_title_year_match is not None else None
                 ),
+                source_mal_dubs_enabled=(
+                    to_bool(source_mal_dubs_enabled, False) if source_mal_dubs_enabled is not None else None
+                ),
+                source_mydublist_enabled=(
+                    to_bool(source_mydublist_enabled, False) if source_mydublist_enabled is not None else None
+                ),
+                coverage_tagging_enabled=(
+                    to_bool(coverage_tagging_enabled, False) if coverage_tagging_enabled is not None else None
+                ),
             )
+            if mydublist_tier is not None:
+                store_mydublist_tier(session, str(mydublist_tier))
         app_state.scheduler.reload()
         return {"status": "ok"}
 
@@ -360,6 +385,7 @@ def build_config_router(app_state: Any) -> APIRouter:
                 "mal_ingest",
                 "mal_matcher",
                 "mal_tag_sync",
+                "coverage_tag_sync",
             }
         )
         if mode not in allowed_modes:

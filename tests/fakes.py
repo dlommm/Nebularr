@@ -100,12 +100,22 @@ class FakeSettings:
     auth_recovery_password: str = ""
     auth_session_ttl_hours: int = 1
     arr_dub_tag_label: str = "English-Dubbed-Anime"
+    arr_coverage_full_tag_label: str = "fully-english"
+    arr_coverage_partial_tag_label: str = "partial-english"
     database_url: str = ""
     mal_client_id: str = ""
     mal_dub_info_url: str = ""
     mal_jikan_min_request_interval_seconds: float = 1.0
     mal_max_ids_per_run: int = 200
     mal_min_request_interval_seconds: float = 0.6
+    mal_dubs_source_enabled: bool = True
+    mydublist_enabled: bool = True
+    mydublist_url_template: str = (
+        "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/confidence/{tier}/dubbed_english.json"
+    )
+    mydublist_confidence_tier: str = "normal"
+    coverage_tagging_enabled: bool = False
+    coverage_tag_sync_cron: str = "30 4 * * *"
 
 
 class FakeMetrics:
