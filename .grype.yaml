@@ -1,0 +1,8 @@
+# Grype ignore rules — same policy as .trivyignore.image: entries here are
+# upstream-only fixes the digest-pinned python:3.14-slim base cannot take yet.
+# Re-check after base image updates; remove entries once the base ships the fix.
+ignore:
+  # TODO(2026-10): CPython binary CVE; Grype lists the fix only in upstream
+  # Python 3.15.0 (no 3.14.x backport), so the pinned 3.14-slim base stays
+  # flagged until Debian backports it or the base moves to 3.15.
+  - vulnerability: CVE-2026-15308

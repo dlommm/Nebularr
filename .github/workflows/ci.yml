@@ -109,9 +109,11 @@ jobs:
             --input /tmp/nebularr-ci.tar --severity HIGH,CRITICAL --exit-code 1 \
             --ignore-unfixed --ignorefile /src/.trivyignore.image
       - name: Grype image (fixed issues only; avoids unfixed distro noise)
+        # -c .grype.yaml: upstream-only fixes the pinned base can't take yet
+        # (same policy as the Trivy step's .trivyignore.image).
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$GRYPE_IMAGE" \
-            nebularr:ci --only-fixed --fail-on high -o table
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/src" "$GRYPE_IMAGE" \
+            nebularr:ci --only-fixed --fail-on high -o table -c /src/.grype.yaml
 
   lint_shell:
     runs-on: ubuntu-latest
