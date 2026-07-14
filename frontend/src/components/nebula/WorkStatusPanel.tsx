@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
-import { fmtDuration } from "@/hooks";
-import { useServerEventsStatus } from "@/hooks/useServerEvents";
+import { errText, fmtDuration } from "@/hooks";
+import { pollInterval, useServerEventsStatus } from "@/hooks/useServerEvents";
 import type { WorkMalItem, WorkStatusItem, WorkWarehouseItem } from "@/types";
 import { ProgressBar } from "./ProgressBar";
 import { GlassCard, CardContent, CardDescription, CardHeader, CardTitle } from "./GlassCard";
@@ -59,7 +59,7 @@ export function WorkStatusPanel({
   const q = useQuery({
     queryKey: ["work-status"],
     queryFn: api.workStatus,
-    refetchInterval: sseConnected ? 30_000 : 2_000,
+    refetchInterval: pollInterval(sseConnected, 2_000, 30_000),
   });
 
   const items = q.data?.items ?? [];
@@ -78,7 +78,7 @@ export function WorkStatusPanel({
           </div>
         ) : null}
         {q.isError ? (
-          <p className="text-sm text-critical">Could not load work status: {String(q.error)}</p>
+          <p className="text-sm text-critical">Could not load work status: {errText(q.error)}</p>
         ) : null}
         {!q.isLoading && items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Idle — no warehouse sync, MAL job, or setup import running.</p>

@@ -73,7 +73,6 @@ export function LibraryPage(): JSX.Element {
   // The episodes table inside the drilldown pages independently from the shows list.
   const [episodesOffset, setEpisodesOffset] = useState(0);
   const [episodeSortBy, setEpisodeSortBy] = useState("season_number");
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const lastWrittenSearch = useRef<string | null>(null);
 
@@ -113,16 +112,6 @@ export function LibraryPage(): JSX.Element {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
-
-  useEffect(() => {
-    const pending = sessionStorage.getItem("nebularr.library.pendingSearch");
-    if (pending) {
-      sessionStorage.removeItem("nebularr.library.pendingSearch");
-      setLibraryFilters({ ...libraryFilters, search: pending, offset: 0 });
-    }
-    // Only on mount: merge header search with initial localStorage filters
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     setEpisodesOffset(0);
@@ -359,7 +348,6 @@ export function LibraryPage(): JSX.Element {
                     Search
                   </Label>
                   <Input
-                    ref={searchInputRef}
                     id="nebularr-library-search"
                     placeholder="Titles, paths, metadata…"
                     value={libraryFilters.search}
@@ -387,6 +375,7 @@ export function LibraryPage(): JSX.Element {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <select
+                    aria-label="Sort direction"
                     className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                     value={libraryFilters.sortDir}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, sortDir: event.target.value as "asc" | "desc" })}
@@ -395,6 +384,7 @@ export function LibraryPage(): JSX.Element {
                     <option value="desc">Descending</option>
                   </select>
                   <select
+                    aria-label="Rows per page"
                     className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                     value={libraryFilters.limit}
                     onChange={(event) => setLibraryFilters({ ...libraryFilters, limit: Number(event.target.value), offset: 0 })}
@@ -406,7 +396,14 @@ export function LibraryPage(): JSX.Element {
                   <Button
                     type="button"
                     variant="secondary"
+                    disabled={libraryMode === "drilldown" && !selectedShow}
+                    title={
+                      libraryMode === "drilldown" && !selectedShow
+                        ? "Select a show to export its episodes"
+                        : undefined
+                    }
                     onClick={() => {
+                      if (libraryMode === "drilldown" && !selectedShow) return;
                       const url = api.exportUrl(
                         libraryMode === "movies"
                           ? "/api/ui/movies/export.csv"

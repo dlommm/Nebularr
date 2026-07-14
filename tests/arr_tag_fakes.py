@@ -68,12 +68,16 @@ def integration_row(source: str, name: str = "default") -> dict[str, Any]:
 
 
 class FakeArrClient:
-    """Records tag/put calls; behavior tweaked via class-level configuration."""
+    """Records tag-editor calls; behavior tweaked via class-level configuration."""
 
     instances: list["FakeArrClient"] = []
     tag_ids: dict[str, int] = {}
     ensure_tag_failures: set[str] = set()
-    put_failures: set[int] = set()
+    # apply ops that raise, e.g. {"sonarr:add"} fails add batches on sonarr
+    editor_failures: set[str] = set()
+    # live rows returned by list_series/list_movies, keyed by instance name
+    live_series: dict[str, list[dict[str, Any]]] = {}
+    live_movies: dict[str, list[dict[str, Any]]] = {}
 
     def __init__(
         self,
@@ -88,6 +92,8 @@ class FakeArrClient:
         self.instance_name = instance_name
         self.put_series_calls: list[dict[str, Any]] = []
         self.put_movie_calls: list[dict[str, Any]] = []
+        # (apply_tags, entity_ids, tag_ids) per editor call
+        self.tag_editor_calls: list[tuple[str, list[int], list[int]]] = []
         self.closed = False
         type(self).instances.append(self)
 
@@ -97,26 +103,50 @@ class FakeArrClient:
         *,
         tag_ids: dict[str, int],
         ensure_tag_failures: set[str] | None = None,
-        put_failures: set[int] | None = None,
+        editor_failures: set[str] | None = None,
+        live_series: dict[str, list[dict[str, Any]]] | None = None,
+        live_movies: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         cls.instances = []
         cls.tag_ids = dict(tag_ids)
         cls.ensure_tag_failures = ensure_tag_failures or set()
-        cls.put_failures = put_failures or set()
+        cls.editor_failures = editor_failures or set()
+        cls.live_series = live_series or {}
+        cls.live_movies = live_movies or {}
 
     async def ensure_tag_id(self, label: str) -> int:
         if self.source in self.ensure_tag_failures:
             raise RuntimeError(f"{self.source} tag endpoint down")
         return self.tag_ids[label]
 
+    async def list_series(self) -> list[dict[str, Any]]:
+        if self.source != "sonarr":
+            return []
+        return self.live_series.get(self.instance_name, [])
+
+    async def list_movies(self) -> list[dict[str, Any]]:
+        if self.source != "radarr":
+            return []
+        return self.live_movies.get(self.instance_name, [])
+
+    def _editor(self, apply_tags: str, entity_ids: list[int], tags: list[int]) -> None:
+        if f"{self.source}:{apply_tags}" in self.editor_failures:
+            raise RuntimeError(f"{self.source} editor {apply_tags} failed")
+        self.tag_editor_calls.append((apply_tags, list(entity_ids), list(tags)))
+
+    async def update_series_tags(self, series_ids: list[int], tag_ids: list[int], apply_tags: str) -> None:
+        assert self.source == "sonarr"
+        self._editor(apply_tags, series_ids, tag_ids)
+
+    async def update_movie_tags(self, movie_ids: list[int], tag_ids: list[int], apply_tags: str) -> None:
+        assert self.source == "radarr"
+        self._editor(apply_tags, movie_ids, tag_ids)
+
     async def put_series(self, body: dict[str, Any]) -> None:
-        if int(body.get("id", body.get("source_id", -1)) or -1) in self.put_failures:
-            raise RuntimeError("put failed")
+        # Full-object PUTs clobber concurrent edits; tests assert these stay empty.
         self.put_series_calls.append(body)
 
     async def put_movie(self, body: dict[str, Any]) -> None:
-        if int(body.get("id", body.get("source_id", -1)) or -1) in self.put_failures:
-            raise RuntimeError("put failed")
         self.put_movie_calls.append(body)
 
     async def aclose(self) -> None:

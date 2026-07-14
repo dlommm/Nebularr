@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +19,8 @@ from arrsync.services.health_service import compute_health_status
 from arrsync.services.settings_store import get_setting
 
 log = logging.getLogger(__name__)
+
+STATUS_CACHE_TTL_SECONDS = 10.0
 
 
 def build_system_router(app_state: Any) -> APIRouter:
@@ -53,8 +56,14 @@ def build_system_router(app_state: Any) -> APIRouter:
     async def status() -> dict[str, Any]:
         # Health alerts fire from the background loop in database_lifecycle (every 60s);
         # kicking one off per status poll duplicated alerts and leaked untracked tasks.
+        # The loop also refreshes app_state.status_cache, so most polls are served
+        # without re-running the ~8 health queries.
+        cached = getattr(app_state, "status_cache", None)
+        if cached is not None and time.monotonic() - cached[1] < STATUS_CACHE_TTL_SECONDS:
+            return cached[0]
         with app_state.session_scope() as session:
             status_payload = compute_health_status(session, app_state.settings, app_state.metrics)
+        app_state.status_cache = (status_payload, time.monotonic())
         return status_payload
 
     return router

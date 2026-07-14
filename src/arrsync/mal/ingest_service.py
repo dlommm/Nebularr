@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -30,6 +32,10 @@ def _ingest_batch_limit(settings: Settings, max_ids_per_run: int | None) -> int:
 
 
 class MalIngestService:
+    # Lease is 3600s; renew well inside it so a slow throttled batch never
+    # loses the lock to a concurrent ingest trigger.
+    LOCK_HEARTBEAT_INTERVAL_SECONDS: float = 300.0
+
     def __init__(
         self,
         settings: Settings,
@@ -41,6 +47,18 @@ class MalIngestService:
         self.session_factory = session_factory
         self.dub_client_class = dub_client_class
         self.jikan_client = JikanClient(settings)
+
+    async def _heartbeat_lock_loop(self, lock_name: str, owner_id: str) -> None:
+        while True:
+            await asyncio.sleep(self.LOCK_HEARTBEAT_INTERVAL_SECONDS)
+            try:
+                with session_scope(self.session_factory) as session:
+                    repo.heartbeat_job_lock(
+                        session, lock_name=lock_name, owner_id=owner_id, lease_seconds=3600
+                    )
+            except Exception:
+                # A missed renewal must not kill the ingest; the next tick retries.
+                log.warning("mal ingest lock heartbeat failed", exc_info=True)
 
     async def run(
         self,
@@ -68,6 +86,7 @@ class MalIngestService:
             tier = read_mydublist_tier(session, self.settings)
         specs = enabled_dub_sources(self.settings, flags, tier)
         mal_client = MalApiClient(self.settings, client_id=resolved_mal_client_id)
+        heartbeat_task = asyncio.create_task(self._heartbeat_lock_loop(lock_name, owner_id))
         try:
             source_errors: list[str] = []
             all_unchanged = bool(specs)
@@ -193,6 +212,9 @@ class MalIngestService:
                 mal_repo.finish_mal_job_run(session, run_id, "failed", details, str(exc))
             raise
         finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
             with session_scope(self.session_factory) as session:
                 repo.release_job_lock(session, lock_name=lock_name, owner_id=owner_id)
         return details

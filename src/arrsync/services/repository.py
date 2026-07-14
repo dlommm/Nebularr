@@ -490,6 +490,30 @@ def mark_deleted_source_ids(session: Session, table: str, instance_name: str, id
     )
 
 
+def mark_missing_children(
+    session: Session,
+    table: str,
+    instance_name: str,
+    parent_column: str,
+    parent_ids: list[int],
+    seen_ids: set[int],
+) -> None:
+    """Tombstone child rows of the given parents that a fresh fetch no longer returned.
+
+    Scoped to parent_ids so incremental runs never mass-delete rows they didn't refetch.
+    """
+    if not parent_ids:
+        return
+    session.execute(
+        text(
+            f"update {table} set deleted = true"  # noqa: S608
+            f" where instance_name = :instance_name and {parent_column} = any(:parent_ids)"
+            " and not deleted and source_id <> all(:seen_ids)"
+        ),
+        {"instance_name": instance_name, "parent_ids": parent_ids, "seen_ids": list(seen_ids)},
+    )
+
+
 def enqueue_webhook(
     session: Session,
     source: str,
@@ -502,7 +526,7 @@ def enqueue_webhook(
             """
             insert into app.webhook_queue(source, event_type, payload, dedupe_key, status, attempts, next_attempt_at)
             values (:source, :event_type, cast(:payload as jsonb), :dedupe_key, 'queued', 0, now())
-            on conflict do nothing
+            on conflict do nothing -- dedupe only against open jobs (uq_webhook_queue_dedupe_open)
             """
         ),
         {
@@ -633,6 +657,18 @@ def prune_old_rows(
     if keep_days > 0:
         session.execute(
             text("delete from app.webhook_queue where processed_at < now() - make_interval(days => :keep_days)"),
+            {"keep_days": keep_days},
+        )
+        # Dead-letter rows never get processed_at; age them out too or they
+        # accumulate forever.
+        session.execute(
+            text(
+                """
+                delete from app.webhook_queue
+                where status = 'dead_letter'
+                  and received_at < now() - make_interval(days => :keep_days)
+                """
+            ),
             {"keep_days": keep_days},
         )
         session.execute(
@@ -781,18 +817,26 @@ def latest_integrity_drift_sources(session: Session) -> list[str]:
     return sorted({str(r["source"]) for r in rows if bool(r["drift_detected"])})
 
 
-def webhook_ingest_allowed(session: Session, source: str) -> bool:
-    """True when at least one enabled integration for the source accepts webhooks."""
+def webhook_ingest_allowed(session: Session, source: str, instance_name: str | None = None) -> bool:
+    """True when at least one enabled integration for the source accepts webhooks.
+
+    With instance_name, the named integration itself must exist and accept webhooks.
+    """
+    params: dict[str, Any] = {"source": source}
+    name_filter = ""
+    if instance_name is not None:
+        name_filter = "and name = :instance_name"
+        params["instance_name"] = instance_name
     row = session.execute(
         text(
-            """
+            f"""
             select 1
             from app.integration_instance
-            where source = :source and enabled and webhook_enabled
+            where source = :source and enabled and webhook_enabled {name_filter}
             limit 1
             """
         ),
-        {"source": source},
+        params,
     ).first()
     return row is not None
 
@@ -844,6 +888,15 @@ def seed_default_integrations(
             "radarr_api_key": encrypt_secret(radarr_api_key),
         },
     )
+
+
+def job_lock_held(session: Session, lock_name: str) -> bool:
+    """True when a live (unexpired) lease exists for the lock."""
+    row = session.execute(
+        text("select 1 from app.job_lock where lock_name = :lock_name and expires_at > now() limit 1"),
+        {"lock_name": lock_name},
+    ).first()
+    return row is not None
 
 
 def try_job_lock(session: Session, lock_name: str, owner_id: str, lease_seconds: int = 1800) -> bool:

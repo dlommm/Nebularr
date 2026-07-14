@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 from typing import Any
 
@@ -116,8 +115,6 @@ class CoverageTagSyncService:
     ) -> None:
         full_label = self.settings.arr_coverage_full_tag_label
         partial_label = self.settings.arr_coverage_partial_tag_label
-        table = "warehouse.series" if source == "sonarr" else "warehouse.movie"
-        id_key = "series_id" if source == "sonarr" else "movie_id"
         for inst_row in integrations:
             instance_name = str(inst_row["name"])
             client = self.arr_client_class(
@@ -144,22 +141,28 @@ class CoverageTagSyncService:
                         "%s coverage ensure_tag failed instance=%s: %s", source, instance_name, exc
                     )
                     continue
+                # Diff against live Arr state, not the last-synced warehouse payload:
+                # a stale snapshot must never overwrite newer edits made in the app.
+                try:
+                    if source == "sonarr":
+                        live_rows = await client.list_series()
+                    else:
+                        live_rows = await client.list_movies()
+                except Exception as exc:
+                    details["errors"].append(
+                        {"instance": instance_name, "source": source, "phase": "list", "error": str(exc)}
+                    )
+                    log.warning("%s coverage list failed instance=%s: %s", source, instance_name, exc)
+                    continue
                 want = targets.get(instance_name, {})
-                with session_scope(self.session_factory) as session:
-                    rows = session.execute(
-                        text(
-                            f"""
-                            select source_id, payload
-                            from {table}
-                            where instance_name = :instance_name and deleted = false
-                            """  # noqa: S608 - table is one of two constants above
-                        ),
-                        {"instance_name": instance_name},
-                    ).mappings()
-                for row in rows:
-                    sid = int(row["source_id"])
-                    payload = copy.deepcopy(dict(row["payload"] or {}))
-                    tags = [int(t) for t in (payload.get("tags") or []) if t is not None]
+                add_ids: dict[int, list[int]] = {full_id: [], partial_id: []}
+                remove_ids: dict[int, list[int]] = {full_id: [], partial_id: []}
+                for row in live_rows:
+                    raw_id = row.get("id")
+                    if raw_id is None:
+                        continue
+                    sid = int(raw_id)
+                    tags = {int(t) for t in (row.get("tags") or []) if t is not None}
                     desired = want.get(sid)
                     desired_id = (
                         full_id
@@ -168,25 +171,46 @@ class CoverageTagSyncService:
                         if desired == "partial"
                         else None
                     )
-                    new_tags = [t for t in tags if t not in (full_id, partial_id)]
-                    if desired_id is not None:
-                        new_tags.append(desired_id)
-                    if set(new_tags) == set(tags):
-                        continue
-                    payload["tags"] = new_tags
-                    try:
-                        if source == "sonarr":
-                            await client.put_series(payload)
-                        else:
-                            await client.put_movie(payload)
-                        if desired_id is None:
-                            details[f"{source}_cleared"] += 1
-                        else:
-                            details[f"{source}_updated"] += 1
-                    except Exception as exc:
-                        details["errors"].append(
-                            {"instance": instance_name, id_key: sid, "error": str(exc)}
-                        )
-                        log.warning("%s coverage tag put %s: %s", source, sid, exc)
+                    if desired_id is not None and desired_id not in tags:
+                        add_ids[desired_id].append(sid)
+                    for coverage_tag in {full_id, partial_id}:
+                        if coverage_tag in tags and coverage_tag != desired_id:
+                            remove_ids[coverage_tag].append(sid)
+
+                updated_ids: set[int] = set()
+                cleared_ids: set[int] = set()
+                for apply_tags, buckets, touched in (
+                    ("add", add_ids, updated_ids),
+                    ("remove", remove_ids, cleared_ids),
+                ):
+                    for tag_id, ids in buckets.items():
+                        if not ids:
+                            continue
+                        try:
+                            if source == "sonarr":
+                                await client.update_series_tags(ids, [tag_id], apply_tags)
+                            else:
+                                await client.update_movie_tags(ids, [tag_id], apply_tags)
+                            touched.update(ids)
+                        except Exception as exc:
+                            details["errors"].append(
+                                {
+                                    "instance": instance_name,
+                                    "source": source,
+                                    "phase": f"editor_{apply_tags}",
+                                    "ids": ids,
+                                    "error": str(exc),
+                                }
+                            )
+                            log.warning(
+                                "%s coverage tag editor %s failed instance=%s: %s",
+                                source,
+                                apply_tags,
+                                instance_name,
+                                exc,
+                            )
+                details[f"{source}_updated"] += len(updated_ids)
+                # A full<->partial swap counts as updated, not cleared.
+                details[f"{source}_cleared"] += len(cleared_ids - updated_ids)
             finally:
                 await client.aclose()

@@ -26,6 +26,10 @@ replacements = {
     "docker-compose.yml": (f"APP_VERSION:-{old}", f"APP_VERSION:-{new}"),
     ".env.example": (f"APP_VERSION={old}", f"APP_VERSION={new}"),
     "src/arrsync/config.py": (f'app_version: str = "{old}"', f'app_version: str = "{new}"'),
+    "deploy/unraid/docker-compose.yml": (
+        f"dendlomm/nebularr:{old}",
+        f"dendlomm/nebularr:{new}",
+    ),
 }
 for path, (old_str, new_str) in replacements.items():
     p = Path(path)

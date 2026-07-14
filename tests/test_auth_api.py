@@ -82,7 +82,7 @@ def test_exempt_and_public_paths_stay_reachable_with_auth_enabled() -> None:
     # webhooks authenticate via their own shared secret, not sessions
     hook = client.post(
         "/hooks/sonarr",
-        headers={"x-arr-shared-secret": "changeme"},
+        headers={"x-arr-shared-secret": "test-webhook-secret"},
         json={"eventType": "Test"},
     )
     assert hook.status_code == 200
@@ -167,3 +167,23 @@ def test_short_password_is_rejected() -> None:
     client = _build_client(state)
     response = client.put("/api/auth/config", json={"password": "short", "enabled": True})
     assert response.status_code == 400
+
+
+def test_password_change_revokes_existing_sessions() -> None:
+    state = FakeAppState()
+    client = _build_client(state)
+    _enable_auth(state=state, client=client)
+
+    login = client.post("/api/auth/login", json={"password": "hunter2secret"})
+    assert login.status_code == 200
+    assert client.get("/api/config/logging").status_code == 200
+
+    changed = client.put("/api/auth/config", json={"password": "newhunter2pass"})
+    assert changed.status_code == 200
+    invalidate_auth_cache(state)
+    # The pre-change cookie carries the old session epoch and must be dead.
+    assert client.get("/api/config/logging").status_code == 401
+
+    relogin = client.post("/api/auth/login", json={"password": "newhunter2pass"})
+    assert relogin.status_code == 200
+    assert client.get("/api/config/logging").status_code == 200

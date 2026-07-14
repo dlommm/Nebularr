@@ -70,7 +70,7 @@ flowchart TB
 | Setup | `GET/POST /api/setup/*` | First-run wizard, skip, initial sync |
 | Configuration | `GET/PUT /api/config/integrations/{source}`, `/api/config/webhook`, `/api/config/alert-webhooks`, `/api/config/schedules` | Integrations, webhook verifier, alert targets, cron |
 | Sync control | `POST /api/sync/<source>/<mode>` — sources: `sonarr`, `radarr`; modes: `full`, `incremental`, `reconcile` | Manual or scripted runs |
-| Webhook ingress | `POST /hooks/sonarr`, `POST /hooks/radarr` | Signed payloads from Arr into the queue |
+| Webhook ingress | `POST /hooks/sonarr`, `POST /hooks/radarr`, `POST /hooks/<source>/<instance>` | Signed payloads from Arr into the queue (per-instance form for multi-instance setups) |
 | Queue admin | `POST /api/webhooks/replay-dead-letter/<source>`, `POST /api/webhooks/requeue/<job_id>` | Recover failed webhook jobs |
 | Library UI | `GET /api/ui/*` (shows, episodes, movies, runs, queue, …) | Paged JSON + CSV exports for the SPA |
 | Reporting | `GET /api/reporting/dashboards`, `.../{key}`, CSV under panels | Whitelist-only SQL; no ad-hoc SQL from browser |
@@ -200,6 +200,12 @@ Configure Sonarr/Radarr webhook target:
 
 - URL: `http://<your-host>:8080/hooks/sonarr` (or `/hooks/radarr`)
 - Header: `x-arr-shared-secret: <WEBHOOK_SHARED_SECRET>`
+
+Webhooks are refused (403) while `WEBHOOK_SHARED_SECRET` is still the shipped default — set a real secret first.
+
+With multiple instances of the same app, give each its own URL so events land on the right instance:
+
+- URL: `http://<your-host>:8080/hooks/sonarr/<instance-name>` (must match the integration name under Settings → Integrations; the bare `/hooks/sonarr` form targets the `default` instance)
 
 ## Scheduler and timezone
 

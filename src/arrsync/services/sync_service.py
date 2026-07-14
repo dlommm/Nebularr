@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +17,10 @@ log = logging.getLogger(__name__)
 
 
 class SyncService:
+    # Lease is 1800s (repo.try_job_lock); renew well inside it so a long full
+    # sync never loses its lock to a concurrent trigger.
+    LOCK_HEARTBEAT_INTERVAL_SECONDS: float = 300.0
+
     def __init__(
         self,
         session_factory: Any,
@@ -44,6 +49,17 @@ class SyncService:
         # semaphore saturated without spawning one task per series.
         parallel = getattr(getattr(client, "settings", None), "http_max_parallel_requests", None)
         return max(1, int(parallel or 4) * 2)
+
+    async def _heartbeat_lock_loop(self, lock_name: str) -> None:
+        while not self._should_stop():
+            await asyncio.sleep(self.LOCK_HEARTBEAT_INTERVAL_SECONDS)
+            try:
+                await self._run_db(
+                    repo.heartbeat_job_lock, lock_name=lock_name, owner_id=self.lock_owner_id
+                )
+            except Exception:
+                # A missed renewal must not kill the sync; the next tick retries.
+                log.warning("job lock heartbeat failed", extra={"lock_name": lock_name}, exc_info=True)
 
     async def _run_db(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
         """Run a repository call in a worker thread with its own short session,
@@ -121,6 +137,7 @@ class SyncService:
                         supports_history=False,
                         supports_episode_include_files=False,
                         raw={"error": str(exc)},
+                        supports_history_since=False,
                     )
                 await asyncio.to_thread(self._record_capabilities, source, integration["name"], caps)
                 log.info(
@@ -259,6 +276,7 @@ class SyncService:
                 finished_at=datetime.now(timezone.utc),
                 details={"reason": "lock-busy", "trigger": reason},
             )
+        heartbeat_task = asyncio.create_task(self._heartbeat_lock_loop(lock_name))
         try:
             log.info("sync started", extra={"source": source, "mode": mode, "trigger": reason})
             integrations = await asyncio.to_thread(self._enabled_integrations, source)
@@ -272,9 +290,6 @@ class SyncService:
                     extra={"source": source, "mode": mode, "instance_name": instance_name, "trigger": reason},
                 )
                 records_processed = 0
-                await self._run_db(
-                    repo.heartbeat_job_lock, lock_name=lock_name, owner_id=self.lock_owner_id
-                )
                 run_id: int = await self._run_db(
                     repo.create_sync_run, source, mode, instance_name=instance_name, trigger=reason
                 )
@@ -372,6 +387,9 @@ class SyncService:
                 details={"trigger": reason, "interrupted": self._should_stop()},
             )
         finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
             await self._run_db(repo.release_job_lock, lock_name=lock_name, owner_id=self.lock_owner_id)
 
     def _enabled_integrations(self, source: str) -> list[dict[str, Any]]:
@@ -623,24 +641,10 @@ class SyncService:
             "incremental history batch",
             extra={"source": source, "instance_name": instance_name, "event_count": len(events)},
         )
-        records = 0
         latest_time: datetime | None = None
         latest_id: int | None = None
-        await self._report_progress_async(
-            run_id,
-            source,
-            "incremental",
-            instance_name,
-            records,
-            trigger,
-            "processing_history",
-            f"event_count={len(events)}",
-        )
         for event in events:
-            if self._should_stop():
-                break
             event_id = int(event.get("id", 0) or 0)
-            records += 1
             date_str = event.get("date")
             if date_str:
                 try:
@@ -660,19 +664,177 @@ class SyncService:
                 else:
                     latest_time = max(latest_time, parsed) if latest_time else parsed
             latest_id = max(latest_id, event_id) if latest_id else event_id
-            if records % 100 == 0:
-                await self._report_progress_async(
-                    run_id,
-                    source,
-                    "incremental",
-                    instance_name,
-                    records,
-                    trigger,
-                    "processing_history",
+
+        records = 0
+        if since is None:
+            # First incremental run: only establish the watermark. Backfilling
+            # everything history mentions is the full sync's job.
+            log.info(
+                "incremental watermark established; full sync remains authoritative",
+                extra={"source": source, "instance_name": instance_name, "event_count": len(events)},
+            )
+        elif events:
+            await self._report_progress_async(
+                run_id,
+                source,
+                "incremental",
+                instance_name,
+                records,
+                trigger,
+                "ingesting_changes",
+                f"event_count={len(events)}",
+            )
+            if source == "sonarr":
+                records = await self._ingest_sonarr_history_changes(
+                    client, events, run_id, instance_name, trigger
                 )
+            else:
+                records = await self._ingest_radarr_history_changes(
+                    client, events, run_id, instance_name, trigger
+                )
+        if self._should_stop():
+            # An interrupted ingest must not advance the watermark past
+            # changes it never wrote; the next run re-fetches them.
+            return records
         await self._run_db(repo.update_watermark_for_instance, source, instance_name, latest_time, latest_id)
         await self._report_progress_async(run_id, source, "incremental", instance_name, records, trigger, "finalizing")
         return records
+
+    async def _ingest_sonarr_history_changes(
+        self,
+        client: ArrClient,
+        events: list[dict[str, Any]],
+        run_id: int,
+        instance_name: str,
+        trigger: str,
+    ) -> int:
+        series_ids = sorted(
+            {int(event["seriesId"]) for event in events if isinstance(event, dict) and event.get("seriesId")}
+        )
+        records = 0
+        chunk_size = self._fetch_chunk_size(client)
+        for start in range(0, len(series_ids), chunk_size):
+            if self._should_stop():
+                break
+            chunk_ids = series_ids[start : start + chunk_size]
+            series_rows = await asyncio.gather(*(client.get_series(sid) for sid in chunk_ids))
+            present = [(sid, row) for sid, row in zip(chunk_ids, series_rows) if row and row.get("id")]
+            deleted_ids = [sid for sid, row in zip(chunk_ids, series_rows) if row is None]
+            episode_lists = await asyncio.gather(*(client.list_episodes(sid) for sid, _row in present))
+            seen_series: set[int] = set()
+            seen_episodes: set[int] = set()
+            seen_files: set[int] = set()
+            records += await asyncio.to_thread(
+                self._write_sonarr_chunk,
+                [(row, episodes) for (_sid, row), episodes in zip(present, episode_lists)],
+                run_id,
+                "incremental",
+                instance_name,
+                seen_series,
+                seen_episodes,
+                seen_files,
+            )
+            await asyncio.to_thread(
+                self._reconcile_incremental_sonarr,
+                instance_name,
+                sorted(seen_series),
+                seen_episodes,
+                seen_files,
+                deleted_ids,
+            )
+            await self._report_progress_async(
+                run_id, "sonarr", "incremental", instance_name, records, trigger, "ingesting_changes"
+            )
+        return records
+
+    def _reconcile_incremental_sonarr(
+        self,
+        instance_name: str,
+        refreshed_series: list[int],
+        seen_episodes: set[int],
+        seen_files: set[int],
+        deleted_series: list[int],
+    ) -> None:
+        with session_scope(self.session_factory) as session:
+            repo.mark_missing_children(
+                session, "warehouse.episode", instance_name, "series_source_id", refreshed_series, seen_episodes
+            )
+            repo.mark_missing_children(
+                session,
+                "warehouse.episode_file",
+                instance_name,
+                "episode_source_id",
+                sorted(seen_episodes),
+                seen_files,
+            )
+            repo.mark_deleted_source_ids(session, "warehouse.series", instance_name, deleted_series)
+            repo.mark_missing_children(
+                session, "warehouse.episode", instance_name, "series_source_id", deleted_series, set()
+            )
+
+    async def _ingest_radarr_history_changes(
+        self,
+        client: ArrClient,
+        events: list[dict[str, Any]],
+        run_id: int,
+        instance_name: str,
+        trigger: str,
+    ) -> int:
+        movie_ids = sorted(
+            {int(event["movieId"]) for event in events if isinstance(event, dict) and event.get("movieId")}
+        )
+        records = 0
+        chunk_size = self._fetch_chunk_size(client)
+        for start in range(0, len(movie_ids), chunk_size):
+            if self._should_stop():
+                break
+            chunk_ids = movie_ids[start : start + chunk_size]
+            movie_rows = await asyncio.gather(*(client.get_movie(mid) for mid in chunk_ids))
+            present = [row for row in movie_rows if row and row.get("id")]
+            deleted_ids = [mid for mid, row in zip(chunk_ids, movie_rows) if row is None]
+            seen_movies: set[int] = set()
+            seen_movie_files: set[int] = set()
+            records += await asyncio.to_thread(
+                self._write_radarr_chunk,
+                present,
+                run_id,
+                "incremental",
+                instance_name,
+                seen_movies,
+                seen_movie_files,
+            )
+            await asyncio.to_thread(
+                self._reconcile_incremental_radarr,
+                instance_name,
+                sorted(seen_movies),
+                seen_movie_files,
+                deleted_ids,
+            )
+            await self._report_progress_async(
+                run_id, "radarr", "incremental", instance_name, records, trigger, "ingesting_changes"
+            )
+        return records
+
+    def _reconcile_incremental_radarr(
+        self,
+        instance_name: str,
+        refreshed_movies: list[int],
+        seen_movie_files: set[int],
+        deleted_movies: list[int],
+    ) -> None:
+        with session_scope(self.session_factory) as session:
+            repo.mark_missing_children(
+                session,
+                "warehouse.movie_file",
+                instance_name,
+                "movie_source_id",
+                refreshed_movies,
+                seen_movie_files,
+            )
+            repo.mark_deleted_source_ids(session, "warehouse.movie", instance_name, deleted_movies)
+            repo.mark_missing_children(
+                session, "warehouse.movie_file", instance_name, "movie_source_id", deleted_movies, set()
+            )
 
     async def process_webhook_queue(self, source: str) -> dict[str, Any]:
         processed = 0
@@ -709,7 +871,7 @@ class SyncService:
                             instance_name=instance_name,
                             trigger="webhook",
                         )
-                        series_id = payload.get("series", {}).get("id")
+                        series_id = (payload.get("series") or {}).get("id")
                         if series_id:
                             episodes = await client.list_episodes(int(series_id))
                             await asyncio.to_thread(
@@ -717,7 +879,7 @@ class SyncService:
                             )
                         if "delete" in event_type.lower():
                             deleted_episode_ids = (
-                                [int(payload["episode"]["id"])] if payload.get("episode", {}).get("id") else []
+                                [int(payload["episode"]["id"])] if (payload.get("episode") or {}).get("id") else []
                             )
                             await self._run_db(
                                 repo.mark_deleted_source_ids,
@@ -747,7 +909,7 @@ class SyncService:
                             instance_name=instance_name,
                             trigger="webhook",
                         )
-                        movie_id = payload.get("movie", {}).get("id")
+                        movie_id = (payload.get("movie") or {}).get("id")
                         if movie_id:
                             movie_row = await client.get_movie(int(movie_id))
                             movies = [movie_row] if movie_row else []
@@ -755,7 +917,7 @@ class SyncService:
                             movies = await client.list_movies()
                         deleted_movie_ids = (
                             [int(payload["movie"]["id"])]
-                            if "delete" in event_type.lower() and payload.get("movie", {}).get("id")
+                            if "delete" in event_type.lower() and (payload.get("movie") or {}).get("id")
                             else []
                         )
                         await asyncio.to_thread(

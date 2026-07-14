@@ -13,15 +13,17 @@
 #
 # 3) If your base path is NOT /mnt/user/appdata/nebularr, update every host path below the same way.
 #
-# --- Changes in 2.0.0 (compared to earlier templates) ---
+# --- Template notes ---
 # * The app container is hardened like the root compose file: non-root user, read-only
 #   rootfs, all capabilities dropped, no-new-privileges. No action needed.
-# * Postgres is NO LONGER published to the host by default. Nebularr reaches it over the
+# * Postgres is NOT published to the host by default. Nebularr reaches it over the
 #   private compose network. If other LAN tools need direct Postgres access, restore:
 #       ports:
 #         - "${POSTGRES_PORT:-5432}:5432"
 #   under the postgres service (and prefer binding to a specific host IP).
-# * The image tag is pinned to a version instead of :latest so upgrades are deliberate.
+# * The image tag is pinned to a version instead of :latest so upgrades are deliberate;
+#   it is kept in sync with each release by scripts/check-version-sync.sh.
+# * POSTGRES_PASSWORD has no default here on purpose — set it in .env before first start.
 
 services:
   postgres:
@@ -30,8 +32,8 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-arranalytics}
       POSTGRES_USER: ${POSTGRES_USER:-arradmin}
-      # Change this before first start.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
+      # Required: set a real password in .env before first start.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env before starting}
     security_opt:
       - no-new-privileges:true
     volumes:
@@ -45,7 +47,7 @@ services:
       - nebularr
 
   app:
-    image: ${NEBULARR_IMAGE:-dendlomm/nebularr:2.0.0}
+    image: ${NEBULARR_IMAGE:-dendlomm/nebularr:2.5.0}
     container_name: nebularr
     user: "1001:1001"
     read_only: true

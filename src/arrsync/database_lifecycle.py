@@ -133,6 +133,7 @@ async def finalize_application_services(app_state: Any) -> None:
         while not stop_event.is_set():
             try:
                 status_payload = await asyncio.to_thread(_compute_health_payload)
+                app_state.status_cache = (status_payload, time.monotonic())
                 await app_state.alert_notifier.maybe_send_health_alert(status_payload)
                 event_bus = getattr(app_state, "event_bus", None)
                 if event_bus is not None:

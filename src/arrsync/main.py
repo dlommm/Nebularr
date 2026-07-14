@@ -61,6 +61,9 @@ class AppState:
     health_alert_task: asyncio.Task[None] | None = None
     notification_task: asyncio.Task[None] | None = None
     webhook_drain_task: asyncio.Task[None] | None = None
+    manual_sync_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
+    mal_backlog_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    status_cache: Any | None = field(default=None, repr=False)
     request_webhook_drain: Any | None = field(default=None, repr=False)
     auth_config_cache: Any | None = field(default=None, repr=False)
     auth_config_cached_at: float = field(default=0.0, repr=False)
@@ -262,6 +265,16 @@ async def _shutdown() -> None:
         app_state.webhook_drain_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.webhook_drain_task
+    # Queued (?wait=false) syncs honor stop_event; give them a moment, then cancel.
+    for task in list(app_state.manual_sync_tasks):
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+    if app_state.mal_backlog_task and not app_state.mal_backlog_task.done():
+        app_state.mal_backlog_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await app_state.mal_backlog_task
     await sync_service.aclose()
     await sonarr_client.aclose()
     await radarr_client.aclose()

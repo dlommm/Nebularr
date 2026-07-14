@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from arrsync.services.url_guard import UrlPolicyError, assert_url_allowed
+from arrsync.services.url_guard import EgressGuardedTransport, UrlPolicyError, assert_url_allowed
 
 
 @pytest.mark.parametrize(
@@ -71,3 +71,73 @@ def test_strict_policy_allows_global_addresses() -> None:
 def test_unresolvable_host_is_rejected_outside_open() -> None:
     with pytest.raises(UrlPolicyError):
         assert_url_allowed("http://definitely-not-a-real-host.invalid:8989", "lan")
+
+
+class _FakeAddrinfo:
+    """getaddrinfo stub returning one fixed address."""
+
+    def __init__(self, address: str) -> None:
+        self.address = address
+
+    def __call__(self, *args: object, **kwargs: object) -> list:
+        import socket
+
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (self.address, 0))]
+
+
+@pytest.mark.asyncio
+async def test_guarded_transport_blocks_host_rebound_to_link_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from arrsync.services import url_guard
+
+    monkeypatch.setattr(url_guard.socket, "getaddrinfo", _FakeAddrinfo("169.254.169.254"))
+    transport = EgressGuardedTransport(policy="lan")
+    request = httpx.Request("GET", "http://sonarr.example/api/v3/system/status")
+    with pytest.raises(httpx.ConnectError, match="link-local"):
+        await transport.handle_async_request(request)
+
+
+@pytest.mark.asyncio
+async def test_guarded_transport_passes_allowed_host_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from arrsync.services import url_guard
+
+    monkeypatch.setattr(url_guard.socket, "getaddrinfo", _FakeAddrinfo("93.184.216.34"))
+
+    async def fake_parent(self: object, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(204, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_parent)
+    transport = EgressGuardedTransport(policy="lan")
+    request = httpx.Request("GET", "http://sonarr.example/api/v3/system/status")
+    response = await transport.handle_async_request(request)
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_guarded_transport_open_policy_never_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from arrsync.services import url_guard
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("open policy must not resolve DNS in the guard")
+
+    monkeypatch.setattr(url_guard.socket, "getaddrinfo", boom)
+
+    async def fake_parent(self: object, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_parent)
+    transport = EgressGuardedTransport(policy="open")
+    request = httpx.Request("GET", "http://169.254.169.254/latest/meta-data")
+    response = await transport.handle_async_request(request)
+    assert response.status_code == 200

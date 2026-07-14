@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ActionErrorProvider } from "./context/ActionErrorContext";
 import { AppLayout } from "./layout/AppLayout";
 import { PageFallback } from "./components/PageFallback";
+import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import { RequireSetup } from "./routes/RequireSetup";
 import { PATHS } from "./routes/paths";
 import { SetupPage } from "./pages/SetupPage";
@@ -23,13 +24,24 @@ export function App(): JSX.Element {
   return (
     <ActionErrorProvider>
       <Routes>
-        <Route path={PATHS.setup} element={<SetupPage />} />
+        {/* Setup and Login render outside AppLayout's boundary; wrap them so a
+            render error shows a recoverable message instead of a blank page. */}
+        <Route
+          path={PATHS.setup}
+          element={
+            <RouteErrorBoundary>
+              <SetupPage />
+            </RouteErrorBoundary>
+          }
+        />
         <Route
           path="/login"
           element={
-            <Suspense fallback={<PageFallback />}>
-              <LoginPage />
-            </Suspense>
+            <RouteErrorBoundary>
+              <Suspense fallback={<PageFallback />}>
+                <LoginPage />
+              </Suspense>
+            </RouteErrorBoundary>
           }
         />
         <Route element={<RequireSetup />}>

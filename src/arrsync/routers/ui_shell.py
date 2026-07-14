@@ -25,6 +25,11 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
     web_dist_dir = web_ui_dir.joinpath("dist")
     web_dist_index = web_dist_dir.joinpath("index.html")
     web_assets_dir = web_ui_dir.joinpath("assets")
+
+    def _index_html() -> str:
+        selected_index = web_dist_index if web_dist_index.exists() else web_ui_path
+        return selected_index.read_text(encoding="utf-8")
+
     @router.get("/", response_class=HTMLResponse)
     async def ui_home():
         if not app_state.session_factory.ready:
@@ -33,11 +38,7 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
             setup_completed = get_setting(session, "app.setup_completed", "false").lower() == "true"
         if not setup_completed:
             return RedirectResponse(url="/setup", status_code=307)
-        selected_index = web_dist_index if web_dist_index.exists() else web_ui_path
-        html = selected_index.read_text(encoding="utf-8")
-        html = html.replace("__APP_VERSION__", app_state.settings.app_version)
-        html = html.replace("__APP_GIT_SHA__", app_state.settings.app_git_sha)
-        return html
+        return _index_html()
 
     @router.get("/setup", response_class=HTMLResponse)
     async def ui_setup():
@@ -46,11 +47,7 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
                 setup_completed = get_setting(session, "app.setup_completed", "false").lower() == "true"
             if setup_completed:
                 return RedirectResponse(url="/", status_code=307)
-        selected_index = web_dist_index if web_dist_index.exists() else web_ui_path
-        html = selected_index.read_text(encoding="utf-8")
-        html = html.replace("__APP_VERSION__", app_state.settings.app_version)
-        html = html.replace("__APP_GIT_SHA__", app_state.settings.app_git_sha)
-        return html
+        return _index_html()
 
     @router.get("/assets/{asset_name:path}")
     async def ui_asset(asset_name: str) -> FileResponse:
@@ -69,10 +66,6 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
     async def ui_spa_fallback(frontend_path: str) -> str:
         if frontend_path.startswith(("api/", "healthz", "metrics", "assets/", "hooks/")):
             raise HTTPException(status_code=404, detail="not found")
-        selected_index = web_dist_index if web_dist_index.exists() else web_ui_path
-        html = selected_index.read_text(encoding="utf-8")
-        html = html.replace("__APP_VERSION__", app_state.settings.app_version)
-        html = html.replace("__APP_GIT_SHA__", app_state.settings.app_git_sha)
-        return html
+        return _index_html()
 
     return router

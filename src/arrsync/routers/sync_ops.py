@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from arrsync.log_buffer import get_recent_logs_parsed, ring_buffer_capacity
@@ -14,6 +16,7 @@ from arrsync.routers.shared import (
     setup_sync_state,
     clamp_limit,
 )
+from arrsync.services import repository as repo
 from arrsync.services.log_level_store import (
     effective_log_level,
 )
@@ -351,12 +354,37 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             ).mappings()
             return [dict(r) for r in rows]
 
+    def _sync_lock_held(lock_name: str) -> bool:
+        with app_state.session_scope() as session:
+            return repo.job_lock_held(session, lock_name)
+
+    async def _run_queued_sync(source: str, mode: str) -> None:
+        try:
+            result = await app_state.sync_service.run_sync(source, mode, reason="manual")
+        except Exception:
+            app_state.metrics.inc("arrsync_sync_runs_failed_total")
+            log.exception("queued manual sync failed", extra={"source": source, "mode": mode})
+            return
+        app_state.metrics.inc("arrsync_sync_runs_total")
+        if result.status == "failed":
+            app_state.metrics.inc("arrsync_sync_runs_failed_total")
+
     @router.post("/api/sync/{source}/{mode}")
-    async def trigger_sync(source: str, mode: str) -> dict[str, Any]:
+    async def trigger_sync(source: str, mode: str, wait: bool = True) -> Any:
+        """Blocking by default (documented for scripted runs). With ?wait=false the
+        sync is queued as a background task (202) and progress is observable via
+        /api/ui/work-status and SSE — the path the SPA uses."""
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=400, detail="source must be sonarr or radarr")
         if mode not in {"full", "incremental", "reconcile"}:
             raise HTTPException(status_code=400, detail="invalid mode")
+        if not wait:
+            if await asyncio.to_thread(_sync_lock_held, f"{source}:{mode}"):
+                raise HTTPException(status_code=409, detail=f"{source}/{mode} sync already running")
+            task = asyncio.create_task(_run_queued_sync(source, mode))
+            app_state.manual_sync_tasks.add(task)
+            task.add_done_callback(app_state.manual_sync_tasks.discard)
+            return JSONResponse({"status": "queued", "source": source, "mode": mode}, status_code=202)
         try:
             result = await app_state.sync_service.run_sync(source, mode, reason="manual")
         except Exception as exc:

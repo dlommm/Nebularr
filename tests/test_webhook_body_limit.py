@@ -14,7 +14,7 @@ def _build_client(state: FakeAppState | None = None) -> TestClient:
     return TestClient(app)
 
 
-SECRET_HEADER = {"x-arr-shared-secret": "changeme"}
+SECRET_HEADER = {"x-arr-shared-secret": "test-webhook-secret"}
 
 
 def test_webhook_accepts_small_payload() -> None:

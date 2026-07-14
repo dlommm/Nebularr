@@ -22,9 +22,9 @@ class DubListClient:
 
     async def fetch(self) -> tuple[dict[str, Any], str, int]:
         last_err: Exception | None = None
-        for attempt in range(1, self.retry + 1):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for attempt in range(1, self.retry + 1):
+                try:
                     resp = await client.get(self.url)
                     status = resp.status_code
                     if status in {429, 500, 502, 503, 504} and attempt < self.retry:
@@ -35,11 +35,11 @@ class DubListClient:
                     sha = hashlib.sha256(body).hexdigest()
                     data = resp.json()
                     return data, sha, status
-            except Exception as exc:
-                last_err = exc
-                if attempt >= self.retry:
-                    break
-                await asyncio.sleep(0.5 * attempt)
+                except Exception as exc:
+                    last_err = exc
+                    if attempt >= self.retry:
+                        break
+                    await asyncio.sleep(0.5 * attempt)
         raise RuntimeError(f"dub info fetch failed: {self.url}") from last_err
 
 
@@ -59,7 +59,7 @@ class MalApiClient:
 
     async def _throttle(self) -> None:
         async with self._lock:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             now = loop.time()
             wait = self._last_at + self.interval - now
             if wait > 0:
@@ -87,15 +87,12 @@ class MalApiClient:
             None,
         ]
         last_err: Exception | None = None
-        for fields in field_variants:
-            for attempt in range(1, self.retry + 1):
-                try:
-                    await self._throttle()
-                    params = {"fields": fields} if fields else {}
-                    async with httpx.AsyncClient(
-                        timeout=self.timeout,
-                        follow_redirects=True,
-                    ) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+            for fields in field_variants:
+                for attempt in range(1, self.retry + 1):
+                    try:
+                        await self._throttle()
+                        params = {"fields": fields} if fields else {}
                         resp = await client.get(url, headers=headers, params=params)
                         code = resp.status_code
                         if code == 404:
@@ -135,18 +132,18 @@ class MalApiClient:
                             last_err = ValueError("mal response is not an object")
                             break
                         return data, code, None
-                except httpx.HTTPStatusError as exc:
-                    last_err = exc
-                    if exc.response.status_code == 404:
-                        return None, 404, "not_found"
-                    if attempt >= self.retry:
-                        break
-                    await asyncio.sleep(0.5 * attempt)
-                except Exception as exc:
-                    last_err = exc
-                    if attempt >= self.retry:
-                        break
-                    await asyncio.sleep(0.5 * attempt)
+                    except httpx.HTTPStatusError as exc:
+                        last_err = exc
+                        if exc.response.status_code == 404:
+                            return None, 404, "not_found"
+                        if attempt >= self.retry:
+                            break
+                        await asyncio.sleep(0.5 * attempt)
+                    except Exception as exc:
+                        last_err = exc
+                        if attempt >= self.retry:
+                            break
+                        await asyncio.sleep(0.5 * attempt)
         return None, 0, str(last_err) if last_err else "error"
 
 
@@ -160,7 +157,7 @@ class JikanClient:
 
     async def _throttle(self) -> None:
         async with self._lock:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             now = loop.time()
             wait = self._last_at + self.interval - now
             if wait > 0:
@@ -170,10 +167,10 @@ class JikanClient:
     async def get_anime_full(self, mal_id: int) -> tuple[dict[str, Any] | None, str | None]:
         url = f"{JIKAN_API_BASE}/anime/{mal_id}/full"
         last_err: Exception | None = None
-        for attempt in range(1, self.retry + 1):
-            try:
-                await self._throttle()
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for attempt in range(1, self.retry + 1):
+                try:
+                    await self._throttle()
                     resp = await client.get(url)
                     if resp.status_code == 404:
                         return None, "not_found"
@@ -182,9 +179,9 @@ class JikanClient:
                         continue
                     resp.raise_for_status()
                     return resp.json(), None
-            except Exception as exc:
-                last_err = exc
-                if attempt >= self.retry:
-                    break
-                await asyncio.sleep(1.0 * attempt)
+                except Exception as exc:
+                    last_err = exc
+                    if attempt >= self.retry:
+                        break
+                    await asyncio.sleep(1.0 * attempt)
         return None, str(last_err) if last_err else "error"

@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# All jobs only read the repo; nothing needs write scopes.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -125,8 +129,34 @@ jobs:
       - name: All hardcoded version strings match pyproject.toml
         run: ./scripts/check-version-sync.sh
 
+  smoke_paths:
+    # Cheap gate so the full-stack smoke only runs on PRs that can affect it.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            relevant:
+              - 'Dockerfile'
+              - 'docker-compose.yml'
+              - 'src/**'
+              - 'frontend/**'
+              - 'alembic/**'
+              - 'scripts/**'
+
   smoke_optional:
-    if: github.event_name == 'workflow_dispatch'
+    needs: [smoke_paths]
+    # Full compose + Playwright smoke: on-demand, and on PRs touching the stack.
+    if: >-
+      !cancelled() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'pull_request' && needs.smoke_paths.outputs.relevant == 'true')
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

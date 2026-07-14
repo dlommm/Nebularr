@@ -10,6 +10,7 @@ class CapabilitySet:
     supports_history: bool
     supports_episode_include_files: bool
     raw: dict[str, Any]
+    supports_history_since: bool = True
 
 
 @dataclass(slots=True)

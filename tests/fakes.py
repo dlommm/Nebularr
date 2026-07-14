@@ -45,6 +45,9 @@ class FakeSession:
         self.settings: dict[str, str] = {}
         self.statements: list[tuple[str, dict[str, Any] | None]] = []
         self.webhook_ingest_allowed = True
+        # None means "any instance name passes"; a set restricts the lookup.
+        self.known_webhook_instances: set[str] | None = None
+        self.job_lock_held = False
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
         sql = " ".join(str(query).lower().split())
@@ -64,8 +67,13 @@ class FakeSession:
             return FakeResult(1)
         if "insert into app.webhook_queue" in sql:
             return FakeResult()
+        if "from app.job_lock" in sql:
+            return FakeResult(rows=[(1,)] if self.job_lock_held else [])
         if "from app.integration_instance" in sql and "webhook_enabled" in sql:
-            return FakeResult(rows=[(1,)] if self.webhook_ingest_allowed else [])
+            allowed = self.webhook_ingest_allowed
+            if allowed and params and "instance_name" in params and self.known_webhook_instances is not None:
+                allowed = str(params["instance_name"]) in self.known_webhook_instances
+            return FakeResult(rows=[(1,)] if allowed else [])
         raise RuntimeError(f"unexpected SQL in fake session: {sql}")
 
     # No-ops so this fake also works under the real db.session_scope().
@@ -88,7 +96,9 @@ class FakeSettings:
     alert_sync_lag_critical_seconds: int = 7200
     alert_sync_lag_warning_seconds: int = 3600
     webhook_max_body_bytes: int = 1024
-    webhook_shared_secret: str = "changeme"
+    # Non-default on purpose: the receiver refuses traffic while the shipped
+    # default ("changeme") is still in place.
+    webhook_shared_secret: str = "test-webhook-secret"
     alert_webhook_urls: str = ""
     alert_webhook_timeout_seconds: float = 10.0
     alert_webhook_min_state: str = "warning"
@@ -99,6 +109,7 @@ class FakeSettings:
     auth_enabled: str = ""
     auth_recovery_password: str = ""
     auth_session_ttl_hours: int = 1
+    trusted_proxies: str = ""
     arr_dub_tag_label: str = "English-Dubbed-Anime"
     arr_coverage_full_tag_label: str = "fully-english"
     arr_coverage_partial_tag_label: str = "partial-english"

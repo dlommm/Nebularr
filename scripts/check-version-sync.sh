@@ -24,5 +24,6 @@ check "Dockerfile APP_VERSION arg"   Dockerfile                   "ARG APP_VERSI
 check "docker-compose.yml default"   docker-compose.yml           "APP_VERSION:-${version}"
 check ".env.example"                 .env.example                 "APP_VERSION=${version}"
 check "config.py app_version"        src/arrsync/config.py        "app_version: str = \"${version}\""
+check "unraid compose image tag"     deploy/unraid/docker-compose.yml "dendlomm/nebularr:${version}"
 
 exit "$fail"

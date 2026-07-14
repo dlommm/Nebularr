@@ -4,6 +4,86 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.5.0] - 2026-07-14
+
+Polish and hardening release from a full-application audit: incremental sync
+now actually ingests data, long operations run as background jobs the UI can
+follow live, tag sync can no longer overwrite edits made in Sonarr/Radarr, and
+a set of security, performance, and UX fixes land across the stack. One
+additive DB migration (0010) runs automatically.
+
+### Fixed
+- **Incremental sync now ingests changes.** It previously fetched history,
+  counted events, and advanced a watermark without writing a single row (and
+  queried `/api/v3/history` with a `since` parameter the Arr apps ignore).
+  It now uses `GET /api/v3/history/since?date=<watermark>` (with a bounded
+  newest-first page walk as fallback for older Arr builds, chosen via a new
+  capability probe), re-fetches every referenced series/movie, upserts it with
+  its episodes/files, tombstones children a refresh no longer returns, and
+  advances the watermark only after a successful ingest. Warehouse freshness
+  between weekly full syncs no longer depends solely on webhooks.
+- **Tag sync no longer clobbers Sonarr/Radarr edits.** The MAL dub tag sync and
+  the coverage tag sync used to PUT the last-synced warehouse payload back to
+  the Arr apps, silently reverting any monitored/profile/path change made since
+  the previous sync. Both now diff desired tags against live Arr state and
+  apply deltas via the bulk tag editor endpoints (`/series/editor`,
+  `/movie/editor`) — only tags can change.
+- **Long jobs no longer fake-fail in the UI.** Every browser request aborted at
+  30s while full syncs and MAL backlog imports ran inside that same HTTP
+  request — the UI reported a timeout while the server kept working. Manual
+  syncs from the UI now queue as background tasks (202) with live progress via
+  the existing work-status/SSE panel; `POST /api/sync/{source}/{mode}` keeps
+  its blocking behavior by default for scripts (`?wait=false` opts out). The
+  unbounded MAL "import all" runs as a tracked `ingest_backlog` job — no more
+  "keep the tab open".
+- **Job locks survive long runs**: the sync and MAL-ingest locks are now
+  re-leased every 5 minutes for the whole run, so a sync longer than the 30-min
+  lease can no longer be joined by a duplicate concurrent run.
+- Webhook payloads with JSON `null` for `series`/`episode`/`movie` no longer
+  crash the queue worker into retry/dead-letter.
+- Header search now works when the Library page is already open; the logs view
+  only auto-scrolls while you are at the bottom; the Library "Export CSV"
+  button is disabled until a show is selected in drilldown mode; `fmtDate` no
+  longer renders "Invalid Date"; Setup/Login pages get a proper error boundary
+  instead of a blank page on render errors.
+- The Unraid compose template no longer pins the four-releases-old `2.0.0`
+  image tag; the version-sync gate and `bump-version.sh` now cover it so it
+  cannot drift again, and the template requires `POSTGRES_PASSWORD` instead of
+  defaulting to a known value.
+
+### Added
+- **Per-instance webhooks**: `POST /hooks/{source}/{instance}` attributes
+  events to the named integration (the bare route keeps targeting `default`),
+  the instance is stamped into the payload before deduplication, and unknown or
+  webhook-disabled instances are rejected. Multi-instance setups no longer
+  apply every webhook to the default instance.
+- **Request-time egress enforcement**: outbound Arr and alert-webhook requests
+  re-resolve and re-check the target against the egress policy on every call
+  (previously config-time only), closing the DNS-rebinding gap.
+- **Session revocation**: session cookies embed an epoch that bumps on every
+  password change, so old sessions die immediately (existing sessions survive
+  the upgrade itself).
+- `TRUSTED_PROXIES` (IPs/CIDRs): when set, the login rate limiter keys on the
+  real client from `X-Forwarded-For` instead of the reverse proxy's address.
+- Webhooks are refused (403) while the shared secret is still the shipped
+  default `changeme`.
+- Success toasts for manual actions (syncs, requeues, resets, replays), and
+  destructive resets now refresh the Library/MAL views immediately.
+- Migration 0010: join indexes on `warehouse.episode_file`/`movie_file` and
+  partial instance indexes on `series`/`movie` for the hot library queries;
+  webhook dedupe narrowed to open jobs so re-sent payloads re-queue after
+  completion; `ingest_backlog` job type.
+- Release workflow scans the image (Trivy, same policy as CI) before anything
+  is pushed to Docker Hub; CI runs with least-privilege `contents: read` and
+  the compose+Playwright smoke now also runs on PRs that touch the stack.
+
+### Changed
+- `/api/status` serves a short-TTL cached health payload refreshed by the
+  60s background loop instead of re-running ~8 queries per poll; MAL/Jikan
+  clients reuse one HTTP client across retries; dead-letter webhook rows are
+  now pruned by the retention job (they previously accumulated forever);
+  4xx responses from Arr are no longer pointlessly retried.
+
 ## [2.4.1] - 2026-07-08
 
 ### Fixed

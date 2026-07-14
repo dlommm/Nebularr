@@ -1,12 +1,6 @@
 import type { HealthDimensions, HealthState } from "@/types";
+import { DIM_LABELS } from "@/constants/health";
 import { cn } from "@/lib/utils";
-
-const DIM_LABELS: Record<keyof HealthDimensions, string> = {
-  webhooks: "Queues",
-  sync: "Sync",
-  integrations: "Arr",
-  mal: "MAL",
-};
 
 function pillClass(s: HealthState | undefined): string {
   const v = s ?? "ok";

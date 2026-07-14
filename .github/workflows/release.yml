@@ -56,6 +56,21 @@ jobs:
           mypy src
           pytest -q
 
+      - name: Build local image for pre-push scan
+        run: |
+          docker build \
+            --build-arg "APP_VERSION=${{ steps.version.outputs.version }}" \
+            --build-arg "GIT_SHA=${GITHUB_SHA::7}" \
+            -t nebularr:release-scan .
+      - name: Trivy image scan (must pass before anything is pushed)
+        # Same policy as CI's security job: HIGH/CRITICAL, fixable only, shared
+        # ignore file. A tag on a commit that skipped PR CI must not ship unscanned.
+        run: |
+          docker save nebularr:release-scan -o /tmp/nebularr-release.tar
+          docker run --rm -v "$PWD:/src" -v /tmp:/tmp aquasec/trivy:0.72.0 image \
+            --input /tmp/nebularr-release.tar --severity HIGH,CRITICAL --exit-code 1 \
+            --ignore-unfixed --ignorefile /src/.trivyignore.image
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3

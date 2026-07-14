@@ -6,7 +6,7 @@ import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
-import { useServerEventsStatus } from "../hooks/useServerEvents";
+import { pollInterval, useServerEventsStatus } from "../hooks/useServerEvents";
 import { StatusPill } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import type { MalJobRunRow } from "../types";
 import { PATHS } from "../routes/paths";
 
-const JOB_TYPES = ["all", "ingest", "matcher", "tag_sync", "coverage_tag_sync"] as const;
+const JOB_TYPES = ["all", "ingest", "ingest_backlog", "matcher", "tag_sync", "coverage_tag_sync"] as const;
 type JobTypeFilter = (typeof JOB_TYPES)[number];
 
 function runDurationSeconds(run: MalJobRunRow): number | null {
@@ -48,13 +48,13 @@ export function MalPage(): JSX.Element {
   const overview = useQuery({
     queryKey: ["mal-overview"],
     queryFn: () => api.malOverview(200),
-    refetchInterval: sseConnected ? 60_000 : 30_000,
+    refetchInterval: pollInterval(sseConnected, 30_000, 60_000),
   });
   const [jobTypeFilter, setJobTypeFilter] = useState<JobTypeFilter>("all");
   const jobRuns = useQuery({
     queryKey: ["mal-job-runs", jobTypeFilter],
     queryFn: () => api.malJobRuns(jobTypeFilter, 50),
-    refetchInterval: sseConnected ? 60_000 : 30_000,
+    refetchInterval: pollInterval(sseConnected, 30_000, 60_000),
   });
 
   const [malPipelineResult, setMalPipelineResult] = useState<{ label: string; details: Record<string, unknown> } | null>(
@@ -258,8 +258,10 @@ export function MalPage(): JSX.Element {
                       max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
                       cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
                       max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
+                      // Unbounded imports run as a tracked background job.
+                      wait: !malImportAll,
                     }),
-                  "MAL ingest backlog",
+                  malImportAll ? "MAL ingest backlog (queued)" : "MAL ingest backlog",
                 )
               }
             >
@@ -271,7 +273,7 @@ export function MalPage(): JSX.Element {
                 requestConfirm({
                   title: "Import all pending MAL fetches?",
                   description:
-                    "This runs batch after batch until the queue is empty (or the cap is reached). Keep the tab open; it can take a long time.",
+                    "This queues a background job that runs batch after batch until the queue is empty (or the cap is reached). Progress appears in Active work; you can close the tab.",
                   confirmLabel: "Import all",
                   onConfirm: () =>
                     void runMalPipeline(
@@ -280,8 +282,9 @@ export function MalPage(): JSX.Element {
                           import_all: true,
                           max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
                           cycle_delay_seconds: Math.max(1, Math.min(30, malCycleDelaySeconds)),
+                          wait: false,
                         }),
-                      "MAL import all pending",
+                      "MAL import all pending (queued)",
                     ),
                 })
               }

@@ -4,7 +4,7 @@ import { ArrowRight, Film, GitBranch, HeartPulse, Inbox, LayoutList, ListVideo, 
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
-import { useServerEventsStatus } from "../hooks/useServerEvents";
+import { pollInterval, useServerEventsStatus } from "../hooks/useServerEvents";
 import { MAL_JOB_TYPE_ORDER } from "../constants/domain";
 import { StatusPill } from "../components/ui";
 import { useActionError } from "../hooks/useActionError";
@@ -34,18 +34,21 @@ export function DashboardPage(): JSX.Element {
       title: `Run ${name} full sync?`,
       description: `This re-fetches the entire ${name} library and can take a long time on large libraries.`,
       confirmLabel: "Run full sync",
-      onConfirm: () => void runAction(() => api.runSync(source, "full"), actionLabel),
+      onConfirm: () =>
+        void runAction(() => api.runSync(source, "full"), actionLabel, {
+          successMessage: `${name} full sync queued`,
+        }),
     });
   };
   const status = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
-    refetchInterval: sseConnected ? 60_000 : 15_000,
+    refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
   const syncActivity = useQuery({
     queryKey: ["sync-activity"],
     queryFn: api.syncActivity,
-    refetchInterval: sseConnected ? 30_000 : 5_000,
+    refetchInterval: pollInterval(sseConnected, 5_000, 30_000),
   });
   const malSync = status.data?.mal_sync;
   const healthOk = status.data?.health_state === "ok";
@@ -57,10 +60,10 @@ export function DashboardPage(): JSX.Element {
           Live sync telemetry, health, and queue pressure. Data refreshes every few seconds.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr")}>
+          <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr", { successMessage: "Sonarr incremental sync queued" })}>
             Sonarr incremental
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr")}>
+          <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr", { successMessage: "Radarr incremental sync queued" })}>
             Radarr incremental
           </Button>
           <Button size="sm" variant="outline" onClick={() => runFullSync("sonarr", "dashboard sonarr full")}>

@@ -22,21 +22,28 @@ def build_hooks_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
     @router.post("/hooks/{source}")
-    async def webhook(source: str, request: Request) -> JSONResponse:
+    @router.post("/hooks/{source}/{instance_name}")
+    async def webhook(source: str, request: Request, instance_name: str = "default") -> JSONResponse:
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=404, detail="unknown source")
 
         received_secret = request.headers.get("x-arr-shared-secret", "")
         with app_state.session_scope() as session:
             stored_hash = get_setting(session, "app.webhook_secret_hash", "")
-            ingest_allowed = repo.webhook_ingest_allowed(session, source)
+            ingest_allowed = repo.webhook_ingest_allowed(session, source, instance_name)
         if stored_hash:
             if not verify_secret_hash(received_secret, stored_hash):
                 raise HTTPException(status_code=401, detail="invalid secret")
+        elif app_state.settings.webhook_shared_secret == "changeme":
+            # Never accept traffic against the shipped default secret.
+            raise HTTPException(
+                status_code=403,
+                detail="webhook shared secret is not configured; set one in Settings",
+            )
         elif not app_state.arr_client_class.validate_webhook_secret(received_secret, app_state.settings.webhook_shared_secret):
             raise HTTPException(status_code=401, detail="invalid secret")
         if not ingest_allowed:
-            raise HTTPException(status_code=403, detail="webhooks disabled for this source")
+            raise HTTPException(status_code=403, detail="webhooks disabled for this source/instance")
 
         # Enforce the size cap on the bytes actually received: Content-Length can be
         # absent (chunked transfer) or malformed, so it cannot be trusted for the limit.
@@ -66,6 +73,9 @@ def build_hooks_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=400, detail="invalid payload") from exc
 
         event_type = str(payload.get("eventType", "unknown"))
+        # Arr apps never send an instance identifier; stamp the route's before the
+        # dedupe hash so identical events for different instances both queue.
+        payload["instance_name"] = instance_name
         dedupe_key = hashlib.sha256(
             json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
@@ -77,7 +87,12 @@ def build_hooks_router(app_state: Any) -> APIRouter:
             request_drain(source)
         log.info(
             "incoming webhook queued",
-            extra={"webhook_source": source, "event_type": event_type, "dedupe_key_prefix": dedupe_key[:12]},
+            extra={
+                "webhook_source": source,
+                "instance_name": instance_name,
+                "event_type": event_type,
+                "dedupe_key_prefix": dedupe_key[:12],
+            },
         )
         return JSONResponse({"status": "accepted"})
 

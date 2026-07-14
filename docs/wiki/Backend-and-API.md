@@ -4,7 +4,7 @@ The server is a **FastAPI** application that bundles:
 
 - **Static Web UI** — built React app from `frontend/` (output under `src/arrsync/web/dist`), plus SPA catch-all for client routes  
 - **JSON APIs** — `/api/ui/*`, `/api/config/*`, `/api/sync/*`, `/api/setup/*`, reporting, admin, etc.  
-- **Webhooks** — e.g. `POST /hooks/sonarr`, `POST /hooks/radarr` with shared secret  
+- **Webhooks** — e.g. `POST /hooks/sonarr`, `POST /hooks/radarr` with shared secret (`POST /hooks/<source>/<instance>` targets a named instance)  
 - **Observability** — `GET /healthz`, `GET /metrics` (Prometheus)  
 
 ## Pointers in this repo

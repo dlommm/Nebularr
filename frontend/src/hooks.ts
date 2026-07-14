@@ -31,11 +31,14 @@ export function useLocalStorageState<T>(key: string, initial: T): [T, (next: T) 
 
 export function fmtDate(value?: string | null): string {
   if (!value) return "-";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return String(value);
-  }
+  // new Date("junk") doesn't throw — it yields an invalid date that would
+  // render as the string "Invalid Date".
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+}
+
+export function errText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function fmtDuration(seconds?: number | null): string {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../api";
+import { errText } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { LogViewerRow } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
@@ -31,6 +32,10 @@ export function LogsPage(): JSX.Element {
   const [minLevel, setMinLevel] = useState("all");
   const [search, setSearch] = useState("");
   const logsEndRef = useRef<HTMLDivElement | null>(null);
+  const logsScrollRef = useRef<HTMLDivElement | null>(null);
+  // Stick-to-bottom: only follow new lines while the user is already at the
+  // bottom, so scrolling up to read older lines isn't yanked back every poll.
+  const stickToBottomRef = useRef(true);
   const uiLogs = useQuery({
     queryKey: ["ui-logs"],
     queryFn: () => api.uiLogs(500),
@@ -53,9 +58,15 @@ export function LogsPage(): JSX.Element {
   const filterActive = minLevel !== "all" || search.trim() !== "";
 
   useEffect(() => {
-    if (logsPaused || !logsEndRef.current) return;
+    if (logsPaused || !stickToBottomRef.current || !logsEndRef.current) return;
     logsEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [logsPaused, filtered]);
+
+  const onLogsScroll = (): void => {
+    const el = logsScrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
 
   const downloadLogs = (): void => {
     const blob = new Blob([filtered.map(entryText).join("\n")], { type: "text/plain" });
@@ -136,9 +147,13 @@ export function LogsPage(): JSX.Element {
           </span>
         </div>
         {uiLogs.isError ? (
-          <p className="text-sm text-critical">Could not load logs: {String(uiLogs.error)}</p>
+          <p className="text-sm text-critical">Could not load logs: {errText(uiLogs.error)}</p>
         ) : null}
-        <div className="max-h-[min(70vh,720px)] overflow-y-auto rounded-[10px] border border-border bg-card p-2 font-mono text-xs">
+        <div
+          ref={logsScrollRef}
+          onScroll={onLogsScroll}
+          className="max-h-[min(70vh,720px)] overflow-y-auto rounded-[10px] border border-border bg-card p-2 font-mono text-xs"
+        >
           {uiLogs.isLoading && items.length === 0 ? (
             <p className="m-0 px-1 py-2 text-sm text-muted-foreground">Loading…</p>
           ) : null}

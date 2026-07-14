@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { useActionError } from "../hooks/useActionError";
-import { ServerEventsContext, useServerEvents } from "../hooks/useServerEvents";
+import { ServerEventsContext, pollInterval, useServerEvents } from "../hooks/useServerEvents";
 import { useLocalStorageState } from "../hooks";
 import { LegacyViewRedirect } from "./LegacyViewRedirect";
 import { pathTitle, PATHS } from "../routes/paths";
@@ -34,6 +34,7 @@ import { SecurityBanner } from "../components/nebula/SecurityBanner";
 import { PageFallback } from "../components/PageFallback";
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import type { HealthDimensions } from "@/types";
+import { DIM_LABELS } from "@/constants/health";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -59,13 +60,6 @@ const NAV_CONFIG: NavItem[] = [
   { to: PATHS.logs, label: "Logs", Icon: FileText },
 ];
 
-const DIM_LABELS: Record<keyof HealthDimensions, string> = {
-  webhooks: "Queues",
-  sync: "Sync",
-  integrations: "Arr",
-  mal: "MAL",
-};
-
 function healthTone(state: string | undefined): { dot: string; pill: string } {
   const s = (state ?? "ok").toLowerCase();
   if (s === "ok") return { dot: "bg-ok", pill: "border-ok/30 bg-ok/10 text-ok" };
@@ -89,7 +83,7 @@ export function AppLayout(): JSX.Element {
   const status = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
-    refetchInterval: serverEvents.connected ? 60_000 : 15_000,
+    refetchInterval: pollInterval(serverEvents.connected, 15_000, 60_000),
   });
   const authStatus = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus, staleTime: 60_000 });
   const showLogout = authStatus.data?.enabled === true && authStatus.data.authenticated;
@@ -131,10 +125,8 @@ export function AppLayout(): JSX.Element {
   const onHeaderSearch = (e: { preventDefault: () => void }): void => {
     e.preventDefault();
     const q = headerSearch.trim();
-    if (q) {
-      sessionStorage.setItem("nebularr.library.pendingSearch", q);
-    }
-    navigate(PATHS.library);
+    // URL-driven so the Library page picks it up even when already mounted.
+    navigate(q ? `${PATHS.library}?q=${encodeURIComponent(q)}&offset=0` : PATHS.library);
     setHeaderSearch("");
   };
 
@@ -452,7 +444,12 @@ export function AppLayout(): JSX.Element {
                 variant="ghost"
                 size="sm"
                 className="w-full justify-start font-normal"
-                onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "palette sync sonarr")}
+                onClick={() => {
+                  void runAction(() => api.runSync("sonarr", "incremental"), "palette sync sonarr", {
+                    successMessage: "Sonarr incremental sync queued",
+                  });
+                  setCommandPalette(false);
+                }}
               >
                 Run Sonarr incremental sync
               </Button>
@@ -460,7 +457,12 @@ export function AppLayout(): JSX.Element {
                 variant="ghost"
                 size="sm"
                 className="w-full justify-start font-normal"
-                onClick={() => runAction(() => api.runSync("radarr", "incremental"), "palette sync radarr")}
+                onClick={() => {
+                  void runAction(() => api.runSync("radarr", "incremental"), "palette sync radarr", {
+                    successMessage: "Radarr incremental sync queued",
+                  });
+                  setCommandPalette(false);
+                }}
               >
                 Run Radarr incremental sync
               </Button>

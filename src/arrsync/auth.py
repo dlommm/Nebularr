@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
@@ -73,14 +74,14 @@ def _sign(signing_key: bytes, body: str) -> str:
     return base64.urlsafe_b64encode(mac).decode("utf-8")
 
 
-def mint_session_token(ttl_seconds: int, signing_key: bytes | None = None) -> str:
+def mint_session_token(ttl_seconds: int, signing_key: bytes | None = None, epoch: int = 0) -> str:
     key = signing_key if signing_key is not None else session_signing_key()
-    payload = json.dumps({"exp": int(time.time()) + ttl_seconds}, separators=(",", ":"))
+    payload = json.dumps({"exp": int(time.time()) + ttl_seconds, "ep": epoch}, separators=(",", ":"))
     body = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8")
     return f"{body}.{_sign(key, body)}"
 
 
-def verify_session_token(token: str, signing_key: bytes | None = None) -> bool:
+def verify_session_token(token: str, signing_key: bytes | None = None, expected_epoch: int = 0) -> bool:
     if not token or "." not in token:
         return False
     key = signing_key if signing_key is not None else session_signing_key()
@@ -89,9 +90,53 @@ def verify_session_token(token: str, signing_key: bytes | None = None) -> bool:
         return False
     try:
         payload = json.loads(base64.urlsafe_b64decode(body.encode("utf-8")))
+        # Tokens minted before the epoch existed carry ep=0, so they stay valid
+        # across the upgrade and die on the first password change.
+        if int(payload.get("ep", 0)) != expected_epoch:
+            return False
         return float(payload.get("exp", 0)) > time.time()
     except (ValueError, TypeError):
         return False
+
+
+def _parse_trusted_proxies(raw: str) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            log.warning("ignoring invalid trusted_proxies entry: %r", entry)
+    return networks
+
+
+def _ip_in_networks(value: str, networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> bool:
+    try:
+        addr = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(addr in net for net in networks)
+
+
+def client_key_for_request(request: Any, trusted_proxies: str) -> str:
+    """Rate-limit key: the real client IP when behind a trusted reverse proxy.
+
+    Walks X-Forwarded-For right-to-left skipping trusted hops, so an attacker
+    can't spoof arbitrary keys and a proxy doesn't collapse every client into
+    one shared lockout bucket. Without trusted proxies the peer address is used.
+    """
+    peer = request.client.host if request.client else "unknown"
+    networks = _parse_trusted_proxies(trusted_proxies)
+    if not networks or not _ip_in_networks(peer, networks):
+        return peer
+    forwarded = request.headers.get("x-forwarded-for", "")
+    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    for hop in reversed(hops):
+        if not _ip_in_networks(hop, networks):
+            return hop
+    return peer
 
 
 class LoginRateLimiter:
@@ -158,14 +203,20 @@ def auth_required(app_state: Any) -> bool:
     return config.enabled and config.password_set
 
 
+def session_epoch(app_state: Any) -> int:
+    config = get_auth_config(app_state)
+    return config.session_epoch if config is not None else 0
+
+
 def request_is_authenticated(request: Any, app_state: Any) -> bool:
+    config = get_auth_config(app_state)
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    if token and verify_session_token(token):
+    epoch = config.session_epoch if config is not None else 0
+    if token and verify_session_token(token, expected_epoch=epoch):
         return True
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         bearer = auth_header[7:].strip()
-        config = get_auth_config(app_state)
         if config is not None and config.api_token_hash and verify_secret_hash(bearer, config.api_token_hash):
             return True
     return False

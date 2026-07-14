@@ -64,6 +64,7 @@ POST /api/sync/{source}/{mode}
 POST /api/webhooks/replay-dead-letter/{source}
 POST /api/webhooks/requeue/{job_id}
 POST /hooks/{source}
+POST /hooks/{source}/{instance_name}
 PUT /api/auth/config
 PUT /api/config/alert-webhooks
 PUT /api/config/integrations/{source}

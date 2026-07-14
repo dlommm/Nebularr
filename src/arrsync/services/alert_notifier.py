@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 
 from arrsync.config import Settings
+from arrsync.services.url_guard import EgressGuardedTransport
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ def format_webhook_payload(target: str, title: str, message: str) -> dict[str, A
 class AlertNotifier:
     def __init__(self, settings: Settings):
         self.webhook_urls = [url.strip() for url in settings.alert_webhook_urls.split(",") if url.strip()]
+        self.egress_policy = settings.egress_policy
         self.timeout_seconds = settings.alert_webhook_timeout_seconds
         self.min_state = settings.alert_webhook_min_state
         self.notify_recovery = settings.alert_webhook_notify_recovery
@@ -209,7 +211,10 @@ class AlertNotifier:
         if not self.webhook_urls:
             return False
         delivered = False
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds,
+            transport=EgressGuardedTransport(policy=self.egress_policy),
+        ) as client:
             for url in self.webhook_urls:
                 target = detect_webhook_target(url)
                 try:

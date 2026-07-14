@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
 
@@ -40,9 +41,30 @@ def bootstrap_arrapp_from_admin_url(admin_database_url: str, database_name: str,
 
     admin_engine = create_engine(admin_database_url, pool_pre_ping=True, future=True)
 
-    with admin_engine.connect() as conn:
-        admin_user = str(conn.execute(text("select current_user")).scalar_one())
+    try:
+        with admin_engine.connect() as conn:
+            admin_user = str(conn.execute(text("select current_user")).scalar_one())
 
+        _grant_arrapp_privileges(admin_engine, dbn, pw, admin_user)
+    finally:
+        admin_engine.dispose()
+
+    arrapp_url = admin_url.set(username="arrapp", password=pw)
+    rebuilt = arrapp_url.render_as_string(hide_password=False)
+
+    test_engine = create_engine(rebuilt, pool_pre_ping=True, future=True)
+    try:
+        with test_engine.connect() as tconn:
+            if tconn.execute(text("select 1")).scalar() != 1:
+                raise RuntimeError("arrapp connectivity check failed")
+    finally:
+        test_engine.dispose()
+
+    return rebuilt
+
+
+def _grant_arrapp_privileges(admin_engine: Engine, dbn: str, pw: str, admin_user: str) -> None:
+    # ac_engine shares admin_engine's pool; disposing admin_engine covers both.
     ac_engine = admin_engine.execution_options(isolation_level="AUTOCOMMIT")
 
     with ac_engine.connect() as conn:
@@ -87,13 +109,3 @@ def bootstrap_arrapp_from_admin_url(admin_database_url: str, database_name: str,
                 """
             )
         )
-
-    arrapp_url = admin_url.set(username="arrapp", password=pw)
-    rebuilt = arrapp_url.render_as_string(hide_password=False)
-
-    test_engine = create_engine(rebuilt, pool_pre_ping=True, future=True)
-    with test_engine.connect() as tconn:
-        if tconn.execute(text("select 1")).scalar() != 1:
-            raise RuntimeError("arrapp connectivity check failed")
-
-    return rebuilt

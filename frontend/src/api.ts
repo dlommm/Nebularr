@@ -67,18 +67,29 @@ async function errorMessageFrom(response: Response): Promise<string> {
   return `HTTP ${response.status} ${response.statusText}`.trim();
 }
 
-async function requestJson<T>(path: string, method: HttpMethod = "GET", body?: unknown): Promise<T> {
+interface RequestOptions {
+  /** Override the default 30s abort for known long-running blocking calls. */
+  timeoutMs?: number;
+}
+
+async function requestJson<T>(
+  path: string,
+  method: HttpMethod = "GET",
+  body?: unknown,
+  opts?: RequestOptions,
+): Promise<T> {
+  const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
   let response: Response;
   try {
     response = await fetch(path, {
       method,
       headers: body ? { "content-type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path.split("?")[0]}`);
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s: ${method} ${path.split("?")[0]}`);
     }
     throw error;
   }
@@ -174,17 +185,32 @@ export const api = {
     requestJson<{ status: string; effective_level: string }>("/api/config/logging", "PUT", payload),
   uiLogs: (limit = 500) => requestJson<UiLogsResponse>(withParams("/api/ui/logs", { limit })),
   triggerMalIngest: (payload?: { max_ids_per_run?: number }) =>
-    requestJson<{ status: string; details: unknown }>("/api/mal/ingest", "POST", payload ?? {}),
+    requestJson<{ status: string; details: unknown }>("/api/mal/ingest", "POST", payload ?? {}, {
+      timeoutMs: 300_000,
+    }),
   triggerMalIngestBacklog: (payload?: {
     max_cycles?: number;
     cycle_delay_seconds?: number;
     import_all?: boolean;
     max_ids_per_run?: number;
-  }) => requestJson<{ status: string; details: unknown }>("/api/mal/ingest-backlog", "POST", payload ?? {}),
-  triggerMalMatchRefresh: () => requestJson<{ status: string; details: unknown }>("/api/mal/match-refresh", "POST"),
-  triggerMalTagSync: () => requestJson<{ status: string; details: unknown }>("/api/mal/tag-sync", "POST"),
+    wait?: boolean;
+  }) =>
+    // wait:false gets a fast 202; blocking pipeline calls can run for a long time.
+    requestJson<{ status: string; details: unknown }>("/api/mal/ingest-backlog", "POST", payload ?? {}, {
+      timeoutMs: payload?.wait === false ? undefined : 1_800_000,
+    }),
+  triggerMalMatchRefresh: () =>
+    requestJson<{ status: string; details: unknown }>("/api/mal/match-refresh", "POST", undefined, {
+      timeoutMs: 300_000,
+    }),
+  triggerMalTagSync: () =>
+    requestJson<{ status: string; details: unknown }>("/api/mal/tag-sync", "POST", undefined, {
+      timeoutMs: 300_000,
+    }),
   triggerCoverageTagSync: () =>
-    requestJson<{ status: string; details: unknown }>("/api/mal/coverage-tag-sync", "POST"),
+    requestJson<{ status: string; details: unknown }>("/api/mal/coverage-tag-sync", "POST", undefined, {
+      timeoutMs: 300_000,
+    }),
   resetMalData: () =>
     requestJson<{ status: string; message?: string }>("/api/mal/reset-data", "POST", {
       confirmation: "RESET_MAL",
@@ -227,14 +253,19 @@ export const api = {
   }) => requestJson<{ status: string; url_count: number }>("/api/config/alert-webhooks", "PUT", payload),
   sendAlertWebhookTest: () => requestJson<{ status: string }>("/api/config/alert-webhooks/test", "POST"),
   runSync: (source: string, mode: string) =>
-    requestJson<{ status: string }>(`/api/sync/${source}/${mode}`, "POST"),
+    // The UI queues syncs (202) and follows progress via work-status/SSE; only
+    // scripts use the blocking wait=true default.
+    requestJson<{ status: string }>(`/api/sync/${source}/${mode}?wait=false`, "POST"),
   replayDeadLetter: (source: string) =>
     requestJson<{ status: string }>(`/api/webhooks/replay-dead-letter/${source}`, "POST"),
   requeueWebhook: (jobId: number) => requestJson<{ status: string }>(`/api/webhooks/requeue/${jobId}`, "POST"),
   runIntegrityAudit: (source: "all" | "sonarr" | "radarr" = "all") =>
-    requestJson<{ status: string; results: IntegrityAuditResult[] }>("/api/operator/integrity-audit", "POST", {
-      source,
-    }),
+    requestJson<{ status: string; results: IntegrityAuditResult[] }>(
+      "/api/operator/integrity-audit",
+      "POST",
+      { source },
+      { timeoutMs: 300_000 },
+    ),
   resetData: () => requestJson<{ status: string }>("/api/admin/reset-data", "POST", { confirmation: "RESET" }),
   shows: (params: {
     search: string;

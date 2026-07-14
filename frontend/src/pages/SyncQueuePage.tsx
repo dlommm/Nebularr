@@ -7,7 +7,7 @@ import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
-import { useServerEventsStatus } from "../hooks/useServerEvents";
+import { pollInterval, useServerEventsStatus } from "../hooks/useServerEvents";
 import { StatusPill } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
@@ -56,34 +56,34 @@ export function SyncQueuePage(): JSX.Element {
   const runs = useQuery({
     queryKey: ["runs"],
     queryFn: api.recentRuns,
-    refetchInterval: sseConnected ? 60_000 : 15_000,
+    refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
   const webhookQueue = useQuery({
     queryKey: ["webhook-queue"],
     queryFn: api.webhookQueue,
-    refetchInterval: sseConnected ? 60_000 : 15_000,
+    refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
   const [webhookJobsStatus, setWebhookJobsStatus] = useState<WebhookJobStatus>("all");
   const [webhookJobsOffset, setWebhookJobsOffset] = useState(0);
   const webhookJobs = useQuery({
     queryKey: ["webhook-jobs", webhookJobsStatus, webhookJobsOffset],
     queryFn: () => api.webhookJobs(webhookJobsStatus, WEBHOOK_JOBS_PAGE_SIZE, webhookJobsOffset),
-    refetchInterval: sseConnected ? 60_000 : 15_000,
+    refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
   const syncProgress = useQuery({
     queryKey: ["sync-progress"],
     queryFn: api.syncProgress,
-    refetchInterval: sseConnected ? 30_000 : 2_000,
+    refetchInterval: pollInterval(sseConnected, 2_000, 30_000),
   });
   const workStatus = useQuery({
     queryKey: ["work-status"],
     queryFn: api.workStatus,
-    refetchInterval: sseConnected ? 30_000 : 2_000,
+    refetchInterval: pollInterval(sseConnected, 2_000, 30_000),
   });
   const status = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
-    refetchInterval: sseConnected ? 60_000 : 15_000,
+    refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
   const stuckState = useQuery({
     queryKey: ["stuck-state"],
@@ -98,7 +98,10 @@ export function SyncQueuePage(): JSX.Element {
       title: `Run ${name} full sync?`,
       description: `This re-fetches the entire ${name} library and can take a long time on large libraries.`,
       confirmLabel: "Run full sync",
-      onConfirm: () => void runAction(() => api.runSync(source, "full"), actionLabel),
+      onConfirm: () =>
+        void runAction(() => api.runSync(source, "full"), actionLabel, {
+          successMessage: `${name} full sync queued`,
+        }),
     });
   };
 
@@ -109,7 +112,7 @@ export function SyncQueuePage(): JSX.Element {
       await queryClient.invalidateQueries({ queryKey: ["webhook-queue"] });
       await queryClient.invalidateQueries({ queryKey: ["status"] });
       return result;
-    }, `requeue webhook job ${jobId}`);
+    }, `requeue webhook job ${jobId}`, { successMessage: `Webhook job ${jobId} requeued` });
   };
 
   const [integrityResults, setIntegrityResults] = useState<IntegrityAuditResult[] | null>(null);
@@ -119,7 +122,7 @@ export function SyncQueuePage(): JSX.Element {
       setIntegrityResults(result.results);
       await queryClient.invalidateQueries({ queryKey: ["status"] });
       return result;
-    }, "run integrity audit");
+    }, "run integrity audit", { successMessage: "Integrity audit finished" });
   };
 
   const replayDeadLetter = (source: "sonarr" | "radarr"): void => {
@@ -129,7 +132,7 @@ export function SyncQueuePage(): JSX.Element {
       await queryClient.invalidateQueries({ queryKey: ["webhook-queue"] });
       await queryClient.invalidateQueries({ queryKey: ["status"] });
       return result;
-    }, `replay ${source} dead-letter`);
+    }, `replay ${source} dead-letter`, { successMessage: `Replaying ${source} dead-letter jobs` });
   };
 
   const progressPct = useMemo(() => {
@@ -254,10 +257,10 @@ export function SyncQueuePage(): JSX.Element {
                 <div className="space-y-2 pt-1">
                   <p className="text-[11px] font-medium text-muted-foreground">Incremental</p>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental")}>
+                    <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental", { successMessage: "Sonarr incremental sync queued" })}>
                       Sonarr incremental
                     </Button>
-                    <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental")}>
+                    <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental", { successMessage: "Radarr incremental sync queued" })}>
                       Radarr incremental
                     </Button>
                   </div>
@@ -368,13 +371,13 @@ export function SyncQueuePage(): JSX.Element {
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   Status
                   <select
+                    aria-label="Filter webhook jobs by status"
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
                     value={webhookJobsStatus}
                     onChange={(event) => {
                       setWebhookJobsStatus(event.target.value as WebhookJobStatus);
                       setWebhookJobsOffset(0);
                     }}
-                    aria-label="Filter webhook jobs by status"
                   >
                     {WEBHOOK_JOB_STATUSES.map((s) => (
                       <option key={s} value={s}>
@@ -468,10 +471,10 @@ export function SyncQueuePage(): JSX.Element {
                 <div className="space-y-2">
                   <p className="text-xs font-medium text-muted-foreground">Incremental (history &amp; deltas)</p>
                   <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental")}>
+                    <Button onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "runSync sonarr/incremental", { successMessage: "Sonarr incremental sync queued" })}>
                       Sonarr incremental
                     </Button>
-                    <Button variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental")}>
+                    <Button variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "runSync radarr/incremental", { successMessage: "Radarr incremental sync queued" })}>
                       Radarr incremental
                     </Button>
                   </div>
@@ -552,7 +555,21 @@ export function SyncQueuePage(): JSX.Element {
                       confirmLabel: "Reset data",
                       destructive: true,
                       typedPhrase: "RESET",
-                      onConfirm: () => runAction(() => api.resetData(), "reset data"),
+                      onConfirm: () =>
+                        void runAction(() => api.resetData(), "reset data", {
+                          successMessage: "All data reset",
+                          invalidate: [
+                            ["shows"],
+                            ["all-episodes"],
+                            ["movies"],
+                            ["mal-overview"],
+                            ["mal-job-runs"],
+                            ["webhook-queue"],
+                            ["webhook-jobs"],
+                            ["recent-runs"],
+                            ["sync-progress"],
+                          ],
+                        }),
                     })
                   }
                 >
@@ -570,10 +587,10 @@ export function SyncQueuePage(): JSX.Element {
                       destructive: true,
                       typedPhrase: "RESET_MAL",
                       onConfirm: () =>
-                        void runAction(async () => {
-                          await api.resetMalData();
-                          await queryClient.invalidateQueries({ queryKey: ["status"] });
-                        }, "reset MAL data"),
+                        void runAction(() => api.resetMalData(), "reset MAL data", {
+                          successMessage: "MAL data reset",
+                          invalidate: [["mal-overview"], ["mal-job-runs"], ["mal-config"]],
+                        }),
                     })
                   }
                 >

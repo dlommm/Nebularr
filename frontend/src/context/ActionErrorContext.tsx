@@ -1,6 +1,11 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ActionErrorContext, type ActionErrorContextValue } from "./actionErrorContextBase";
+import { toast } from "sonner";
+import {
+  ActionErrorContext,
+  type ActionErrorContextValue,
+  type RunActionOptions,
+} from "./actionErrorContextBase";
 
 export type { ActionErrorContextValue };
 
@@ -16,18 +21,23 @@ export function ActionErrorProvider({ children }: { children: ReactNode }): JSX.
   }, []);
 
   const runAction = useCallback(
-    async (fn: () => Promise<unknown>, context: string): Promise<void> => {
+    async (fn: () => Promise<unknown>, context: string, opts?: RunActionOptions): Promise<void> => {
       try {
         await fn();
         setLastError(null);
         setErrorContext(null);
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ["status"] }),
-          queryClient.invalidateQueries({ queryKey: ["sync-activity"] }),
-          queryClient.invalidateQueries({ queryKey: ["runs"] }),
-        ]);
+        if (opts?.successMessage) {
+          toast.success(opts.successMessage);
+        }
+        const extraKeys = opts?.invalidate ?? [];
+        await Promise.all(
+          [["status"], ["sync-activity"], ["runs"], ["work-status"], ...extraKeys].map((queryKey) =>
+            queryClient.invalidateQueries({ queryKey }),
+          ),
+        );
       } catch (err) {
         setError(err, context);
+        toast.error(`${context} failed`);
       }
     },
     [queryClient, setError],

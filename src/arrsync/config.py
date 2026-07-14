@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8080
     app_timezone: str = "UTC"
-    app_version: str = "2.4.1"
+    app_version: str = "2.5.0"
     app_git_sha: str = "release"
 
     database_url: str = Field(
@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     auth_enabled: str = ""
     auth_recovery_password: str = ""
     auth_session_ttl_hours: int = 168
+    # Comma-separated IPs/CIDRs of reverse proxies whose X-Forwarded-For is trusted
+    # when deriving the login rate-limit key. Empty: the TCP peer address is used.
+    trusted_proxies: str = ""
 
     # Egress policy for user-configured outbound URLs (integrations, alert webhooks).
     # "lan" blocks link-local/metadata ranges only; "strict" allows public hosts only;

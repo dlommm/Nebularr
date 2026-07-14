@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from arrsync.mal import repository as mal_repo
@@ -24,7 +25,7 @@ def build_mal_router(app_state: Any) -> APIRouter:
     @router.get("/api/mal/job-runs")
     async def list_mal_job_runs(job_type: str = "all", limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         normalized = job_type.lower()
-        allowed = {"all", "ingest", "matcher", "tag_sync", "coverage_tag_sync"}
+        allowed = {"all", "ingest", "matcher", "tag_sync", "coverage_tag_sync", "ingest_backlog"}
         if normalized not in allowed:
             raise HTTPException(status_code=400, detail="invalid job_type filter")
         bounded_limit = max(1, min(limit, 200))
@@ -167,13 +168,93 @@ def build_mal_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=502, detail=f"mal ingest failed: {exc}") from exc
         return {"status": "ok", "details": details}
 
+    async def _run_backlog_cycles(
+        *,
+        import_all: bool,
+        max_cycles: int,
+        batch_arg: int | None,
+        cycle_delay_seconds: float,
+        pending_before: int,
+        batch_size_for_plan: int,
+        run_id: int | None = None,
+    ) -> dict[str, Any]:
+        svc = app_state.mal_ingest_service
+        cycle_results: list[dict[str, Any]] = []
+        pending_after = pending_before
+        for idx in range(max_cycles):
+            if pending_after <= 0:
+                break
+            details = await svc.run(reason="manual_backlog", max_ids_per_run=batch_arg)
+            with app_state.session_scope() as session:
+                pending_after = mal_repo.count_anime_needing_mal_fetch(session)
+            cycle_results.append(
+                {
+                    "cycle": idx + 1,
+                    "pending_after_cycle": pending_after,
+                    "mal_api_calls": int(details.get("mal_api_calls", 0) or 0),
+                    "jikan_calls": int(details.get("jikan_calls", 0) or 0),
+                    "mal_fetch_pending_batch": int(details.get("mal_fetch_pending_batch", 0) or 0),
+                    "max_ids_per_run": int(details.get("max_ids_per_run", 0) or 0),
+                }
+            )
+            if run_id is not None:
+                with app_state.session_scope() as session:
+                    mal_repo.merge_mal_job_run_details(
+                        session,
+                        run_id,
+                        {
+                            "backlog_progress": {
+                                "cycles_run": len(cycle_results),
+                                "max_cycles": max_cycles,
+                                "pending_before": pending_before,
+                                "pending_after": pending_after,
+                            }
+                        },
+                    )
+            # Safety stop: if nothing was fetched in this cycle, further loops are unlikely to progress.
+            if int(details.get("mal_api_calls", 0) or 0) == 0:
+                break
+            if idx + 1 < max_cycles and pending_after > 0 and cycle_delay_seconds > 0:
+                await asyncio.sleep(cycle_delay_seconds)
+        with app_state.session_scope() as session:
+            fetched_success = mal_repo.count_anime_fetched_success(session)
+            dubbed_total = int(
+                session.execute(
+                    text("select count(*) from mal.anime where is_english_dubbed = true")
+                ).scalar_one()
+            )
+        return {
+            "pending_before": pending_before,
+            "pending_after": pending_after,
+            "cycles_run": len(cycle_results),
+            "max_cycles": max_cycles,
+            "import_all": import_all,
+            "batch_size": batch_size_for_plan,
+            "cycle_delay_seconds": cycle_delay_seconds,
+            "fetched_success": fetched_success,
+            "dubbed_total": dubbed_total,
+            "cycle_results": cycle_results,
+        }
+
+    async def _run_backlog_job(run_id: int, **kwargs: Any) -> None:
+        try:
+            summary = await _run_backlog_cycles(run_id=run_id, **kwargs)
+        except Exception as exc:
+            log.exception("background MAL backlog import failed")
+            with app_state.session_scope() as session:
+                mal_repo.finish_mal_job_run(session, run_id, "failed", {}, str(exc))
+            return
+        with app_state.session_scope() as session:
+            mal_repo.finish_mal_job_run(session, run_id, "success", summary, None)
+
     @router.post("/api/mal/ingest-backlog")
-    async def trigger_mal_ingest_backlog(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def trigger_mal_ingest_backlog(payload: dict[str, Any] | None = None) -> Any:
         svc = app_state.mal_ingest_service
         if svc is None:
             raise HTTPException(status_code=501, detail="MAL ingest service unavailable")
         payload = payload or {}
         import_all = to_bool(payload.get("import_all", False), False)
+        wait = to_bool(payload.get("wait", True), True)
         raw_batch = payload.get("max_ids_per_run", None)
         batch_for_run: int | None
         if raw_batch is None or raw_batch == "":
@@ -222,61 +303,58 @@ def build_mal_router(app_state: Any) -> APIRouter:
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail="max_cycles must be an integer") from None
 
-        # Per run(): None means use MAL_MAX_IDS_PER_RUN from environment/settings.
-        eff_batch_arg: int | None = batch_for_run
-
-        cycle_results: list[dict[str, Any]] = []
-        pending_after = pending_before
-        for idx in range(max_cycles):
-            if pending_after <= 0:
-                break
-            try:
-                details = await svc.run(
-                    reason="manual_backlog", max_ids_per_run=eff_batch_arg
-                )
-            except MalIngestAlreadyRunningError as exc:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail=f"mal ingest-backlog failed: {exc}") from exc
-            with app_state.session_scope() as session:
-                pending_after = mal_repo.count_anime_needing_mal_fetch(session)
-            cycle_results.append(
-                {
-                    "cycle": idx + 1,
-                    "pending_after_cycle": pending_after,
-                    "mal_api_calls": int(details.get("mal_api_calls", 0) or 0),
-                    "jikan_calls": int(details.get("jikan_calls", 0) or 0),
-                    "mal_fetch_pending_batch": int(details.get("mal_fetch_pending_batch", 0) or 0),
-                    "max_ids_per_run": int(details.get("max_ids_per_run", 0) or 0),
-                }
-            )
-            # Safety stop: if nothing was fetched in this cycle, further loops are unlikely to progress.
-            if int(details.get("mal_api_calls", 0) or 0) == 0:
-                break
-            if idx + 1 < max_cycles and pending_after > 0 and cycle_delay_seconds > 0:
-                await asyncio.sleep(cycle_delay_seconds)
-        with app_state.session_scope() as session:
-            fetched_success = mal_repo.count_anime_fetched_success(session)
-            dubbed_total = int(
-                session.execute(
-                    text("select count(*) from mal.anime where is_english_dubbed = true")
-                ).scalar_one()
-            )
-        return {
-            "status": "ok",
-            "details": {
-                "pending_before": pending_before,
-                "pending_after": pending_after,
-                "cycles_run": len(cycle_results),
-                "max_cycles": max_cycles,
-                "import_all": import_all,
-                "batch_size": batch_size_for_plan,
-                "cycle_delay_seconds": cycle_delay_seconds,
-                "fetched_success": fetched_success,
-                "dubbed_total": dubbed_total,
-                "cycle_results": cycle_results,
-            },
+        cycle_kwargs: dict[str, Any] = {
+            "import_all": import_all,
+            "max_cycles": max_cycles,
+            # Per run(): None means use MAL_MAX_IDS_PER_RUN from environment/settings.
+            "batch_arg": batch_for_run,
+            "cycle_delay_seconds": cycle_delay_seconds,
+            "pending_before": pending_before,
+            "batch_size_for_plan": batch_size_for_plan,
         }
+
+        if not wait:
+            # Queue the (potentially hours-long) import as a background job tracked
+            # in app.mal_job_run; the SPA follows progress via work-status/SSE.
+            existing = app_state.mal_backlog_task
+            if existing is not None and not existing.done():
+                raise HTTPException(status_code=409, detail="backlog import already running")
+            with app_state.session_scope() as session:
+                run_id = mal_repo.insert_mal_job_run(session, "ingest_backlog")
+                mal_repo.merge_mal_job_run_details(
+                    session,
+                    run_id,
+                    {
+                        "backlog_progress": {
+                            "cycles_run": 0,
+                            "max_cycles": max_cycles,
+                            "pending_before": pending_before,
+                            "pending_after": pending_before,
+                        }
+                    },
+                )
+            app_state.mal_backlog_task = asyncio.create_task(_run_backlog_job(run_id, **cycle_kwargs))
+            return JSONResponse(
+                {
+                    "status": "queued",
+                    "job_run_id": run_id,
+                    "details": {
+                        "pending_before": pending_before,
+                        "max_cycles": max_cycles,
+                        "import_all": import_all,
+                        "batch_size": batch_size_for_plan,
+                    },
+                },
+                status_code=202,
+            )
+
+        try:
+            summary = await _run_backlog_cycles(**cycle_kwargs)
+        except MalIngestAlreadyRunningError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"mal ingest-backlog failed: {exc}") from exc
+        return {"status": "ok", "details": summary}
 
     @router.post("/api/mal/match-refresh")
     async def trigger_mal_match_refresh() -> dict[str, Any]:

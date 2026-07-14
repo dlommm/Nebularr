@@ -13,6 +13,7 @@ from arrsync.auth import (
     SESSION_COOKIE_NAME,
     LoginRateLimiter,
     auth_required,
+    client_key_for_request,
     generate_api_token,
     get_auth_config,
     hash_password,
@@ -26,6 +27,7 @@ from arrsync.routers.shared import (
 )
 from arrsync.security import hash_secret
 from arrsync.services.auth_store import (
+    bump_session_epoch,
     store_api_token_hash,
     store_auth_enabled,
     store_auth_password_hash,
@@ -52,7 +54,7 @@ def build_auth_router(app_state: Any) -> APIRouter:
 
     @router.post("/api/auth/login")
     async def auth_login(payload: dict[str, Any], request: Request) -> JSONResponse:
-        client_key = request.client.host if request.client else "unknown"
+        client_key = client_key_for_request(request, app_state.settings.trusted_proxies)
         if login_rate_limiter.is_locked(client_key):
             raise HTTPException(status_code=429, detail="too many failed login attempts; try again shortly")
         password = str(payload.get("password", ""))
@@ -68,7 +70,7 @@ def build_auth_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=401, detail="invalid password")
         login_rate_limiter.reset(client_key)
         ttl_seconds = max(1, app_state.settings.auth_session_ttl_hours) * 3600
-        token = mint_session_token(ttl_seconds)
+        token = mint_session_token(ttl_seconds, epoch=config.session_epoch if config else 0)
         response = JSONResponse({"status": "ok"})
         secure_cookie = (
             request.url.scheme == "https"
@@ -108,6 +110,8 @@ def build_auth_router(app_state: Any) -> APIRouter:
         with app_state.session_scope() as session:
             if new_password:
                 store_auth_password_hash(session, hash_password(new_password))
+                # A password change revokes every outstanding session cookie.
+                bump_session_epoch(session)
             if enabled_value is not None:
                 want_enabled = to_bool(enabled_value)
                 password_available = bool(new_password) or bool(config and config.password_set)

@@ -37,21 +37,84 @@ async def test_list_episodes_falls_back_when_include_param_unsupported() -> None
 
 
 @pytest.mark.asyncio
-async def test_list_history_since_reads_records_payload_shape() -> None:
+async def test_list_history_since_uses_history_since_endpoint() -> None:
     client = ArrClient(_settings(), "radarr")
     client.capabilities.supports_history = True
+    client.capabilities.supports_history_since = True
 
     async def fake_request(method: str, path: str, params: dict | None = None):  # type: ignore[no-untyped-def]
         assert method == "GET"
-        assert path == "/api/v3/history"
-        assert params and params["page"] == 1
-        assert params and params["pageSize"] == 200
-        assert params and params["since"] == "2026-04-01T00:00:00Z"
-        return {"records": [{"id": 1}, {"id": 2}]}
+        assert path == "/api/v3/history/since"
+        assert params == {"date": "2026-04-01T00:00:00Z"}
+        return [{"id": 1}, {"id": 2}]
 
     client._request = fake_request  # type: ignore[assignment]
     records = await client.list_history_since("2026-04-01T00:00:00Z")
     assert records == [{"id": 1}, {"id": 2}]
+
+
+@pytest.mark.asyncio
+async def test_list_history_since_falls_back_to_paged_walk_stopping_at_watermark() -> None:
+    client = ArrClient(_settings(), "radarr")
+    client.capabilities.supports_history = True
+    client.capabilities.supports_history_since = True
+    calls: list[tuple[str, dict | None]] = []
+    page_one = [
+        {"id": 30, "date": "2026-04-03T00:00:00Z"},
+        {"id": 29, "date": "2026-04-02T00:00:00Z"},
+        {"id": 28, "date": "2026-04-01T00:00:00Z"},  # == watermark: stop here
+        {"id": 27, "date": "2026-03-31T00:00:00Z"},
+    ]
+
+    async def fake_request(method: str, path: str, params: dict | None = None):  # type: ignore[no-untyped-def]
+        calls.append((path, params))
+        if path == "/api/v3/history/since":
+            raise RuntimeError("HTTP 404 unknown endpoint")
+        assert path == "/api/v3/history"
+        assert params and params["sortKey"] == "date" and params["sortDirection"] == "descending"
+        return {"records": page_one if params["page"] == 1 else []}
+
+    client._request = fake_request  # type: ignore[assignment]
+    records = await client.list_history_since("2026-04-01T00:00:00Z")
+
+    assert [r["id"] for r in records] == [30, 29]
+    assert client.capabilities.supports_history_since is False
+    # A later call must not retry the unsupported endpoint.
+    await client.list_history_since("2026-04-01T00:00:00Z")
+    assert not any(path == "/api/v3/history/since" for path, _ in calls[1:])
+
+
+@pytest.mark.asyncio
+async def test_list_history_since_without_watermark_fetches_single_page() -> None:
+    client = ArrClient(_settings(), "radarr")
+    client.capabilities.supports_history = True
+    pages: list[int] = []
+
+    async def fake_request(method: str, path: str, params: dict | None = None):  # type: ignore[no-untyped-def]
+        assert path == "/api/v3/history"
+        assert params is not None
+        pages.append(int(params["page"]))
+        return {"records": [{"id": i, "date": "2026-04-01T00:00:00Z"} for i in range(200)]}
+
+    client._request = fake_request  # type: ignore[assignment]
+    records = await client.list_history_since(None)
+    assert len(records) == 200
+    assert pages == [1]
+
+
+@pytest.mark.asyncio
+async def test_get_movie_returns_none_on_404() -> None:
+    client = ArrClient(_settings(), "radarr")
+    request = httpx.Request("GET", "http://radarr.local/api/v3/movie/5")
+    response = httpx.Response(404, request=request)
+
+    async def fake_request(method: str, path: str, params: dict | None = None):  # type: ignore[no-untyped-def]
+        raise RuntimeError("radarr request failed") from httpx.HTTPStatusError(
+            "not found", request=request, response=response
+        )
+
+    client._request = fake_request  # type: ignore[assignment]
+    assert await client.get_movie(5) is None
 
 
 def test_summarize_http_status_error_truncates_body() -> None:
@@ -113,14 +176,19 @@ async def test_detect_capabilities_sets_app_version_and_feature_flags() -> None:
     async def fake_probe_history() -> bool:
         return True
 
+    async def fake_probe_history_since() -> bool:
+        return True
+
     async def fake_probe_episode_include() -> bool:
         return False
 
     client.system_status = fake_system_status  # type: ignore[assignment]
     client._probe_history_support = fake_probe_history  # type: ignore[assignment]
+    client._probe_history_since_support = fake_probe_history_since  # type: ignore[assignment]
     client._probe_sonarr_episode_include_support = fake_probe_episode_include  # type: ignore[assignment]
 
     capabilities = await client.detect_capabilities()
     assert capabilities.app_version == "4.0.2.1234"
     assert capabilities.supports_history is True
+    assert capabilities.supports_history_since is True
     assert capabilities.supports_episode_include_files is False
