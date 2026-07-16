@@ -155,3 +155,36 @@ async def test_webhook_job_with_null_series_does_not_crash() -> None:
         "update app.webhook_queue" in sql and "next_attempt_at = now() + make_interval" in sql
         for sql, _ in session.statements
     ), "job must not be marked failed"
+
+
+def test_legacy_route_stamps_sole_renamed_integration() -> None:
+    # Regression: a single integration renamed away from "default" must still be
+    # able to POST to the legacy /hooks/{source} URL and be attributed correctly.
+    state = FakeAppState()
+    state.session.enabled_webhook_names = ["main-sonarr"]
+    client, _ = _build_client(state)
+
+    response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "Download"})
+    assert response.status_code == 200
+    rows = _enqueued(state)
+    assert rows and rows[0] is not None
+    assert json.loads(rows[0]["payload"])["instance_name"] == "main-sonarr"
+
+
+def test_legacy_route_with_multiple_integrations_falls_back_to_default() -> None:
+    state = FakeAppState()
+    state.session.enabled_webhook_names = ["a-sonarr", "b-sonarr"]
+    client, _ = _build_client(state)
+
+    response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "Download"})
+    assert response.status_code == 200
+    rows = _enqueued(state)
+    assert json.loads(rows[0]["payload"])["instance_name"] == "default"
+
+
+def test_legacy_route_rejected_only_when_no_integration_accepts_webhooks() -> None:
+    state = FakeAppState()
+    state.session.webhook_ingest_allowed = False
+    client, _ = _build_client(state)
+    response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "T"})
+    assert response.status_code == 403

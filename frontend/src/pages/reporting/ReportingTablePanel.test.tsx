@@ -43,12 +43,12 @@ describe("ReportingTablePanel", () => {
     const bodyRows = container.querySelectorAll("tbody tr");
     expect(bodyRows.length).toBeLessThanOrEqual(MAX_UNLIMITED_ROWS);
     expect(bodyRows.length).toBe(MAX_UNLIMITED_ROWS);
-    expect(screen.getByText(/use Export CSV for/i)).toBeInTheDocument();
+    expect(screen.getByText(/for the complete dataset/i)).toBeInTheDocument();
   });
 
   it("renders a normal page without the cap notice", () => {
     const { container } = renderPanel(buildPanel(50), 10);
     expect(container.querySelectorAll("tbody tr").length).toBe(10);
-    expect(screen.queryByText(/use Export CSV for/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/for the complete dataset/i)).not.toBeInTheDocument();
   });
 });

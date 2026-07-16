@@ -235,3 +235,23 @@ async def test_incremental_radarr_refetches_movies_and_tombstones_missing_files(
         if "update warehouse.movie_file set deleted = true" in sql and params and "parent_ids" in (params or {})
     ]
     assert any(params["parent_ids"] == [5] for params in file_sweeps)
+
+
+@pytest.mark.asyncio
+async def test_incremental_deleted_series_tombstones_its_episode_files() -> None:
+    # Regression: deleting a series in Sonarr must also tombstone its
+    # episode_file rows, not just the series and episodes.
+    events = [{"id": 30, "date": "2026-07-02T09:30:00Z", "seriesId": 88}]
+    session = RecordingSession(watermark=WATERMARK)
+    client = FakeSonarrClient(events, {88: None}, {})
+    service = _service(session)
+
+    await service._sync_incremental("sonarr", client, run_id=1, instance_name="default", trigger="test")
+
+    file_sweeps = [
+        params
+        for sql, params in session.statements
+        if "update warehouse.episode_file" in sql and "series_source_id = any" in sql
+    ]
+    assert file_sweeps, "episode_file rows of a deleted series must be tombstoned"
+    assert file_sweeps[0] is not None and file_sweeps[0]["series_ids"] == [88]

@@ -11,6 +11,7 @@ from arrsync.db import session_scope
 from arrsync.models import CapabilitySet, SyncResult
 from arrsync.services.arr_client import ArrClient
 from arrsync.services import repository as repo
+from arrsync.services.queue_config_store import read_queue_policy
 from arrsync.services.retention_store import read_retention_policy
 
 log = logging.getLogger(__name__)
@@ -332,17 +333,22 @@ class SyncService:
                             "trigger": reason,
                         },
                     )
-                except Exception as exc:
-                    await self._run_db(
-                        repo.finish_sync_run,
-                        run_id=run_id,
-                        source=source,
-                        mode=mode,
-                        status="failed",
-                        records_processed=records_processed,
-                        details={"trigger": reason, "instance_name": instance_name},
-                        error_message=str(exc),
-                        instance_name=instance_name,
+                except BaseException as exc:
+                    # BaseException so a cancellation (shutdown) still finalizes the
+                    # run row instead of leaving it 'running'; shield keeps a second
+                    # cancel from killing that write mid-flight.
+                    await asyncio.shield(
+                        self._run_db(
+                            repo.finish_sync_run,
+                            run_id=run_id,
+                            source=source,
+                            mode=mode,
+                            status="failed",
+                            records_processed=records_processed,
+                            details={"trigger": reason, "instance_name": instance_name},
+                            error_message=str(exc) or type(exc).__name__,
+                            instance_name=instance_name,
+                        )
                     )
                     self._publish(
                         "sync.finished",
@@ -354,7 +360,7 @@ class SyncService:
                             "status": "failed",
                             "records_processed": records_processed,
                             "trigger": reason,
-                            "error": str(exc),
+                            "error": str(exc) or type(exc).__name__,
                         },
                     )
                     raise
@@ -767,6 +773,9 @@ class SyncService:
                 sorted(seen_episodes),
                 seen_files,
             )
+            # Tombstone the deleted series' files first (the subselect walks the
+            # episode rows, which the next statement only flags, not removes).
+            repo.tombstone_episode_files_for_series(session, instance_name, deleted_series)
             repo.mark_deleted_source_ids(session, "warehouse.series", instance_name, deleted_series)
             repo.mark_missing_children(
                 session, "warehouse.episode", instance_name, "series_source_id", deleted_series, set()
@@ -839,12 +848,12 @@ class SyncService:
     async def process_webhook_queue(self, source: str) -> dict[str, Any]:
         processed = 0
         failed = 0
-        batch_size = 80
+        policy = await self._run_db(read_queue_policy)
         max_rounds = 30
         for round_idx in range(max_rounds):
             if self._should_stop():
                 break
-            jobs = await self._run_db(repo.claim_webhook_jobs, source, batch_size=batch_size)
+            jobs = await self._run_db(repo.claim_webhook_jobs, source, batch_size=policy["batch_size"])
             if not jobs:
                 break
             log.debug(
@@ -947,9 +956,11 @@ class SyncService:
                         queue_id=int(job["id"]),
                         attempts=int(job["attempts"]),
                         error_message=str(exc),
+                        max_attempts=policy["max_attempts"],
+                        backoff_base_seconds=policy["backoff_base_seconds"],
+                        backoff_cap_seconds=policy["backoff_cap_seconds"],
                     )
-                    # Mirrors the >= 5 dead-letter threshold in repo.mark_webhook_failed.
-                    if int(job["attempts"]) >= 5:
+                    if int(job["attempts"]) >= policy["max_attempts"]:
                         self._publish(
                             "webhook.dead_letter",
                             {

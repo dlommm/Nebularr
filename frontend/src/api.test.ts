@@ -51,3 +51,24 @@ describe("api request contract", () => {
     await expect(api.runSync("sonarr", "full")).rejects.toThrow("sync already running");
   });
 });
+
+describe("api pagination and export helpers", () => {
+  let fetchMock2: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock2 = vi.fn(async () => okJson({ items: [], total: 0, limit: 50, offset: 0, has_more: false }));
+    vi.stubGlobal("fetch", fetchMock2);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("webhookJobs requests the paged shape", async () => {
+    await api.webhookJobs("retrying", 50, 0);
+    const [url] = fetchMock2.mock.calls[0] as [string];
+    expect(url).toContain("paged=true");
+    expect(url).toContain("status=retrying");
+  });
+
+  it("reportingPanelExportUrl keeps limit=0 for full-dataset export", () => {
+    const url = api.reportingPanelExportUrl("dash", "panel", { limit: 0 });
+    expect(url).toContain("limit=0");
+  });
+});

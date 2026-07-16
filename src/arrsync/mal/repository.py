@@ -95,7 +95,11 @@ def insert_mal_job_run(session: Session, job_type: str) -> int:
 
 
 def clear_mal_stuck_ingest_state(
-    session: Session, *, clear_ingest_lock: bool = True, fail_running_job_rows: bool = True
+    session: Session,
+    *,
+    clear_ingest_lock: bool = True,
+    fail_running_job_rows: bool = True,
+    reason: str = "operator clear-stuck",
 ) -> dict[str, int]:
     """Remove ``mal:ingest`` from ``app.job_lock`` and/or mark running MAL job rows as failed.
 
@@ -115,12 +119,13 @@ def clear_mal_stuck_ingest_state(
                 update app.mal_job_run
                 set status = 'failed',
                     finished_at = now(),
-                    error_message = 'Cleared: stale running state (operator clear-stuck)',
+                    error_message = :message,
                     details = coalesce(details, '{}'::jsonb) || jsonb_build_object('cleared_stuck', true)
                 where status = 'running'
                 returning id
                 """
-            )
+            ),
+            {"message": f"Cleared: stale running state ({reason})"},
         )
         out["mal_job_runs_marked_failed"] = len(jobs_result.all())
     return out

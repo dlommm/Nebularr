@@ -35,3 +35,16 @@ describe("fmtDuration", () => {
     expect(fmtDuration(5)).toBe("5s");
   });
 });
+
+import { reconnectDelayMs } from "./hooks/useServerEvents";
+
+describe("reconnectDelayMs", () => {
+  it("backs off exponentially and caps at 60s", () => {
+    expect(reconnectDelayMs(1)).toBe(5_000);
+    expect(reconnectDelayMs(2)).toBe(10_000);
+    expect(reconnectDelayMs(3)).toBe(20_000);
+    expect(reconnectDelayMs(4)).toBe(40_000);
+    expect(reconnectDelayMs(5)).toBe(60_000);
+    expect(reconnectDelayMs(10)).toBe(60_000);
+  });
+});

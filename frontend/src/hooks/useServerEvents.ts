@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { api, redirectToLogin } from "../api";
 
 /** Query keys invalidated per server event type. */
 const EVENT_QUERY_KEYS: Record<string, string[][]> = {
@@ -19,6 +21,15 @@ const EVENT_QUERY_KEYS: Record<string, string[][]> = {
 };
 
 const RECONNECT_DELAY_MS = 5_000;
+const RECONNECT_DELAY_MAX_MS = 60_000;
+// After this many consecutive failures, probe auth: an expired session makes
+// EventSource fail forever (it can't see the 401), so surface a re-login.
+const AUTH_PROBE_AFTER_FAILURES = 3;
+
+export function reconnectDelayMs(consecutiveFailures: number): number {
+  const attempt = Math.max(1, consecutiveFailures);
+  return Math.min(RECONNECT_DELAY_MS * 2 ** (attempt - 1), RECONNECT_DELAY_MAX_MS);
+}
 
 /**
  * Subscribes to `/api/ui/events` (SSE) and invalidates the matching React
@@ -30,23 +41,44 @@ export function useServerEvents(): { connected: boolean } {
   const queryClient = useQueryClient();
   const [connected, setConnected] = useState(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failuresRef = useRef(0);
 
   useEffect(() => {
     if (typeof EventSource === "undefined") return undefined;
     let source: EventSource | null = null;
     let disposed = false;
 
+    const probeAuth = (): void => {
+      void api
+        .authStatus()
+        .then((status) => {
+          if (status.enabled && !status.authenticated) {
+            toast.error("Session expired — please sign in again");
+            redirectToLogin();
+          }
+        })
+        .catch(() => {
+          // Server unreachable: keep backing off; nothing to surface yet.
+        });
+    };
+
     const open = (): void => {
       if (disposed) return;
       source = new EventSource("/api/ui/events");
-      source.onopen = () => setConnected(true);
+      source.onopen = () => {
+        failuresRef.current = 0;
+        setConnected(true);
+      };
       source.onerror = () => {
         setConnected(false);
         source?.close();
         source = null;
-        if (!disposed) {
-          reconnectTimer.current = setTimeout(open, RECONNECT_DELAY_MS);
+        if (disposed) return;
+        failuresRef.current += 1;
+        if (failuresRef.current === AUTH_PROBE_AFTER_FAILURES) {
+          probeAuth();
         }
+        reconnectTimer.current = setTimeout(open, reconnectDelayMs(failuresRef.current));
       };
       for (const eventType of Object.keys(EVENT_QUERY_KEYS)) {
         source.addEventListener(eventType, () => {

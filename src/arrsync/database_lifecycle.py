@@ -14,6 +14,7 @@ from arrsync.config import Settings, get_settings
 from arrsync.db import build_engine, build_session_factory, session_scope
 from arrsync.deferred_session import DeferredSessionFactory
 from arrsync.logging import apply_root_log_level
+from arrsync.mal import repository as mal_repo
 from arrsync.migrations import run_migrations
 from arrsync.runtime_database_url import apply_runtime_database_url_to_environ
 from arrsync.services import repository as repo
@@ -83,8 +84,19 @@ def run_migrations_and_seed(app_state: Any, settings: Settings) -> None:
             radarr_base_url=settings.radarr_base_url,
             radarr_api_key=settings.radarr_api_key,
         )
+        # A crash/kill can leave run rows stuck 'running'; nothing can actually be
+        # running at boot (single-instance app), so sweep them into 'failed'.
+        # Job locks are left alone — they expire via their lease.
+        swept = repo.fail_stuck_running_warehouse_work(session, reason="startup sweep")
+        swept.update(
+            mal_repo.clear_mal_stuck_ingest_state(
+                session, clear_ingest_lock=False, fail_running_job_rows=True, reason="startup sweep"
+            )
+        )
         alert_config = read_alert_webhook_config(session, settings)
         resolved_log_level = effective_log_level(session, settings)
+    if any(swept.values()):
+        log.warning("startup sweep cleared stale running rows", extra=dict(swept))
     apply_root_log_level(resolved_log_level)
     log.info("logging level active", extra={"effective_log_level": resolved_log_level})
     app_state._pending_alert_config = alert_config

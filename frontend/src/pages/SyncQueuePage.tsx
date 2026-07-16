@@ -70,6 +70,20 @@ export function SyncQueuePage(): JSX.Element {
     queryFn: () => api.webhookJobs(webhookJobsStatus, WEBHOOK_JOBS_PAGE_SIZE, webhookJobsOffset),
     refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
+  const webhookJobRows = webhookJobs.data?.items ?? [];
+  const webhookJobsTotal = webhookJobs.data?.total ?? 0;
+  const queueConfig = useQuery({
+    queryKey: ["queue-config"],
+    queryFn: api.queueConfig,
+    enabled: tab === "manual",
+    staleTime: 60_000,
+  });
+  const [queueDraft, setQueueDraft] = useState({
+    batch_size: "",
+    max_attempts: "",
+    backoff_base_seconds: "",
+    backoff_cap_seconds: "",
+  });
   const syncProgress = useQuery({
     queryKey: ["sync-progress"],
     queryFn: api.syncProgress,
@@ -368,24 +382,51 @@ export function SyncQueuePage(): JSX.Element {
             <GlassCard className="min-w-0 lg:col-span-2">
               <CardHeader className="flex-row items-center justify-between gap-2">
                 <CardTitle className="text-base">Webhook jobs</CardTitle>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  Status
-                  <select
-                    aria-label="Filter webhook jobs by status"
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                    value={webhookJobsStatus}
-                    onChange={(event) => {
-                      setWebhookJobsStatus(event.target.value as WebhookJobStatus);
-                      setWebhookJobsOffset(0);
-                    }}
-                  >
-                    {WEBHOOK_JOB_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {s === "all" ? "All" : s.replace("_", " ")}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {webhookJobsStatus === "retrying" || webhookJobsStatus === "dead_letter" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={webhookJobsTotal === 0}
+                      onClick={() =>
+                        requestConfirm({
+                          title: `Requeue all ${webhookJobsStatus.replace("_", " ")} jobs?`,
+                          description: `Re-queues every job currently in the ${webhookJobsStatus.replace("_", " ")} state (${webhookJobsTotal} total) for immediate processing.`,
+                          confirmLabel: "Requeue all",
+                          onConfirm: () =>
+                            void runAction(
+                              () => api.requeueWebhooksBulk({ status: webhookJobsStatus as "retrying" | "dead_letter" }),
+                              `requeue all ${webhookJobsStatus}`,
+                              {
+                                successMessage: `Requeued all ${webhookJobsStatus.replace("_", " ")} jobs`,
+                                invalidate: [["webhook-jobs"], ["webhook-queue"]],
+                              },
+                            ),
+                        })
+                      }
+                    >
+                      Requeue all
+                    </Button>
+                  ) : null}
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    Status
+                    <select
+                      aria-label="Filter webhook jobs by status"
+                      className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      value={webhookJobsStatus}
+                      onChange={(event) => {
+                        setWebhookJobsStatus(event.target.value as WebhookJobStatus);
+                        setWebhookJobsOffset(0);
+                      }}
+                    >
+                      {WEBHOOK_JOB_STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {s === "all" ? "All" : s.replace("_", " ")}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               </CardHeader>
               <CardContent className="p-0 sm:px-0">
                 <div className="overflow-x-auto">
@@ -403,7 +444,7 @@ export function SyncQueuePage(): JSX.Element {
                       </tr>
                     </thead>
                     <tbody>
-                      {(webhookJobs.data ?? []).map((row) => (
+                      {webhookJobRows.map((row) => (
                         <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/50">
                           <td className="p-3 font-mono text-xs">{row.id}</td>
                           <td className="p-3">{row.source}</td>
@@ -427,7 +468,7 @@ export function SyncQueuePage(): JSX.Element {
                       ))}
                     </tbody>
                   </table>
-                  {!webhookJobs.isLoading && (webhookJobs.data ?? []).length === 0 ? (
+                  {!webhookJobs.isLoading && webhookJobRows.length === 0 ? (
                     <p className="px-3 py-4 text-sm text-muted-foreground">
                       {webhookJobsStatus === "all" ? "No webhook jobs yet." : "No webhook jobs with this status."}
                     </p>
@@ -435,7 +476,9 @@ export function SyncQueuePage(): JSX.Element {
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
                   <span>
-                    {webhookJobsOffset + 1}–{webhookJobsOffset + (webhookJobs.data?.length ?? 0)}
+                    {webhookJobsTotal === 0
+                      ? "0 jobs"
+                      : `${webhookJobsOffset + 1}–${webhookJobsOffset + webhookJobRows.length} of ${webhookJobsTotal}`}
                   </span>
                   <Button
                     type="button"
@@ -450,7 +493,7 @@ export function SyncQueuePage(): JSX.Element {
                     type="button"
                     variant="secondary"
                     size="sm"
-                    disabled={(webhookJobs.data?.length ?? 0) < WEBHOOK_JOBS_PAGE_SIZE}
+                    disabled={webhookJobsOffset + webhookJobRows.length >= webhookJobsTotal}
                     onClick={() => setWebhookJobsOffset(webhookJobsOffset + WEBHOOK_JOBS_PAGE_SIZE)}
                   >
                     Next
@@ -497,6 +540,54 @@ export function SyncQueuePage(): JSX.Element {
                       ? `Running: ${syncProgress.data.source}/${syncProgress.data.mode} (${syncProgress.data.trigger ?? "unknown"}) — ${fmtDuration(syncProgress.data.elapsed_seconds)}`
                       : "Idle — no sync or MAL pipeline in progress."}
                 </p>
+              </CardContent>
+            </GlassCard>
+            <GlassCard className="min-w-0">
+              <CardHeader>
+                <CardTitle className="text-base">Queue processing policy</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  How the webhook queue is drained. Blank fields keep the current value; defaults are 80 / 5 / 30 / 900.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(
+                    [
+                      ["batch_size", "Batch size"],
+                      ["max_attempts", "Max attempts"],
+                      ["backoff_base_seconds", "Backoff base (s)"],
+                      ["backoff_cap_seconds", "Backoff cap (s)"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key} className="flex flex-col gap-1 text-xs text-muted-foreground">
+                      {label}
+                      <input
+                        type="number"
+                        aria-label={label}
+                        className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+                        placeholder={String(queueConfig.data?.[key] ?? "")}
+                        value={queueDraft[key]}
+                        onChange={(event) => setQueueDraft((prev) => ({ ...prev, [key]: event.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <Button
+                  size="sm"
+                  disabled={!Object.values(queueDraft).some((v) => v.trim() !== "")}
+                  onClick={() => {
+                    const updates: Record<string, number> = {};
+                    for (const [key, value] of Object.entries(queueDraft)) {
+                      if (value.trim() !== "" && Number.isFinite(Number(value))) updates[key] = Number(value);
+                    }
+                    void runAction(() => api.saveQueueConfig(updates), "save queue policy", {
+                      successMessage: "Queue policy saved",
+                      invalidate: [["queue-config"]],
+                    }).then(() => setQueueDraft({ batch_size: "", max_attempts: "", backoff_base_seconds: "", backoff_cap_seconds: "" }));
+                  }}
+                >
+                  Save queue policy
+                </Button>
               </CardContent>
             </GlassCard>
             <GlassCard className="min-w-0">
@@ -551,7 +642,7 @@ export function SyncQueuePage(): JSX.Element {
                     requestConfirm({
                       title: "Reset all data?",
                       description:
-                        "Permanently deletes all synced library data, sync history, queue state, and MAL data from the database. Integrations and settings are kept. You will need to run a full sync afterwards. This cannot be undone.",
+                        "Wipes library data, sync history & watermarks, the webhook queue, and MAL data. Kept: your integrations, login/API token, webhook secret, alert settings, schedules, and retention/queue policy. Run a full sync afterwards. This cannot be undone.",
                       confirmLabel: "Reset data",
                       destructive: true,
                       typedPhrase: "RESET",

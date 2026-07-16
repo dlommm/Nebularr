@@ -113,6 +113,7 @@ export function ReportingPage(): JSX.Element {
     deferredDashboardFilter,
     reportingPanelFilters,
     reportingColumnFilters,
+    reportingIgnoreSeasonZero,
   ]);
 
   const handlePanelFilterChange = useCallback((panelStateKey: string, value: string) => {
@@ -162,9 +163,11 @@ export function ReportingPage(): JSX.Element {
         );
       } else {
         const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
+        // limit 0 = server maximum: "Export CSV" genuinely means the full
+        // dataset, not just the rows currently loaded on screen.
         const exportUrl = api.reportingPanelExportUrl(reportingDashboardKey, panel.id, {
           instance_name: reportingInstance,
-          limit: reportingLimit,
+          limit: 0,
         });
         if (panel.kind === "timeseries") {
           nodes.push(<ReportingTimeseriesPanel key={panel.id} panel={panel} />);

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -14,7 +15,8 @@ class ScheduleFakeSession(FakeSession):
 
     def __init__(self, schedule_rows: list[dict[str, str]] | None = None) -> None:
         super().__init__()
-        self.schedule_rows = schedule_rows or []
+        # Rows may omit "timezone"; default to empty (falls back to global tz).
+        self.schedule_rows = [{"timezone": "", **row} for row in (schedule_rows or [])]
         self.seeded = False
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
@@ -23,7 +25,7 @@ class ScheduleFakeSession(FakeSession):
             self.statements.append((sql, params))
             self.seeded = True
             return FakeResult()
-        if "select mode, cron from app.sync_schedule" in sql:
+        if "select mode, cron, timezone from app.sync_schedule" in sql:
             self.statements.append((sql, params))
             return FakeResult(rows=self.schedule_rows)
         return super().execute(query, params)
@@ -65,6 +67,10 @@ def _build_scheduler(
     )
 
 
+# The retry-drain interval job is registered unconditionally.
+ALWAYS_ON_JOBS = {"webhook_drain"}
+
+
 @pytest.mark.asyncio
 async def test_start_seeds_defaults_and_registers_core_jobs() -> None:
     session = ScheduleFakeSession(
@@ -78,11 +84,65 @@ async def test_start_seeds_defaults_and_registers_core_jobs() -> None:
     scheduler.start()
     try:
         job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
-        assert job_ids == {"incremental", "reconcile", "stats_snapshot"}
+        assert job_ids == {"incremental", "reconcile", "stats_snapshot"} | ALWAYS_ON_JOBS
         assert session.seeded, "schedule defaults must be seeded on start"
         seed_params = next(p for sql, p in session.statements if "insert into app.sync_schedule" in sql)
         assert seed_params is not None
         assert seed_params["incremental_cron"] == "*/30 * * * *"
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_disabled_incremental_and_reconcile_are_not_scheduled() -> None:
+    # Rows exist only for enabled schedules; a disabled incremental/reconcile
+    # must not fall back to the env-default cron (pre-2.6 regression).
+    session = ScheduleFakeSession(
+        schedule_rows=[{"mode": "stats_snapshot", "cron": "10 3 * * *"}]
+    )
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert "incremental" not in job_ids
+        assert "reconcile" not in job_ids
+        # The retry drain still runs so retrying webhook jobs never stall.
+        assert "webhook_drain" in job_ids
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_per_schedule_timezone_is_honored() -> None:
+    session = ScheduleFakeSession(
+        schedule_rows=[
+            {"mode": "incremental", "cron": "*/15 * * * *", "timezone": "Europe/Berlin"},
+            {"mode": "reconcile", "cron": "0 3 * * 0"},
+        ]
+    )
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()
+    try:
+        incremental = scheduler.scheduler.get_job("incremental")
+        reconcile = scheduler.scheduler.get_job("reconcile")
+        assert incremental is not None and reconcile is not None
+        assert incremental.trigger.timezone == ZoneInfo("Europe/Berlin")
+        assert str(reconcile.trigger.timezone) == "UTC"
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_bad_schedule_row_falls_back_to_env_defaults() -> None:
+    session = ScheduleFakeSession(
+        schedule_rows=[{"mode": "incremental", "cron": "not a cron", "timezone": "Nope/Nowhere"}]
+    )
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()
+    try:
+        incremental = scheduler.scheduler.get_job("incremental")
+        assert incremental is not None, "bad row must fall back, not kill scheduling"
+        assert str(incremental.trigger.timezone) == "UTC"
     finally:
         scheduler.shutdown()
 

@@ -1,5 +1,6 @@
-from arrsync.mal.ingest_service import MalIngestService
-from arrsync.mal.matcher_service import MalMatcherService
-from arrsync.mal.tag_sync_service import MalTagSyncService
+"""MyAnimeList integration package.
 
-__all__ = ["MalIngestService", "MalMatcherService", "MalTagSyncService"]
+Import services from their submodules (e.g. ``arrsync.mal.ingest_service``);
+eager re-exports here created a circular import with
+``arrsync.services.mal_config_store`` via ``arrsync.mal.constants``.
+"""

@@ -490,6 +490,30 @@ def mark_deleted_source_ids(session: Session, table: str, instance_name: str, id
     )
 
 
+def tombstone_episode_files_for_series(
+    session: Session, instance_name: str, series_source_ids: list[int]
+) -> None:
+    """Tombstone every episode_file belonging to the given (deleted) series."""
+    if not series_source_ids:
+        return
+    session.execute(
+        text(
+            """
+            update warehouse.episode_file ef
+            set deleted = true
+            where ef.instance_name = :instance_name
+              and not ef.deleted
+              and ef.episode_source_id in (
+                select e.source_id from warehouse.episode e
+                where e.instance_name = :instance_name
+                  and e.series_source_id = any(:series_ids)
+              )
+            """
+        ),
+        {"instance_name": instance_name, "series_ids": series_source_ids},
+    )
+
+
 def mark_missing_children(
     session: Session,
     table: str,
@@ -577,8 +601,17 @@ def mark_webhook_done(session: Session, queue_id: int) -> None:
     )
 
 
-def mark_webhook_failed(session: Session, queue_id: int, attempts: int, error_message: str) -> None:
-    status = "dead_letter" if attempts >= 5 else "retrying"
+def mark_webhook_failed(
+    session: Session,
+    queue_id: int,
+    attempts: int,
+    error_message: str,
+    *,
+    max_attempts: int = 5,
+    backoff_base_seconds: int = 30,
+    backoff_cap_seconds: int = 900,
+) -> None:
+    status = "dead_letter" if attempts >= max_attempts else "retrying"
     session.execute(
         text(
             """
@@ -591,7 +624,7 @@ def mark_webhook_failed(session: Session, queue_id: int, attempts: int, error_me
         ),
         {
             "status": status,
-            "delay_seconds": min(attempts * 30, 900),
+            "delay_seconds": min(attempts * backoff_base_seconds, backoff_cap_seconds),
             "error_message": error_message[:1000],
             "queue_id": queue_id,
         },
@@ -817,6 +850,22 @@ def latest_integrity_drift_sources(session: Session) -> list[str]:
     return sorted({str(r["source"]) for r in rows if bool(r["drift_detected"])})
 
 
+def enabled_webhook_instance_names(session: Session, source: str) -> list[str]:
+    """Names of enabled integrations for the source that accept webhooks, sorted."""
+    rows = session.execute(
+        text(
+            """
+            select name
+            from app.integration_instance
+            where source = :source and enabled and webhook_enabled
+            order by name
+            """
+        ),
+        {"source": source},
+    )
+    return [str(row[0]) for row in rows]
+
+
 def webhook_ingest_allowed(session: Session, source: str, instance_name: str | None = None) -> bool:
     """True when at least one enabled integration for the source accepts webhooks.
 
@@ -963,20 +1012,24 @@ def delete_all_job_locks(session: Session) -> int:
     return len(result.all())
 
 
-def fail_stuck_running_warehouse_work(session: Session) -> dict[str, int]:
+def fail_stuck_running_warehouse_work(
+    session: Session, reason: str = "operator clear-stuck"
+) -> dict[str, int]:
     """Mark stuck ``running`` rows in ``warehouse.sync_run`` and ``app.job_run_summary`` as failed."""
+    message = f"Cleared: stale running state ({reason})"
     r_sync = session.execute(
         text(
             """
             update warehouse.sync_run
             set status = 'failed',
                 finished_at = now(),
-                error_message = 'Cleared: stale running state (operator clear-stuck)',
+                error_message = :message,
                 details = coalesce(details, '{}'::jsonb) || jsonb_build_object('cleared_stuck', true)
             where status = 'running'
             returning id
             """
-        )
+        ),
+        {"message": message},
     )
     r_sum = session.execute(
         text(
@@ -984,12 +1037,13 @@ def fail_stuck_running_warehouse_work(session: Session) -> dict[str, int]:
             update app.job_run_summary
             set status = 'failed',
                 finished_at = now(),
-                error_message = 'Cleared: stale running state (operator clear-stuck)',
+                error_message = :message,
                 details = coalesce(details, '{}'::jsonb) || jsonb_build_object('cleared_stuck', true)
             where status = 'running' and source in ('sonarr', 'radarr')
             returning id
             """
-        )
+        ),
+        {"message": message},
     )
     return {
         "warehouse_sync_runs_marked_failed": len(r_sync.all()),

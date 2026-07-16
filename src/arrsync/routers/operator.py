@@ -8,7 +8,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 
+from arrsync.auth import invalidate_auth_cache
 from arrsync.mal import repository as mal_repo
+from arrsync.services.settings_store import set_setting
 from arrsync.routers.shared import (
     to_bool,
 )
@@ -174,6 +176,40 @@ def build_operator_router(app_state: Any) -> APIRouter:
             )
         return {"status": "queued"}
 
+    @router.post("/api/webhooks/requeue-bulk")
+    async def requeue_webhooks_bulk(payload: dict[str, Any]) -> dict[str, Any]:
+        """Requeue every job in the given status (optionally per source) in one shot."""
+        status = str(payload.get("status", "")).strip().lower()
+        if status not in {"retrying", "dead_letter"}:
+            raise HTTPException(status_code=400, detail="status must be retrying or dead_letter")
+        source = payload.get("source")
+        if source is not None:
+            source = str(source).strip().lower()
+            if source not in {"sonarr", "radarr"}:
+                raise HTTPException(status_code=400, detail="source must be sonarr or radarr")
+        source_clause = "and source = :source" if source else ""
+        params: dict[str, Any] = {"status": status}
+        if source:
+            params["source"] = source
+        with app_state.session_scope() as session:
+            rows = session.execute(
+                text(
+                    f"""
+                    update app.webhook_queue
+                    set status = 'queued', next_attempt_at = now(), error_message = null
+                    where status = :status {source_clause}
+                    returning source
+                    """  # noqa: S608
+                ),
+                params,
+            ).fetchall()
+        requeued_sources = sorted({str(row[0]) for row in rows})
+        request_drain = getattr(app_state, "request_webhook_drain", None)
+        if request_drain is not None:
+            for requeued_source in requeued_sources:
+                request_drain(requeued_source)
+        return {"status": "queued", "requeued": len(rows), "sources": requeued_sources}
+
     @router.post("/api/webhooks/requeue/{job_id}")
     async def requeue_webhook_job(job_id: int) -> dict[str, Any]:
         with app_state.session_scope() as session:
@@ -192,12 +228,42 @@ def build_operator_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=404, detail="job not found or not requeueable")
         return {"status": "queued", "job_id": job_id}
 
+    # Settings that survive a data reset. Integrations (with their API keys) are
+    # not truncated, so silently wiping auth/webhook-secret/alert config would
+    # leave a box full of live credentials with its locks removed.
+    RESET_KEEP_SETTING_PATTERNS = ("app.auth\\_%", "app.alert\\_%", "mal.%")
+    RESET_KEEP_SETTING_KEYS = (
+        "app.webhook_secret_hash",
+        "app.setup_completed",
+        "app.log_level",
+        "app.retention_policy_json",
+        "app.queue_policy_json",
+        "app.ui_saved_views_json",
+    )
+
     @router.post("/api/admin/reset-data")
     async def reset_data(payload: dict[str, Any]) -> dict[str, Any]:
         confirmation = str(payload.get("confirmation", "")).strip().upper()
         if confirmation != "RESET":
             raise HTTPException(status_code=400, detail="confirmation must be RESET")
         with app_state.session_scope() as session:
+            kept_rows = session.execute(
+                text(
+                    """
+                    select key, value from app.settings
+                    where key = any(:keys)
+                       or key like :auth_pattern escape '\\'
+                       or key like :alert_pattern escape '\\'
+                       or key like :mal_pattern escape '\\'
+                    """
+                ),
+                {
+                    "keys": list(RESET_KEEP_SETTING_KEYS),
+                    "auth_pattern": RESET_KEEP_SETTING_PATTERNS[0],
+                    "alert_pattern": RESET_KEEP_SETTING_PATTERNS[1],
+                    "mal_pattern": RESET_KEEP_SETTING_PATTERNS[2],
+                },
+            ).fetchall()
             session.execute(
                 text(
                     """
@@ -227,6 +293,13 @@ def build_operator_router(app_state: Any) -> APIRouter:
                     """
                 )
             )
-        return {"status": "ok", "message": "database data reset complete"}
+            for key, value in kept_rows:
+                set_setting(session, str(key), str(value))
+        invalidate_auth_cache(app_state)
+        return {
+            "status": "ok",
+            "message": "database data reset complete",
+            "kept_setting_count": len(kept_rows),
+        }
 
     return router

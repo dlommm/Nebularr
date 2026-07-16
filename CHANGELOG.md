@@ -4,6 +4,79 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.6.0] - 2026-07-15
+
+Bug-fix and operator-experience release from a second full-application audit:
+14 fixes (including three v2.5.0 regressions) plus ten improvements. No DB
+migration — all new settings live in `app.settings`.
+
+### Fixed
+- **Scheduling honors per-schedule timezones.** The scheduler read only the cron
+  expression, so a schedule set to e.g. `America/New_York` still fired on the
+  server's timezone. It now uses each row's own timezone.
+- **Disabling the incremental/reconcile schedules actually stops them.** They
+  were added to the scheduler unconditionally and silently reverted to the
+  env-default cron when toggled off. All schedules are now gated on their enabled
+  row. Webhook *retry* draining moved to its own always-on 5-minute job, so
+  retrying jobs never stall regardless of which schedules are enabled.
+- **Library browsing and CSV exports no longer stall the server.** The library
+  endpoints ran blocking queries on the event loop, and CSV exports buffered up
+  to 100k rows in memory. They now run off-loop and stream the CSV in chunks.
+- **SIGTERM no longer leaves phantom "running" jobs.** Queued syncs and the MAL
+  backlog get a grace period on shutdown, their finalizers survive cancellation,
+  and a startup sweep marks any leftover `running` rows failed.
+- **Sonarr incremental deletes tombstone episode files too** (previously only the
+  series and episodes were marked deleted, so orphaned file rows kept counting
+  toward totals until the next full sync).
+- **The legacy `/hooks/{source}` URL works again for renamed integrations.** A
+  v2.5.0 change required an integration literally named `default`; single-instance
+  users who renamed theirs got a 403. The unsuffixed route now accepts any enabled
+  integration and attributes the event to it.
+- **Header search keeps your Library view.** Searching from the top bar preserved
+  neither the current mode (shows/episodes/movies) nor filters; it now carries
+  them through.
+- **Live event stream backs off and prompts re-login.** On an expired session the
+  SSE stream reconnected every 5s forever; it now uses exponential backoff (to
+  60s) and, after repeated failures, checks auth and redirects to login.
+- **Reporting "Export CSV" exports the full dataset** (it was silently capped at
+  the on-screen row limit).
+- **Applying a saved "default" view now resets filters** instead of doing nothing;
+  the reporting table pagination resets when toggling "Ignore Season 0"; the
+  webhook-jobs pager no longer shows "1–0" or pages past the end; the setup wizard
+  no longer reverts field edits when you move between steps.
+- **The MAL ingest lock heartbeat runs off the event loop** (it briefly blocked
+  it every 5 minutes).
+
+### Added
+- **Test-connection button for Sonarr/Radarr integrations** — verify base URL and
+  API key before saving, with an inline version/error result.
+- **Cron validation with a next-run preview** on the Schedules page and setup
+  wizard: typos are caught as you type and Save is blocked while invalid.
+- **Bulk webhook requeue** (`POST /api/webhooks/requeue-bulk`) plus real
+  pagination with totals on the webhook-jobs table.
+- **Per-channel notification tests** — test each Discord/Slack/ntfy webhook and
+  email target individually, with per-target results.
+- **First-run onboarding checklist** on the Dashboard (connect Arr → full sync →
+  schedules → optional webhook secret), dismissable and auto-hiding when done.
+- **Server-side saved views** (`GET/PUT /api/config/saved-views`) so views survive
+  a browser change; existing localStorage views migrate automatically.
+- **Configurable queue policy** (`GET/PUT /api/config/queue`): batch size, max
+  attempts, and retry backoff, previously hardcoded.
+- Reporting tables gain an "Export view" button for exactly the rows as filtered
+  on screen, alongside the full-dataset export.
+
+### Changed
+- **`POST /api/admin/reset-data` now preserves auth, the webhook secret, and
+  alert/retention/queue settings.** Previously it wiped `app.settings` wholesale,
+  silently disabling authentication while leaving integration API keys intact.
+  The confirm dialog now enumerates exactly what is wiped versus kept.
+- Alert notification delivery no longer holds its lock across network I/O, so a
+  slow or unreachable webhook can't block config saves.
+- `GET /api/ui/webhook-jobs?paged=true` returns `{items, total, limit, offset}`;
+  the bare-list form remains the default for existing callers.
+- `POST /api/config/alert-webhooks/test` now returns a per-target `results` array
+  (the `status` field is preserved for older callers).
+
 ## [2.5.0] - 2026-07-14
 
 Polish and hardening release from a full-application audit: incremental sync

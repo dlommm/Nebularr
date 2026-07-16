@@ -37,6 +37,9 @@ class FakeResult:
     def fetchall(self) -> list[Any]:
         return self._rows
 
+    def __iter__(self) -> Any:
+        return iter(self._rows)
+
 
 class FakeSession:
     """Backs app.settings reads/writes plus a few write-only statements."""
@@ -47,6 +50,8 @@ class FakeSession:
         self.webhook_ingest_allowed = True
         # None means "any instance name passes"; a set restricts the lookup.
         self.known_webhook_instances: set[str] | None = None
+        # Names returned by enabled_webhook_instance_names (legacy-route stamping).
+        self.enabled_webhook_names: list[str] = ["default"]
         self.job_lock_held = False
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
@@ -69,6 +74,9 @@ class FakeSession:
             return FakeResult()
         if "from app.job_lock" in sql:
             return FakeResult(rows=[(1,)] if self.job_lock_held else [])
+        if "select name from app.integration_instance" in sql:
+            names = self.enabled_webhook_names if self.webhook_ingest_allowed else []
+            return FakeResult(rows=[(name,) for name in names])
         if "from app.integration_instance" in sql and "webhook_enabled" in sql:
             allowed = self.webhook_ingest_allowed
             if allowed and params and "instance_name" in params and self.known_webhook_instances is not None:

@@ -239,10 +239,14 @@ def build_mal_router(app_state: Any) -> APIRouter:
     async def _run_backlog_job(run_id: int, **kwargs: Any) -> None:
         try:
             summary = await _run_backlog_cycles(run_id=run_id, **kwargs)
-        except Exception as exc:
-            log.exception("background MAL backlog import failed")
+        except BaseException as exc:
+            # BaseException so shutdown cancellation still finalizes the job row.
+            if isinstance(exc, Exception):
+                log.exception("background MAL backlog import failed")
             with app_state.session_scope() as session:
-                mal_repo.finish_mal_job_run(session, run_id, "failed", {}, str(exc))
+                mal_repo.finish_mal_job_run(session, run_id, "failed", {}, str(exc) or type(exc).__name__)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             return
         with app_state.session_scope() as session:
             mal_repo.finish_mal_job_run(session, run_id, "success", summary, None)

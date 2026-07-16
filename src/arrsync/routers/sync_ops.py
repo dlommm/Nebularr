@@ -15,6 +15,7 @@ from arrsync.log_buffer import get_recent_logs_parsed, ring_buffer_capacity
 from arrsync.routers.shared import (
     setup_sync_state,
     clamp_limit,
+    paged_response,
 )
 from arrsync.services import repository as repo
 from arrsync.services.log_level_store import (
@@ -326,7 +327,11 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/ui/webhook-jobs")
-    async def webhook_jobs(status: str = "all", limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    async def webhook_jobs(
+        status: str = "all", limit: int = 100, offset: int = 0, paged: bool = False
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """paged=true adds a total for real pagination; the bare-list default is
+        kept for the legacy fallback UI and any scripts."""
         normalized_status = status.lower()
         allowed = {"all", "queued", "retrying", "done", "dead_letter"}
         if normalized_status not in allowed:
@@ -352,7 +357,14 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
                 ),
                 params,
             ).mappings()
-            return [dict(r) for r in rows]
+            items = [dict(r) for r in rows]
+            if not paged:
+                return items
+            total = session.execute(
+                text(f"select count(*) from app.webhook_queue {where_clause}"),  # noqa: S608
+                {k: v for k, v in params.items() if k == "status"},
+            ).scalar_one()
+            return paged_response(items, int(total), bounded_limit, bounded_offset)
 
     def _sync_lock_held(lock_name: str) -> bool:
         with app_state.session_scope() as session:

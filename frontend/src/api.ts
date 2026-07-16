@@ -1,6 +1,9 @@
 import type {
   AlertEventFlags,
+  AlertTestResult,
   AlertWebhookConfig,
+  QueuePolicy,
+  SavedViewEntry,
   AuthConfigResponse,
   AuthStatusResponse,
   EpisodeRow,
@@ -35,7 +38,7 @@ type HttpMethod = "GET" | "POST" | "PUT";
 
 const AUTH_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/status"]);
 
-function redirectToLogin(): void {
+export function redirectToLogin(): void {
   if (window.location.pathname !== "/login") {
     const next = encodeURIComponent(window.location.pathname + window.location.search);
     window.location.assign(`/login?next=${next}`);
@@ -154,7 +157,15 @@ export const api = {
   recentRuns: () => requestJson<RunRow[]>("/api/ui/recent-runs"),
   webhookQueue: () => requestJson<WebhookQueueRow[]>("/api/ui/webhook-queue"),
   webhookJobs: (status = "all", limit = 150, offset = 0) =>
-    requestJson<WebhookJobRow[]>(withParams("/api/ui/webhook-jobs", { status, limit, offset })),
+    requestJson<PagedResponse<WebhookJobRow>>(
+      withParams("/api/ui/webhook-jobs", { status, limit, offset, paged: true }),
+    ),
+  requeueWebhooksBulk: (payload: { status: "retrying" | "dead_letter"; source?: "sonarr" | "radarr" }) =>
+    requestJson<{ status: string; requeued: number; sources: string[] }>(
+      "/api/webhooks/requeue-bulk",
+      "POST",
+      payload,
+    ),
   integrations: () => requestJson<IntegrationRow[]>("/api/config/integrations"),
   schedules: () => requestJson<ScheduleRow[]>("/api/config/schedules"),
   retention: () => requestJson<RetentionPolicy>("/api/config/retention"),
@@ -162,6 +173,28 @@ export const api = {
     requestJson<RetentionPolicy>("/api/config/retention", "PUT", payload),
   saveIntegration: (source: string, payload: unknown) =>
     requestJson<{ status: string }>(`/api/config/integrations/${source}`, "PUT", payload),
+  testIntegration: (source: string, payload: { name?: string; base_url?: string; api_key?: string }) =>
+    requestJson<{ ok: boolean; version?: string; app_name?: string; error?: string }>(
+      `/api/config/integrations/${source}/test`,
+      "POST",
+      payload,
+      { timeoutMs: 15_000 },
+    ),
+  validateSchedule: (payload: { cron: string; timezone?: string }) =>
+    requestJson<{ valid: boolean; error?: string; timezone?: string; next_fire_times?: string[] }>(
+      "/api/config/schedules/validate",
+      "POST",
+      payload,
+    ),
+  queueConfig: () => requestJson<QueuePolicy>("/api/config/queue"),
+  saveQueueConfig: (payload: Partial<QueuePolicy>) =>
+    requestJson<QueuePolicy>("/api/config/queue", "PUT", payload),
+  savedViews: () => requestJson<{ views: Record<string, SavedViewEntry[]> }>("/api/config/saved-views"),
+  saveSavedViews: (page: string, views: SavedViewEntry[]) =>
+    requestJson<{ status: string; page: string; count: number }>("/api/config/saved-views", "PUT", {
+      page,
+      views,
+    }),
   malConfig: () => requestJson<MalConfigResponse>("/api/config/mal"),
   malJobRuns: (jobType = "all", limit = 50, offset = 0) =>
     requestJson<MalJobRunRow[]>(withParams("/api/mal/job-runs", { job_type: jobType, limit, offset })),
@@ -251,7 +284,12 @@ export const api = {
       starttls: boolean;
     };
   }) => requestJson<{ status: string; url_count: number }>("/api/config/alert-webhooks", "PUT", payload),
-  sendAlertWebhookTest: () => requestJson<{ status: string }>("/api/config/alert-webhooks/test", "POST"),
+  sendAlertWebhookTest: (target?: string) =>
+    requestJson<{ status: string; results: AlertTestResult[] }>(
+      "/api/config/alert-webhooks/test",
+      "POST",
+      target ? { target } : {},
+    ),
   runSync: (source: string, mode: string) =>
     // The UI queues syncs (202) and follows progress via work-status/SSE; only
     // scripts use the blocking wait=true default.

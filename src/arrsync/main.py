@@ -265,16 +265,20 @@ async def _shutdown() -> None:
         app_state.webhook_drain_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.webhook_drain_task
-    # Queued (?wait=false) syncs honor stop_event; give them a moment, then cancel.
-    for task in list(app_state.manual_sync_tasks):
-        if not task.done():
+    # Queued (?wait=false) syncs and the MAL backlog honor stop_event; give them a
+    # real grace period to reach their finalizers (which mark run rows failed)
+    # before cancelling whatever is still stuck.
+    background_jobs = [
+        task
+        for task in (*app_state.manual_sync_tasks, app_state.mal_backlog_task)
+        if task is not None and not task.done()
+    ]
+    if background_jobs:
+        _done, pending = await asyncio.wait(background_jobs, timeout=10.0)
+        for task in pending:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-    if app_state.mal_backlog_task and not app_state.mal_backlog_task.done():
-        app_state.mal_backlog_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await app_state.mal_backlog_task
     await sync_service.aclose()
     await sonarr_client.aclose()
     await radarr_client.aclose()

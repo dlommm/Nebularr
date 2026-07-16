@@ -23,14 +23,22 @@ def build_hooks_router(app_state: Any) -> APIRouter:
 
     @router.post("/hooks/{source}")
     @router.post("/hooks/{source}/{instance_name}")
-    async def webhook(source: str, request: Request, instance_name: str = "default") -> JSONResponse:
+    async def webhook(source: str, request: Request, instance_name: str | None = None) -> JSONResponse:
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=404, detail="unknown source")
 
         received_secret = request.headers.get("x-arr-shared-secret", "")
         with app_state.session_scope() as session:
             stored_hash = get_setting(session, "app.webhook_secret_hash", "")
+            # Legacy unsuffixed route: any enabled integration accepts the webhook
+            # (the integration name is NOT required to be "default"); the event is
+            # attributed to the sole enabled integration when it's unambiguous.
             ingest_allowed = repo.webhook_ingest_allowed(session, source, instance_name)
+            if instance_name is None:
+                enabled_names = repo.enabled_webhook_instance_names(session, source)
+                resolved_instance = enabled_names[0] if len(enabled_names) == 1 else "default"
+            else:
+                resolved_instance = instance_name
         if stored_hash:
             if not verify_secret_hash(received_secret, stored_hash):
                 raise HTTPException(status_code=401, detail="invalid secret")
@@ -73,9 +81,9 @@ def build_hooks_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=400, detail="invalid payload") from exc
 
         event_type = str(payload.get("eventType", "unknown"))
-        # Arr apps never send an instance identifier; stamp the route's before the
-        # dedupe hash so identical events for different instances both queue.
-        payload["instance_name"] = instance_name
+        # Arr apps never send an instance identifier; stamp the resolved one before
+        # the dedupe hash so identical events for different instances both queue.
+        payload["instance_name"] = resolved_instance
         dedupe_key = hashlib.sha256(
             json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
@@ -89,7 +97,7 @@ def build_hooks_router(app_state: Any) -> APIRouter:
             "incoming webhook queued",
             extra={
                 "webhook_source": source,
-                "instance_name": instance_name,
+                "instance_name": resolved_instance,
                 "event_type": event_type,
                 "dedupe_key_prefix": dedupe_key[:12],
             },

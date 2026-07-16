@@ -249,14 +249,61 @@ async def test_health_alert_respects_health_flag(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
-async def test_send_test_message_hits_all_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_send_test_message_returns_per_target_results(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(alert_webhook_urls="https://example.test/a,https://example.test/b")
     notifier = AlertNotifier(settings)
     requests: list[tuple[str, dict[str, Any]]] = []
     _install_fake_http(monkeypatch, requests)
 
-    assert await notifier.send_test_message() is True
+    results = await notifier.send_test_message()
+    assert [r["target"] for r in results] == ["https://example.test/a", "https://example.test/b"]
+    assert all(r["ok"] and r["error"] is None for r in results)
     assert len(requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_send_test_to_target_single_url_and_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(alert_webhook_urls="https://example.test/a,https://example.test/b")
+    notifier = AlertNotifier(settings)
+    requests: list[tuple[str, dict[str, Any]]] = []
+    _install_fake_http(monkeypatch, requests)
+
+    result = await notifier.send_test_to_target("https://example.test/b")
+    assert result == {"target": "https://example.test/b", "ok": True, "error": None}
+    assert [url for url, _ in requests] == ["https://example.test/b"]
+
+    unknown = await notifier.send_test_to_target("https://not-configured.test/x")
+    assert unknown["ok"] is False
+    assert "not a configured" in str(unknown["error"])
+
+    no_email = await notifier.send_test_to_target("email")
+    assert no_email["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_configure_not_blocked_by_slow_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The delivery lock rider: a hung webhook must not block config saves.
+    import asyncio as aio
+
+    settings = Settings(alert_webhook_urls="https://example.test/slow")
+    notifier = AlertNotifier(settings)
+    release = aio.Event()
+    started = aio.Event()
+
+    async def hung_post_webhooks(*_args: Any, **_kwargs: Any) -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(notifier, "_post_webhooks", hung_post_webhooks)
+    send_task = aio.create_task(
+        notifier.send_event("sync_failure", {"source": "sonarr", "mode": "full"})
+    )
+    await aio.wait_for(started.wait(), timeout=2)
+    # configure() must complete while the delivery is still in flight.
+    await aio.wait_for(notifier.configure(timeout_seconds=5.0), timeout=1)
+    release.set()
+    assert await aio.wait_for(send_task, timeout=2) is True
 
 
 def test_detect_webhook_target_and_ntfy_normalization() -> None:

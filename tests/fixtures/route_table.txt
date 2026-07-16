@@ -4,7 +4,9 @@ GET /api/config/alert-webhooks
 GET /api/config/integrations
 GET /api/config/logging
 GET /api/config/mal
+GET /api/config/queue
 GET /api/config/retention
+GET /api/config/saved-views
 GET /api/config/schedules
 GET /api/config/webhook
 GET /api/mal/job-runs
@@ -46,6 +48,8 @@ POST /api/admin/reset-data
 POST /api/auth/login
 POST /api/auth/logout
 POST /api/config/alert-webhooks/test
+POST /api/config/integrations/{source}/test
+POST /api/config/schedules/validate
 POST /api/mal/coverage-tag-sync
 POST /api/mal/ingest
 POST /api/mal/ingest-backlog
@@ -62,6 +66,7 @@ POST /api/setup/skip
 POST /api/setup/wizard
 POST /api/sync/{source}/{mode}
 POST /api/webhooks/replay-dead-letter/{source}
+POST /api/webhooks/requeue-bulk
 POST /api/webhooks/requeue/{job_id}
 POST /hooks/{source}
 POST /hooks/{source}/{instance_name}
@@ -70,6 +75,8 @@ PUT /api/config/alert-webhooks
 PUT /api/config/integrations/{source}
 PUT /api/config/logging
 PUT /api/config/mal
+PUT /api/config/queue
 PUT /api/config/retention
+PUT /api/config/saved-views
 PUT /api/config/schedules/{mode}
 PUT /api/config/webhook

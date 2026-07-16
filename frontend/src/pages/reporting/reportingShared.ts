@@ -46,3 +46,24 @@ export function rowPassesSeasonFilter(row: Record<string, unknown>, ignoreSeason
 export function chartColor(index: number): string {
   return `var(--chart-${(index % 5) + 1})`;
 }
+
+/** Client-side CSV download of the given rows (used for "export what I see"). */
+export function downloadCsv(filename: string, rows: Array<Record<string, unknown>>): void {
+  if (rows.length === 0) return;
+  const columns = Object.keys(rows[0]);
+  const escapeCell = (value: unknown): string => {
+    const text = stringifyCellValue(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const lines = [
+    columns.map(escapeCell).join(","),
+    ...rows.map((row) => columns.map((column) => escapeCell(row[column])).join(",")),
+  ];
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}

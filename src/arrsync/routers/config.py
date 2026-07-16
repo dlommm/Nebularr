@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import re
+from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -42,12 +46,20 @@ from arrsync.services.mal_config_store import (
     store_mal_feature_flags,
     store_mydublist_tier,
 )
+from arrsync.services import repository as repo
+from arrsync.services.queue_config_store import read_queue_policy, write_queue_policy
 from arrsync.services.retention_store import (
     MAX_RETENTION_DAYS,
     read_retention_policy,
     write_retention_policy,
 )
 from arrsync.services.settings_store import get_setting, set_setting
+
+SAVED_VIEWS_KEY = "app.ui_saved_views_json"
+SAVED_VIEWS_PAGE_RE = re.compile(r"[a-z0-9.-]{1,64}")
+SAVED_VIEWS_MAX_PER_PAGE = 50
+SAVED_VIEWS_NAME_MAX = 80
+SAVED_VIEWS_SEARCH_MAX = 2000
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +121,47 @@ def build_config_router(app_state: Any) -> APIRouter:
                 },
             )
         return {"status": "ok"}
+
+    @router.post("/api/config/integrations/{source}/test")
+    async def test_integration(source: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Probe the Arr instance with the given (or stored) credentials.
+
+        Failures return HTTP 200 with ok=false so the UI renders them inline
+        instead of as a generic error toast.
+        """
+        if source not in {"sonarr", "radarr"}:
+            raise HTTPException(status_code=400, detail="source must be sonarr or radarr")
+        payload = payload or {}
+        name = str(payload.get("name") or "default")
+        base_url = str(payload.get("base_url") or "").strip()
+        api_key = str(payload.get("api_key") or "")
+        if not base_url or not api_key:
+            with app_state.session_scope() as session:
+                stored = {
+                    row["name"]: row for row in repo.list_enabled_integrations(session, source)
+                }
+            row = stored.get(name)
+            if row is None:
+                raise HTTPException(
+                    status_code=404, detail=f"no enabled {source} integration named {name!r}"
+                )
+            base_url = base_url or str(row["base_url"])
+            api_key = api_key or str(row.get("api_key", ""))
+        require_egress_allowed(base_url, "base_url", app_state.settings.egress_policy)
+        client = app_state.arr_client_class(
+            app_state.settings, source, instance_name=name, base_url=base_url, api_key=api_key
+        )
+        try:
+            status = await asyncio.wait_for(client.system_status(), timeout=10.0)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:300]}
+        finally:
+            await client.aclose()
+        return {
+            "ok": True,
+            "version": str(status.get("version", "unknown")),
+            "app_name": str(status.get("appName", source)),
+        }
 
     @router.get("/api/config/mal")
     async def get_mal_config() -> dict[str, Any]:
@@ -324,14 +377,28 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "url_count": len(webhook_urls), "events": events}
 
     @router.post("/api/config/alert-webhooks/test")
-    async def send_alert_webhook_test() -> dict[str, Any]:
+    async def send_alert_webhook_test(payload: dict[str, Any] | None = None) -> dict[str, Any]:
         alert_notifier = getattr(app_state, "alert_notifier", None)
         if alert_notifier is None:
             raise HTTPException(status_code=503, detail="alert notifier unavailable")
-        delivered = await alert_notifier.send_test_message()
-        if not delivered:
-            raise HTTPException(status_code=400, detail="no webhook accepted the test message (none configured, or all failed)")
-        return {"status": "ok"}
+        target = str((payload or {}).get("target", "") or "").strip()
+        if target:
+            results = [await alert_notifier.send_test_to_target(target)]
+        else:
+            results = await alert_notifier.send_test_message()
+        if not results:
+            raise HTTPException(
+                status_code=400,
+                detail="no webhook accepted the test message (none configured, or all failed)",
+            )
+        # `status` keeps the pre-2.6 contract for existing callers.
+        any_ok = any(result["ok"] for result in results)
+        if not any_ok and not target:
+            raise HTTPException(
+                status_code=400,
+                detail="no webhook accepted the test message (none configured, or all failed)",
+            )
+        return {"status": "ok" if any_ok else "failed", "results": results}
 
     @router.get("/api/config/schedules")
     async def list_schedules() -> list[dict[str, Any]]:
@@ -372,6 +439,103 @@ def build_config_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=400, detail="no retention fields provided")
         with app_state.session_scope() as session:
             return dict(write_retention_policy(session, updates))
+
+    @router.get("/api/config/queue")
+    async def get_queue_policy() -> dict[str, Any]:
+        with app_state.session_scope() as session:
+            return dict(read_queue_policy(session))
+
+    @router.put("/api/config/queue")
+    async def update_queue_policy(payload: dict[str, Any]) -> dict[str, Any]:
+        updates: dict[str, object] = {}
+        for key in ("batch_size", "max_attempts", "backoff_base_seconds", "backoff_cap_seconds"):
+            if key not in payload:
+                continue
+            try:
+                updates[key] = int(payload[key])
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
+        if not updates:
+            raise HTTPException(status_code=400, detail="no queue policy fields provided")
+        with app_state.session_scope() as session:
+            return dict(write_queue_policy(session, updates))
+
+    @router.post("/api/config/schedules/validate")
+    async def validate_schedule_cron(payload: dict[str, Any]) -> dict[str, Any]:
+        """Live cron validation + next-run preview. Parse problems come back as
+        valid=false with HTTP 200 (this powers as-you-type feedback)."""
+        cron = str(payload.get("cron", "")).strip()
+        timezone = str(payload.get("timezone") or app_state.settings.scheduler_timezone).strip()
+        if not cron:
+            return {"valid": False, "error": "cron expression is required"}
+        try:
+            tzinfo = ZoneInfo(timezone)
+        except Exception:
+            return {"valid": False, "error": f"unknown timezone {timezone!r}"}
+        try:
+            trigger = CronTrigger.from_crontab(cron, timezone=timezone)
+        except Exception as exc:
+            return {"valid": False, "error": str(exc)[:300]}
+        fire_times: list[str] = []
+        previous: datetime | None = None
+        now = datetime.now(tzinfo)
+        for _ in range(3):
+            next_fire = trigger.get_next_fire_time(previous, previous or now)
+            if next_fire is None:
+                break
+            fire_times.append(next_fire.isoformat())
+            previous = next_fire
+        return {"valid": True, "timezone": timezone, "next_fire_times": fire_times}
+
+    @router.get("/api/config/saved-views")
+    async def get_saved_views() -> dict[str, Any]:
+        with app_state.session_scope() as session:
+            raw = get_setting(session, SAVED_VIEWS_KEY, "")
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        return {"views": parsed if isinstance(parsed, dict) else {}}
+
+    @router.put("/api/config/saved-views")
+    async def put_saved_views(payload: dict[str, Any]) -> dict[str, Any]:
+        page = str(payload.get("page", "")).strip().lower()
+        if not SAVED_VIEWS_PAGE_RE.fullmatch(page):
+            raise HTTPException(status_code=400, detail="invalid page key")
+        raw_views = payload.get("views")
+        if not isinstance(raw_views, list) or len(raw_views) > SAVED_VIEWS_MAX_PER_PAGE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"views must be a list of at most {SAVED_VIEWS_MAX_PER_PAGE} entries",
+            )
+        views: list[dict[str, str]] = []
+        for entry in raw_views:
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=400, detail="each view must be an object")
+            name = str(entry.get("name", "")).strip()
+            search = str(entry.get("search", ""))
+            if not name or len(name) > SAVED_VIEWS_NAME_MAX:
+                raise HTTPException(
+                    status_code=400, detail=f"view name must be 1-{SAVED_VIEWS_NAME_MAX} characters"
+                )
+            if len(search) > SAVED_VIEWS_SEARCH_MAX:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"view search must be at most {SAVED_VIEWS_SEARCH_MAX} characters",
+                )
+            # Re-serialize only the whitelisted fields.
+            views.append({"name": name, "search": search})
+        with app_state.session_scope() as session:
+            raw = get_setting(session, SAVED_VIEWS_KEY, "")
+            try:
+                stored = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                stored = {}
+            if not isinstance(stored, dict):
+                stored = {}
+            stored[page] = views
+            set_setting(session, SAVED_VIEWS_KEY, json.dumps(stored))
+        return {"status": "ok", "page": page, "count": len(views)}
 
     @router.put("/api/config/schedules/{mode}")
     async def update_schedule(mode: str, payload: dict[str, Any]) -> dict[str, Any]:

@@ -5,6 +5,7 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate } from "../hooks";
 import { SCHEDULE_MODE_LABELS, sortScheduleRows } from "../constants/domain";
 import { useActionError } from "../hooks/useActionError";
+import { CronPreview } from "@/components/nebula/CronPreview";
 import { GlassCard } from "@/components/nebula/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ export function SchedulesPage(): JSX.Element {
     Record<string, { cron: string; timezone: string; enabled: boolean }>
   >({});
   const [retentionDraft, setRetentionDraft] = useState<RetentionPolicy | null>(null);
+  const [cronValidity, setCronValidity] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (retention.data) setRetentionDraft(retention.data);
@@ -144,6 +146,15 @@ export function SchedulesPage(): JSX.Element {
                 />
               </div>
             </div>
+            <div className="mt-2">
+              <CronPreview
+                cron={scheduleDrafts[row.mode]?.cron ?? row.cron}
+                timezone={scheduleDrafts[row.mode]?.timezone ?? row.timezone}
+                onValidityChange={(valid) =>
+                  setCronValidity((prev) => (prev[row.mode] === valid ? prev : { ...prev, [row.mode]: valid }))
+                }
+              />
+            </div>
             <div className="mt-3 flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -163,7 +174,13 @@ export function SchedulesPage(): JSX.Element {
                   enabled
                 </Label>
               </div>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void saveSchedule(row.mode)}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={cronValidity[row.mode] === false}
+                onClick={() => void saveSchedule(row.mode)}
+              >
                 Save
               </Button>
             </div>

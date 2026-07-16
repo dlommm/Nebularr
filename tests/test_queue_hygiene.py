@@ -37,3 +37,30 @@ def test_prune_keep_days_zero_keeps_webhook_rows() -> None:
     session = RecordingSession()
     prune_old_rows(session, keep_days=0)
     assert not any("delete from app.webhook_queue" in sql for sql, _ in session.statements)
+
+
+def test_mark_webhook_failed_honors_policy_kwargs() -> None:
+    from arrsync.services.repository import mark_webhook_failed
+
+    session = RecordingSession()
+    # attempts=2 with max_attempts=2 -> dead_letter; delay = 2*60 capped at 90
+    mark_webhook_failed(
+        session,  # type: ignore[arg-type]
+        queue_id=9,
+        attempts=2,
+        error_message="boom",
+        max_attempts=2,
+        backoff_base_seconds=60,
+        backoff_cap_seconds=90,
+    )
+    sql, params = session.statements[0]
+    assert params is not None
+    assert params["status"] == "dead_letter"
+    assert params["delay_seconds"] == 90
+
+    session2 = RecordingSession()
+    mark_webhook_failed(session2, queue_id=9, attempts=1, error_message="x")  # type: ignore[arg-type]
+    _, params2 = session2.statements[0]
+    assert params2 is not None
+    assert params2["status"] == "retrying"
+    assert params2["delay_seconds"] == 30

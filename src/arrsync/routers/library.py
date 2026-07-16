@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from arrsync.routers.shared import (
     EXPORT_ROW_CAP,
     clamp_limit,
     clamp_offset,
-    csv_response,
+    csv_stream_response,
     normalize_sort,
     paged_response,
     search_params,
@@ -21,9 +23,39 @@ from arrsync.routers.shared import (
 
 log = logging.getLogger(__name__)
 
+# Per-chunk page size for streamed CSV exports; must stay inside every
+# _query_* clamp (shows: 2000, episodes/movies: 5000).
+EXPORT_CHUNK_SIZE = 2000
+
 
 def build_library_router(app_state: Any) -> APIRouter:
     router = APIRouter()
+
+    def _iter_query_chunks(
+        query_fn: Callable[..., list[dict[str, Any]] | dict[str, Any]],
+        *,
+        row_cap: int = EXPORT_ROW_CAP,
+        **params: Any,
+    ) -> Iterator[dict[str, Any]]:
+        """Chunked-offset row iterator for streamed exports.
+
+        Each chunk opens its own short session (inside query_fn) and every
+        ORDER BY carries a deterministic source_id tiebreaker, so offset
+        pagination is stable. Consistency across chunks under concurrent
+        writes is best-effort — same as one big query at a different moment.
+        """
+        yielded = 0
+        offset = 0
+        while yielded < row_cap:
+            chunk_limit = min(EXPORT_CHUNK_SIZE, row_cap - yielded)
+            rows = query_fn(limit=chunk_limit, offset=offset, paged=False, **params)
+            assert isinstance(rows, list)
+            for row in rows:
+                yield row
+                yielded += 1
+            if len(rows) < chunk_limit:
+                return
+            offset += len(rows)
 
     def _query_shows(
         search: str,
@@ -427,7 +459,9 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         paged: bool = False,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        return _query_shows(
+        # Synchronous SQLAlchemy work stays off the event loop (cf. reporting.py).
+        return await asyncio.to_thread(
+            _query_shows,
             search=search,
             limit=limit,
             offset=offset,
@@ -438,7 +472,9 @@ def build_library_router(app_state: Any) -> APIRouter:
 
     @router.get("/api/ui/shows/{series_id}/seasons")
     async def show_seasons(series_id: int, instance_name: str) -> list[dict[str, Any]]:
-        return _query_show_seasons(series_id=series_id, instance_name=instance_name)
+        return await asyncio.to_thread(
+            _query_show_seasons, series_id=series_id, instance_name=instance_name
+        )
 
     @router.get("/api/ui/shows/{series_id}/episodes")
     async def show_episodes(
@@ -451,7 +487,8 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         paged: bool = False,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        return _query_show_episodes(
+        return await asyncio.to_thread(
+            _query_show_episodes,
             series_id=series_id,
             instance_name=instance_name,
             season_number=season_number,
@@ -471,22 +508,20 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_by: str = "season_number",
         sort_dir: str = "asc",
         export_all: bool = False,
-    ) -> PlainTextResponse:
-        query_limit = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
-        rows = _query_show_episodes(
-            series_id=series_id,
-            instance_name=instance_name,
-            season_number=season_number,
-            limit=query_limit,
-            offset=0,
-            sort_by=sort_by,
-            sort_dir=sort_dir,
-            paged=False,
-        )
+    ) -> StreamingResponse:
+        row_cap = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
         season_part = "all" if season_number is None else str(season_number)
-        return csv_response(
+        return csv_stream_response(
             filename=f"show-{series_id}-{instance_name}-season-{season_part}-episodes.csv",
-            rows=rows if isinstance(rows, list) else rows["items"],
+            rows_iter=_iter_query_chunks(
+                _query_show_episodes,
+                row_cap=row_cap,
+                series_id=series_id,
+                instance_name=instance_name,
+                season_number=season_number,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+            ),
         )
 
     @router.get("/api/ui/episodes")
@@ -499,7 +534,8 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         paged: bool = False,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        return _query_all_episodes(
+        return await asyncio.to_thread(
+            _query_all_episodes,
             search=search,
             instance_name=instance_name,
             limit=limit,
@@ -517,19 +553,20 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_by: str = "series_title",
         sort_dir: str = "asc",
         export_all: bool = False,
-    ) -> PlainTextResponse:
-        query_limit = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
-        rows = _query_all_episodes(
-            search=search,
-            instance_name=instance_name,
-            limit=query_limit,
-            offset=0,
-            sort_by=sort_by,
-            sort_dir=sort_dir,
-            paged=False,
-        )
+    ) -> StreamingResponse:
+        row_cap = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
         instance_part = instance_name.strip() or "all"
-        return csv_response(filename=f"episodes-{instance_part}.csv", rows=rows if isinstance(rows, list) else rows["items"])
+        return csv_stream_response(
+            filename=f"episodes-{instance_part}.csv",
+            rows_iter=_iter_query_chunks(
+                _query_all_episodes,
+                row_cap=row_cap,
+                search=search,
+                instance_name=instance_name,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+            ),
+        )
 
     @router.get("/api/ui/movies")
     async def movies(
@@ -541,7 +578,8 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         paged: bool = False,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        return _query_movies(
+        return await asyncio.to_thread(
+            _query_movies,
             search=search,
             instance_name=instance_name,
             limit=limit,
@@ -559,18 +597,19 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_by: str = "title",
         sort_dir: str = "asc",
         export_all: bool = False,
-    ) -> PlainTextResponse:
-        query_limit = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
-        rows = _query_movies(
-            search=search,
-            instance_name=instance_name,
-            limit=query_limit,
-            offset=0,
-            sort_by=sort_by,
-            sort_dir=sort_dir,
-            paged=False,
-        )
+    ) -> StreamingResponse:
+        row_cap = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
         instance_part = instance_name.strip() or "all"
-        return csv_response(filename=f"movies-{instance_part}.csv", rows=rows if isinstance(rows, list) else rows["items"])
+        return csv_stream_response(
+            filename=f"movies-{instance_part}.csv",
+            rows_iter=_iter_query_chunks(
+                _query_movies,
+                row_cap=row_cap,
+                search=search,
+                instance_name=instance_name,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+            ),
+        )
 
     return router

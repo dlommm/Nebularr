@@ -68,13 +68,13 @@ flowchart TB
 | --- | --- | --- |
 | Observability | `GET /healthz`, `GET /metrics`, `GET /api/status` | Liveness, Prometheus text, derived health |
 | Setup | `GET/POST /api/setup/*` | First-run wizard, skip, initial sync |
-| Configuration | `GET/PUT /api/config/integrations/{source}`, `/api/config/webhook`, `/api/config/alert-webhooks`, `/api/config/schedules` | Integrations, webhook verifier, alert targets, cron |
+| Configuration | `GET/PUT /api/config/integrations/{source}`, `POST .../test`, `/api/config/webhook`, `/api/config/alert-webhooks` (+ `POST .../test`), `/api/config/schedules` (+ `POST .../validate`), `/api/config/retention`, `/api/config/queue`, `/api/config/saved-views` | Integrations (+ connection test), webhook verifier, alert targets (+ per-channel test), cron (+ validation/next-run preview), retention & queue policy, saved views |
 | Sync control | `POST /api/sync/<source>/<mode>` — sources: `sonarr`, `radarr`; modes: `full`, `incremental`, `reconcile` | Manual or scripted runs |
 | Webhook ingress | `POST /hooks/sonarr`, `POST /hooks/radarr`, `POST /hooks/<source>/<instance>` | Signed payloads from Arr into the queue (per-instance form for multi-instance setups) |
-| Queue admin | `POST /api/webhooks/replay-dead-letter/<source>`, `POST /api/webhooks/requeue/<job_id>` | Recover failed webhook jobs |
-| Library UI | `GET /api/ui/*` (shows, episodes, movies, runs, queue, …) | Paged JSON + CSV exports for the SPA |
+| Queue admin | `POST /api/webhooks/replay-dead-letter/<source>`, `POST /api/webhooks/requeue/<job_id>`, `POST /api/webhooks/requeue-bulk` | Recover failed webhook jobs (single, per-source, or bulk by status) |
+| Library UI | `GET /api/ui/*` (shows, episodes, movies, runs, queue, …) | Paged JSON + streamed CSV exports for the SPA |
 | Reporting | `GET /api/reporting/dashboards`, `.../{key}`, CSV under panels | Whitelist-only SQL; no ad-hoc SQL from browser |
-| Danger zone | `POST /api/admin/reset-data` | Wipe app data (use with care) |
+| Danger zone | `POST /api/admin/reset-data` | Wipe library/sync/MAL data (auth, webhook secret, and alert/policy settings survive) |
 
 Static assets: `GET /`, `/setup`, `/assets/...`, and the SPA catch-all route for client-side navigation.
 

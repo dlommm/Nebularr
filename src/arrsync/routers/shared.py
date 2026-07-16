@@ -6,12 +6,14 @@ import asyncio
 import csv
 import io
 import json
+import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from arrsync.services.url_guard import UrlPolicyError, assert_url_allowed
 
@@ -111,6 +113,21 @@ def require_egress_allowed(url: str, label: str, policy: str) -> None:
         raise HTTPException(status_code=400, detail=f"{label}: {exc}") from exc
 
 
+def safe_filename(filename: str) -> str:
+    """Keep the download filename header well-formed regardless of query input."""
+    return re.sub(r'[^A-Za-z0-9._-]+', "_", filename)[:120] or "export.csv"
+
+
+def _normalize_csv_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in row.items():
+        if isinstance(value, (list, dict)):
+            normalized[key] = json.dumps(value, default=str)
+        else:
+            normalized[key] = value
+    return normalized
+
+
 def csv_response(filename: str, rows: list[dict[str, Any]]) -> PlainTextResponse:
     output = io.StringIO()
     if rows:
@@ -118,15 +135,36 @@ def csv_response(filename: str, rows: list[dict[str, Any]]) -> PlainTextResponse
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            normalized: dict[str, Any] = {}
-            for key, value in row.items():
-                if isinstance(value, (list, dict)):
-                    normalized[key] = json.dumps(value, default=str)
-                else:
-                    normalized[key] = value
-            writer.writerow(normalized)
+            writer.writerow(_normalize_csv_row(row))
     return PlainTextResponse(
         output.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename(filename)}"'},
+    )
+
+
+def csv_stream_response(filename: str, rows_iter: Iterator[dict[str, Any]]) -> StreamingResponse:
+    """CSV as an incrementally produced stream.
+
+    The encoder is a *sync* generator, so Starlette iterates it in a thread pool
+    — blocking DB work inside `rows_iter` stays off the event loop and the full
+    export is never buffered in memory.
+    """
+
+    def _encode() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer: csv.DictWriter[str] | None = None
+        for row in rows_iter:
+            if writer is None:
+                writer = csv.DictWriter(buffer, fieldnames=list(row.keys()))
+                writer.writeheader()
+            writer.writerow(_normalize_csv_row(row))
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return StreamingResponse(
+        _encode(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename(filename)}"'},
     )

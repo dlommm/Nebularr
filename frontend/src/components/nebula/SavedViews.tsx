@@ -1,28 +1,74 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Bookmark, Link2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useLocalStorageState } from "../../hooks";
+import { api } from "../../api";
+import type { SavedViewEntry } from "../../types";
+import { pageKeyFromStorageKey } from "./savedViewsShared";
 
-type SavedView = {
-  name: string;
-  /** URL search string (without leading `?`) captured when the view was saved. */
-  search: string;
-};
+function readLegacyLocalViews(storageKey: string): SavedViewEntry[] {
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (entry): entry is SavedViewEntry =>
+          !!entry && typeof entry === "object" && typeof (entry as SavedViewEntry).name === "string",
+      )
+      .map((entry) => ({ name: entry.name, search: String(entry.search ?? "") }));
+  } catch {
+    return [];
+  }
+}
 
 /**
- * Named snapshots of the current page's URL search params. Because pages keep
- * their filter state in the URL, applying a view is just setting the params —
- * and "Copy link" shares the exact same state with anyone.
+ * Named snapshots of the current page's URL search params, persisted server-side
+ * (app settings) so they survive browser changes; pre-2.6 localStorage views are
+ * migrated on first load. Applying a view is just setting the params — and
+ * "Copy link" shares the exact same state with anyone.
  */
 export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element {
-  const [views, setViews] = useLocalStorageState<SavedView[]>(storageKey, []);
+  const pageKey = pageKeyFromStorageKey(storageKey);
+  const queryClient = useQueryClient();
+  const serverViews = useQuery({ queryKey: ["saved-views"], queryFn: api.savedViews, staleTime: 30_000 });
   const [searchParams, setSearchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const migratedRef = useRef(false);
+
+  const views: SavedViewEntry[] = serverViews.data?.views?.[pageKey] ?? readLegacyLocalViews(storageKey);
+
+  const persist = useMutation({
+    mutationFn: (next: SavedViewEntry[]) => api.saveSavedViews(pageKey, next),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["saved-views"] }),
+    onError: (_err, next) => {
+      // Server unreachable: keep the views usable locally and say so once.
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(next));
+      } catch {
+        // storage full/blocked — nothing else to do
+      }
+      toast.error("Could not sync views to the server; kept locally");
+    },
+  });
+
+  // One-time migration: pre-2.6 localStorage views move to the server.
+  useEffect(() => {
+    if (migratedRef.current || !serverViews.data) return;
+    const serverHas = (serverViews.data.views?.[pageKey] ?? []).length > 0;
+    const legacy = readLegacyLocalViews(storageKey);
+    if (!serverHas && legacy.length > 0) {
+      migratedRef.current = true;
+      persist.mutate(legacy);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverViews.data, pageKey, storageKey]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -37,9 +83,17 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
     const name = draftName.trim();
     if (!name) return;
     const search = searchParams.toString();
-    setViews([...views.filter((view) => view.name !== name), { name, search }]);
+    persist.mutate([...views.filter((view) => view.name !== name), { name, search }]);
     setDraftName("");
     toast.success(`Saved view "${name}"`);
+  };
+
+  const applyView = (view: SavedViewEntry): void => {
+    // A view saved at default state has an empty search string; the pages'
+    // URL→state effects skip empty URLs (mount guard), so force a run with a
+    // sentinel — the canonicalization effect strips it right after.
+    setSearchParams(new URLSearchParams(view.search || "reset=1"), { replace: false });
+    setOpen(false);
   };
 
   const copyLink = async (): Promise<void> => {
@@ -71,10 +125,7 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
                   <button
                     type="button"
                     className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted"
-                    onClick={() => {
-                      setSearchParams(new URLSearchParams(view.search), { replace: false });
-                      setOpen(false);
-                    }}
+                    onClick={() => applyView(view)}
                   >
                     {view.name}
                   </button>
@@ -82,7 +133,7 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
                     type="button"
                     aria-label={`Delete saved view ${view.name}`}
                     className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-critical"
-                    onClick={() => setViews(views.filter((entry) => entry.name !== view.name))}
+                    onClick={() => persist.mutate(views.filter((entry) => entry.name !== view.name))}
                   >
                     <Trash2 className="size-3.5" aria-hidden />
                   </button>

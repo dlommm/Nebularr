@@ -28,6 +28,7 @@ import { useActionError } from "../hooks/useActionError";
 import { ServerEventsContext, pollInterval, useServerEvents } from "../hooks/useServerEvents";
 import { useLocalStorageState } from "../hooks";
 import { LegacyViewRedirect } from "./LegacyViewRedirect";
+import { buildLibrarySearchParams } from "../pages/libraryUrlState";
 import { pathTitle, PATHS } from "../routes/paths";
 import { DiagnosticsPanel } from "../components/ui";
 import { SecurityBanner } from "../components/nebula/SecurityBanner";
@@ -125,8 +126,9 @@ export function AppLayout(): JSX.Element {
   const onHeaderSearch = (e: { preventDefault: () => void }): void => {
     e.preventDefault();
     const q = headerSearch.trim();
-    // URL-driven so the Library page picks it up even when already mounted.
-    navigate(q ? `${PATHS.library}?q=${encodeURIComponent(q)}&offset=0` : PATHS.library);
+    // URL-driven so the Library page picks it up even when already mounted;
+    // carries the persisted mode/filters so searching never resets the view.
+    navigate(q ? `${PATHS.library}?${buildLibrarySearchParams(q).toString()}` : PATHS.library);
     setHeaderSearch("");
   };
 

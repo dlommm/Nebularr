@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { serializeLibraryState } from "./libraryUrlState";
 
 const defaults = {
@@ -37,5 +37,35 @@ describe("serializeLibraryState", () => {
     expect(drill.get("show")).toBe("42|default|Some | Show");
     const movies = serializeLibraryState("movies", defaults, show);
     expect(movies.get("show")).toBeNull();
+  });
+});
+
+import { buildLibrarySearchParams } from "./libraryUrlState";
+
+describe("buildLibrarySearchParams", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it("preserves persisted mode and filters while setting the query and resetting offset", () => {
+    window.localStorage.setItem("nebularr.library.mode", JSON.stringify("movies"));
+    window.localStorage.setItem(
+      "nebularr.library.filters",
+      JSON.stringify({ instance: "main", limit: 100, offset: 40, sortBy: "year", sortDir: "desc" }),
+    );
+    const params = buildLibrarySearchParams("dune");
+    expect(params.get("mode")).toBe("movies");
+    expect(params.get("q")).toBe("dune");
+    expect(params.get("inst")).toBe("main");
+    expect(params.get("limit")).toBe("100");
+    expect(params.get("sort")).toBe("year");
+    expect(params.get("dir")).toBe("desc");
+    expect(params.get("offset")).toBeNull(); // offset 0 is the default, omitted
+  });
+
+  it("falls back to defaults on corrupt localStorage", () => {
+    window.localStorage.setItem("nebularr.library.mode", "{not json");
+    window.localStorage.setItem("nebularr.library.filters", "also broken");
+    const params = buildLibrarySearchParams("hi");
+    expect(params.get("mode")).toBeNull(); // drilldown default
+    expect(params.get("q")).toBe("hi");
   });
 });

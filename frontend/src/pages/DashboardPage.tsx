@@ -13,6 +13,7 @@ import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
 import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
 import { MetricCard } from "../components/nebula/MetricCard";
 import { EmptyState } from "../components/nebula/EmptyState";
+import { OnboardingChecklist } from "../components/nebula/OnboardingChecklist";
 import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,8 @@ export function DashboardPage(): JSX.Element {
           </Button>
         </div>
       </div>
+
+      <OnboardingChecklist />
 
       <WorkStatusPanel title="Sync &amp; pipeline status" />
 

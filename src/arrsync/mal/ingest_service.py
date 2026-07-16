@@ -49,13 +49,17 @@ class MalIngestService:
         self.jikan_client = JikanClient(settings)
 
     async def _heartbeat_lock_loop(self, lock_name: str, owner_id: str) -> None:
+        def _beat() -> None:
+            with session_scope(self.session_factory) as session:
+                repo.heartbeat_job_lock(
+                    session, lock_name=lock_name, owner_id=owner_id, lease_seconds=3600
+                )
+
         while True:
             await asyncio.sleep(self.LOCK_HEARTBEAT_INTERVAL_SECONDS)
             try:
-                with session_scope(self.session_factory) as session:
-                    repo.heartbeat_job_lock(
-                        session, lock_name=lock_name, owner_id=owner_id, lease_seconds=3600
-                    )
+                # Synchronous DB work stays off the event loop.
+                await asyncio.to_thread(_beat)
             except Exception:
                 # A missed renewal must not kill the ingest; the next tick retries.
                 log.warning("mal ingest lock heartbeat failed", exc_info=True)
@@ -206,10 +210,15 @@ class MalIngestService:
 
             with session_scope(self.session_factory) as session:
                 mal_repo.finish_mal_job_run(session, run_id, "success", details, None)
-        except Exception as exc:
-            log.exception("mal ingest failed")
+        except BaseException as exc:
+            # BaseException so shutdown cancellation still finalizes the job row
+            # instead of leaving it 'running'.
+            if isinstance(exc, Exception):
+                log.exception("mal ingest failed")
             with session_scope(self.session_factory) as session:
-                mal_repo.finish_mal_job_run(session, run_id, "failed", details, str(exc))
+                mal_repo.finish_mal_job_run(
+                    session, run_id, "failed", details, str(exc) or type(exc).__name__
+                )
             raise
         finally:
             heartbeat_task.cancel()

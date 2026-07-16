@@ -477,3 +477,21 @@ export type ReportingDashboard = {
   generated_at: string;
   panels: ReportingPanel[];
 };
+
+export type QueuePolicy = {
+  batch_size: number;
+  max_attempts: number;
+  backoff_base_seconds: number;
+  backoff_cap_seconds: number;
+};
+
+export type SavedViewEntry = {
+  name: string;
+  search: string;
+};
+
+export type AlertTestResult = {
+  target: string;
+  ok: boolean;
+  error: string | null;
+};

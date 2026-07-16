@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
@@ -81,6 +81,9 @@ export function SetupPage(): JSX.Element {
   });
 
   const engineReady = Boolean(setupStatus.data?.database?.engine_ready);
+  // Populate the form only once per server payload identity, so navigating
+  // between steps never reverts edits the user just made (B13).
+  const populatedForRef = useRef<unknown>(null);
 
   useEffect(() => {
     if (!setupStatus.data) return;
@@ -88,6 +91,14 @@ export function SetupPage(): JSX.Element {
     if (!ready && wizardStep > 0) {
       setWizardStep(0);
     }
+    if (setupStatus.data.completed && setupStatus.data.database?.engine_ready) {
+      navigate(PATHS.home, { replace: true });
+    }
+  }, [setupStatus.data, navigate, wizardStep]);
+
+  useEffect(() => {
+    if (!setupStatus.data || populatedForRef.current === setupStatus.data) return;
+    populatedForRef.current = setupStatus.data;
     setWizardForm((prev) => ({
       ...prev,
       sonarrBaseUrl: setupStatus.data?.integrations?.sonarr?.base_url ?? prev.sonarrBaseUrl,
@@ -96,10 +107,7 @@ export function SetupPage(): JSX.Element {
       reconcileCron: setupStatus.data?.schedules.find((s) => s.mode === "reconcile")?.cron ?? prev.reconcileCron,
       timezone: setupStatus.data?.schedules.find((s) => s.mode === "incremental")?.timezone ?? prev.timezone,
     }));
-    if (setupStatus.data.completed && setupStatus.data.database?.engine_ready) {
-      navigate(PATHS.home, { replace: true });
-    }
-  }, [setupStatus.data, navigate, wizardStep]);
+  }, [setupStatus.data]);
 
   const submitWizard = async (): Promise<void> => {
     setWizardBusy(true);

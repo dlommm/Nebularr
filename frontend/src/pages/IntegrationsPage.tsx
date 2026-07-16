@@ -53,6 +53,11 @@ export function IntegrationsPage(): JSX.Element {
   const authStatus = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus });
 
   const [integrationDrafts, setIntegrationDrafts] = useState<Record<string, IntegrationDraft>>({});
+  const [integrationTests, setIntegrationTests] = useState<
+    Record<string, { status: "testing" | "ok" | "error"; detail?: string }>
+  >({});
+  const [alertTestResults, setAlertTestResults] = useState<Record<string, { ok: boolean; error: string | null }>>({});
+  const [alertTesting, setAlertTesting] = useState(false);
   const [webhookSecretInput, setWebhookSecretInput] = useState("");
   const [authPasswordInput, setAuthPasswordInput] = useState("");
   const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
@@ -183,6 +188,50 @@ export function IntegrationsPage(): JSX.Element {
       },
       `save integration ${source}/${name}`,
     );
+  };
+
+  const testIntegration = async (source: string, name: string): Promise<void> => {
+    const key = `${source}:${name}`;
+    const draft = integrationDrafts[key];
+    setIntegrationTests((prev) => ({ ...prev, [key]: { status: "testing" } }));
+    try {
+      const result = await api.testIntegration(source, {
+        name,
+        // Send the edited values if present; blank falls back to stored server-side.
+        base_url: draft?.base_url || undefined,
+        api_key: draft?.api_key || undefined,
+      });
+      setIntegrationTests((prev) => ({
+        ...prev,
+        [key]: result.ok
+          ? { status: "ok", detail: `${result.app_name ?? source} ${result.version ?? ""}`.trim() }
+          : { status: "error", detail: result.error ?? "connection failed" },
+      }));
+    } catch (err) {
+      setIntegrationTests((prev) => ({
+        ...prev,
+        [key]: { status: "error", detail: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  };
+
+  const runAlertTest = async (): Promise<void> => {
+    setAlertTesting(true);
+    try {
+      const response = await api.sendAlertWebhookTest();
+      const byTarget: Record<string, { ok: boolean; error: string | null }> = {};
+      for (const result of response.results) {
+        byTarget[result.target] = { ok: result.ok, error: result.error };
+      }
+      setAlertTestResults(byTarget);
+      if (response.results.length === 0) {
+        setError("No alert channels are configured", "send test notification");
+      }
+    } catch (err) {
+      setError(err, "send test notification");
+    } finally {
+      setAlertTesting(false);
+    }
   };
 
   const savePassword = async (): Promise<void> => {
@@ -498,6 +547,25 @@ export function IntegrationsPage(): JSX.Element {
                 <Button type="button" variant="secondary" size="sm" onClick={() => void saveIntegration(row.source, row.name)}>
                   Save
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={integrationTests[key]?.status === "testing"}
+                  onClick={() => void testIntegration(row.source, row.name)}
+                >
+                  {integrationTests[key]?.status === "testing" ? "Testing…" : "Test connection"}
+                </Button>
+                {integrationTests[key] && integrationTests[key].status !== "testing" ? (
+                  <span
+                    className={`text-xs ${integrationTests[key].status === "ok" ? "text-ok" : "text-critical"}`}
+                    title={integrationTests[key].detail}
+                  >
+                    {integrationTests[key].status === "ok"
+                      ? `✓ ${integrationTests[key].detail}`
+                      : `✗ ${integrationTests[key].detail}`}
+                  </span>
+                ) : null}
               </div>
             </div>
           );
@@ -906,15 +974,28 @@ export function IntegrationsPage(): JSX.Element {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() =>
-              void runAction(async () => {
-                await api.sendAlertWebhookTest();
-              }, "send test notification")
-            }
+            disabled={alertTesting}
+            onClick={() => void runAlertTest()}
           >
-            Send test notification
+            {alertTesting ? "Testing…" : "Test all channels"}
           </Button>
         </div>
+        {Object.keys(alertTestResults).length > 0 ? (
+          <ul className="mt-2 space-y-1 text-xs">
+            {Object.entries(alertTestResults).map(([target, result]) => (
+              <li
+                key={target}
+                className={`flex items-start gap-1.5 ${result.ok ? "text-ok" : "text-critical"}`}
+              >
+                <span aria-hidden>{result.ok ? "✓" : "✗"}</span>
+                <span className="min-w-0 break-all">
+                  {target}
+                  {result.error ? ` — ${result.error}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </SectionCard>
     </div>
   );

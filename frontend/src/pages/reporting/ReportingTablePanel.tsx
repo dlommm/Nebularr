@@ -13,6 +13,7 @@ import type { ReportingPanel } from "../../types";
 import { MultiSelectFilter } from "../../components/nebula/MultiSelectFilter";
 import {
   MAX_UNLIMITED_ROWS,
+  downloadCsv,
   rowMatchesFilters,
   rowPassesSeasonFilter,
   stringifyCellValue,
@@ -160,19 +161,29 @@ function ReportingTablePanelImpl({
             type="button"
             variant="secondary"
             size="sm"
-            title="Download CSV"
+            title="Download the rows exactly as filtered in this table"
+            disabled={filteredRows.length === 0}
+            onClick={() => downloadCsv(`${panelStateKey.replace(/[^a-z0-9-]+/gi, "_")}-view.csv`, filteredRows)}
+          >
+            Export view
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            title="Download the complete dataset for this panel (server-side, unfiltered)"
             onClick={() => {
               window.location.href = exportUrl;
             }}
           >
-            Export CSV
+            Export CSV (full)
           </Button>
         </div>
       </div>
       {capped ? (
         <div className="mb-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-          Showing the first {MAX_UNLIMITED_ROWS.toLocaleString()} of {total.toLocaleString()} rows — use Export CSV for
-          the full dataset.
+          Showing the first {MAX_UNLIMITED_ROWS.toLocaleString()} of {total.toLocaleString()} rows — use “Export CSV
+          (full)” for the complete dataset.
         </div>
       ) : null}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">

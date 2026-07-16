@@ -62,14 +62,25 @@ class FakeMetrics:
 
 
 class FakeAlertNotifier:
+    def __init__(self) -> None:
+        self.test_results: list[dict[str, Any]] = []  # nothing configured by default
+        self.single_target_calls: list[str] = []
+
     async def configure(self, **_kwargs: Any) -> None:
         return None
 
     async def maybe_send_health_alert(self, _payload: dict[str, Any]) -> bool:
         return False
 
-    async def send_test_message(self) -> bool:
-        return False  # nothing configured in these tests
+    async def send_test_message(self) -> list[dict[str, Any]]:
+        return list(self.test_results)
+
+    async def send_test_to_target(self, target: str) -> dict[str, Any]:
+        self.single_target_calls.append(target)
+        for result in self.test_results:
+            if result["target"] == target:
+                return result
+        return {"target": target, "ok": False, "error": "not a configured webhook URL"}
 
 
 class FakeAppState:
@@ -86,9 +97,9 @@ class FakeAppState:
         yield self._session
 
 
-def _build_client() -> TestClient:
+def _build_client(state: FakeAppState | None = None) -> TestClient:
     app = FastAPI()
-    app.include_router(build_router(FakeAppState()))
+    app.include_router(build_router(state or FakeAppState()))
     return TestClient(app)
 
 
@@ -144,3 +155,37 @@ def test_alert_webhook_test_route_reports_failure_when_unconfigured() -> None:
     client = _build_client()
     response = client.post("/api/config/alert-webhooks/test")
     assert response.status_code == 400
+
+
+def test_alert_webhook_test_route_returns_per_target_results() -> None:
+    state = FakeAppState()
+    state.alert_notifier.test_results = [
+        {"target": "https://a.example/hook", "ok": True, "error": None},
+        {"target": "https://b.example/hook", "ok": False, "error": "timeout"},
+    ]
+    client = _build_client(state)
+    response = client.post("/api/config/alert-webhooks/test")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"  # at least one channel delivered
+    assert len(body["results"]) == 2
+    assert body["results"][1]["error"] == "timeout"
+
+
+def test_alert_webhook_test_route_targets_single_channel() -> None:
+    state = FakeAppState()
+    state.alert_notifier.test_results = [
+        {"target": "https://a.example/hook", "ok": True, "error": None},
+    ]
+    client = _build_client(state)
+    response = client.post(
+        "/api/config/alert-webhooks/test", json={"target": "https://a.example/hook"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"] == [{"target": "https://a.example/hook", "ok": True, "error": None}]
+    assert state.alert_notifier.single_target_calls == ["https://a.example/hook"]
+
+    unknown = client.post("/api/config/alert-webhooks/test", json={"target": "https://x.example"})
+    assert unknown.status_code == 200
+    assert unknown.json()["status"] == "failed"
