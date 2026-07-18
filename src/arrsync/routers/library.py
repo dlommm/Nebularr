@@ -517,7 +517,7 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> StreamingResponse:
-        row_cap = EXPORT_ROW_CAP if export_all else min(clamp_limit(limit, default=EXPORT_ROW_CAP), EXPORT_ROW_CAP)
+        row_cap = EXPORT_ROW_CAP if export_all else clamp_limit(limit, default=EXPORT_ROW_CAP, maximum=EXPORT_ROW_CAP)
         season_part = "all" if season_number is None else str(season_number)
         return csv_stream_response(
             filename=f"show-{series_id}-{instance_name}-season-{season_part}-episodes.csv",
@@ -562,7 +562,7 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> StreamingResponse:
-        row_cap = EXPORT_ROW_CAP if export_all else min(clamp_limit(limit, default=EXPORT_ROW_CAP), EXPORT_ROW_CAP)
+        row_cap = EXPORT_ROW_CAP if export_all else clamp_limit(limit, default=EXPORT_ROW_CAP, maximum=EXPORT_ROW_CAP)
         instance_part = instance_name.strip() or "all"
         return csv_stream_response(
             filename=f"episodes-{instance_part}.csv",
@@ -606,7 +606,7 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> StreamingResponse:
-        row_cap = EXPORT_ROW_CAP if export_all else min(clamp_limit(limit, default=EXPORT_ROW_CAP), EXPORT_ROW_CAP)
+        row_cap = EXPORT_ROW_CAP if export_all else clamp_limit(limit, default=EXPORT_ROW_CAP, maximum=EXPORT_ROW_CAP)
         instance_part = instance_name.strip() or "all"
         return csv_stream_response(
             filename=f"movies-{instance_part}.csv",

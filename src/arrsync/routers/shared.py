@@ -60,10 +60,18 @@ async def run_db(app_state: Any, fn: Any) -> Any:
     return await asyncio.to_thread(_call)
 
 
-def clamp_limit(limit: int, default: int = 200, max_limit: int = 2000) -> int:
+def clamp_limit(limit: int, default: int = 200, max_limit: int = 2000, maximum: int | None = None) -> int:
+    """limit <= 0 -> default; otherwise capped at maximum (falls back to max_limit).
+
+    ``maximum`` is an additive alias for ``max_limit`` (kept for call sites that read
+    more naturally as ``clamp_limit(x, default=N, maximum=N)`` — a single-ceiling
+    clamp); it does not replace ``max_limit``, which callers still pass positionally
+    or by keyword everywhere else in the codebase.
+    """
+    ceiling = maximum if maximum is not None else max_limit
     if limit <= 0:
         return default
-    return min(limit, max_limit)
+    return min(limit, ceiling)
 
 
 def clamp_offset(offset: int) -> int:
