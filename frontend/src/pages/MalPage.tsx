@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CheckCircle2, Clapperboard, Link2, ListChecks, Loader, Tags } from "lucide-react";
 import { api } from "../api";
@@ -7,11 +7,13 @@ import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
 import { pollInterval, useServerEventsStatus } from "../hooks/useServerEvents";
+import { queryKeys } from "../lib/queryKeys";
 import { StatusPill } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
 import { MetricCard } from "../components/nebula/MetricCard";
 import { QueryErrorNotice } from "../components/nebula/QueryErrorNotice";
+import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { MalJobRunRow } from "../types";
@@ -44,17 +46,19 @@ export function MalPage(): JSX.Element {
   const { requestConfirm, confirmDialog } = useConfirmDialog();
   const { connected: sseConnected } = useServerEventsStatus();
 
-  const malConfig = useQuery({ queryKey: ["mal-config"], queryFn: api.malConfig });
+  const malConfig = useQuery({ queryKey: queryKeys.malConfig, queryFn: api.malConfig });
   const overview = useQuery({
-    queryKey: ["mal-overview"],
+    queryKey: queryKeys.malOverview,
     queryFn: () => api.malOverview(200),
     refetchInterval: pollInterval(sseConnected, 30_000, 60_000),
+    placeholderData: keepPreviousData,
   });
   const [jobTypeFilter, setJobTypeFilter] = useState<JobTypeFilter>("all");
   const jobRuns = useQuery({
-    queryKey: ["mal-job-runs", jobTypeFilter],
+    queryKey: queryKeys.malJobRuns(jobTypeFilter),
     queryFn: () => api.malJobRuns(jobTypeFilter, 50),
     refetchInterval: pollInterval(sseConnected, 30_000, 60_000),
+    placeholderData: keepPreviousData,
   });
 
   const [malPipelineResult, setMalPipelineResult] = useState<{ label: string; details: Record<string, unknown> } | null>(
@@ -65,23 +69,41 @@ export function MalPage(): JSX.Element {
   const [malBatchSize, setMalBatchSize] = useState(200);
   const [malImportAll, setMalImportAll] = useState(false);
 
+  // Populate the batch-size draft from the server default exactly once: a
+  // naive `[malConfig.data?.mal_max_ids_per_run]` effect would resync (and
+  // clobber) whatever the operator just typed on every unrelated refetch
+  // (poll, SSE invalidation, a save on the Integrations page).
+  const malBatchSizePopulatedRef = useRef(false);
   useEffect(() => {
+    if (malBatchSizePopulatedRef.current) return;
     const n = malConfig.data?.mal_max_ids_per_run;
     if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      malBatchSizePopulatedRef.current = true;
       setMalBatchSize(Math.max(1, Math.min(500, n)));
     }
   }, [malConfig.data?.mal_max_ids_per_run]);
 
+  // Pipeline triggers can block for up to ~30 minutes server-side; a shared
+  // busy flag (guarded by a ref so a second click landing before the state
+  // update re-renders can't slip through) disables every trigger button
+  // while any one of them is in flight, instead of letting an impatient
+  // double-click fire the same (or a different) pipeline twice.
+  const malPipelineBusyRef = useRef(false);
+  const [malPipelineBusy, setMalPipelineBusy] = useState(false);
+
   const refreshMalQueries = async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: ["status"] });
-    await queryClient.invalidateQueries({ queryKey: ["mal-overview"] });
-    await queryClient.invalidateQueries({ queryKey: ["mal-job-runs"] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.status });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.malOverview });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.malJobRuns() });
   };
 
   const runMalPipeline = async (
     fn: () => Promise<{ status: string; details?: unknown }>,
     label: string,
   ): Promise<void> => {
+    if (malPipelineBusyRef.current) return;
+    malPipelineBusyRef.current = true;
+    setMalPipelineBusy(true);
     try {
       const r = await fn();
       const details = r.details && typeof r.details === "object" ? (r.details as Record<string, unknown>) : {};
@@ -89,10 +111,16 @@ export function MalPage(): JSX.Element {
       await refreshMalQueries();
     } catch (err) {
       setError(err, label);
+    } finally {
+      malPipelineBusyRef.current = false;
+      setMalPipelineBusy(false);
     }
   };
 
   const runAllMalPipelines = async (): Promise<void> => {
+    if (malPipelineBusyRef.current) return;
+    malPipelineBusyRef.current = true;
+    setMalPipelineBusy(true);
     try {
       const ingestBacklog = await api.triggerMalIngestBacklog({
         max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
@@ -116,6 +144,9 @@ export function MalPage(): JSX.Element {
       await refreshMalQueries();
     } catch (err) {
       setError(err, "MAL run all");
+    } finally {
+      malPipelineBusyRef.current = false;
+      setMalPipelineBusy(false);
     }
   };
 
@@ -239,6 +270,7 @@ export function MalPage(): JSX.Element {
           <div className="flex flex-wrap gap-2">
             <Button
               variant="secondary"
+              disabled={malPipelineBusy}
               onClick={() =>
                 void runMalPipeline(
                   () => api.triggerMalIngest({ max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)) }),
@@ -250,6 +282,7 @@ export function MalPage(): JSX.Element {
             </Button>
             <Button
               variant="secondary"
+              disabled={malPipelineBusy}
               onClick={() =>
                 void runMalPipeline(
                   () =>
@@ -269,6 +302,7 @@ export function MalPage(): JSX.Element {
             </Button>
             <Button
               variant="default"
+              disabled={malPipelineBusy}
               onClick={() =>
                 requestConfirm({
                   title: "Import all pending MAL fetches?",
@@ -291,23 +325,38 @@ export function MalPage(): JSX.Element {
             >
               Import all pending
             </Button>
-            <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalMatchRefresh(), "MAL match refresh")}>
+            <Button
+              variant="secondary"
+              disabled={malPipelineBusy}
+              onClick={() => void runMalPipeline(() => api.triggerMalMatchRefresh(), "MAL match refresh")}
+            >
               Run match refresh
             </Button>
-            <Button variant="secondary" onClick={() => void runMalPipeline(() => api.triggerMalTagSync(), "MAL tag sync")}>
+            <Button
+              variant="secondary"
+              disabled={malPipelineBusy}
+              onClick={() => void runMalPipeline(() => api.triggerMalTagSync(), "MAL tag sync")}
+            >
               Run tag sync
             </Button>
             <Button
               variant="secondary"
+              disabled={malPipelineBusy}
               title="Reconciles fully-english / partial-english tags from your episode files. First run PUTs every anime series/movie that needs a tag."
               onClick={() => void runMalPipeline(() => api.triggerCoverageTagSync(), "Coverage tag sync")}
             >
               Run coverage tag sync
             </Button>
-            <Button variant="outline" onClick={() => void runAllMalPipelines()}>
+            <Button variant="outline" disabled={malPipelineBusy} onClick={() => void runAllMalPipelines()}>
               Run all MAL pipelines
             </Button>
           </div>
+          {malPipelineBusy ? (
+            <p className="text-xs text-muted-foreground">
+              A MAL pipeline is running — large batches can take up to 30 minutes. Track progress in{" "}
+              <span className="font-medium text-foreground/90">Active work</span> below instead of waiting here.
+            </p>
+          ) : null}
           {malPipelineResult ? (
             <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
               <p className="text-sm font-medium">{malPipelineResult.label}</p>
@@ -333,6 +382,12 @@ export function MalPage(): JSX.Element {
           ) : null}
         </CardContent>
       </GlassCard>
+
+      <WorkStatusPanel
+        title="MAL pipeline status"
+        description="Ingest, matcher, and tag-sync runs triggered from this page (or elsewhere). Large batches can take up to 30 minutes — this panel is the place to watch progress, not the buttons above."
+        dense
+      />
 
       <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
         <GlassCard className="min-w-0">

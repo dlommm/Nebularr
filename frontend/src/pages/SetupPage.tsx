@@ -16,11 +16,17 @@ import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 
 type WizardForm = {
   pgHost: string;
-  pgPort: number;
+  /** Raw text draft, not a parsed number: a naive numeric coercion on every
+      keystroke snaps an emptied field straight back to 5432, making it
+      impossible to type a different port. Parsed only on submit. */
+  pgPort: string;
   pgDatabase: string;
   pgUsername: string;
   pgPassword: string;
   arrappPassword: string;
+  /** X-Setup-Token, required on setup mutations while bootstrap_token_required
+      is true (see SetupStatus); printed to the container log at startup. */
+  setupToken: string;
   sonarrEnabled: boolean;
   sonarrSkip: boolean;
   sonarrBaseUrl: string;
@@ -58,11 +64,12 @@ export function SetupPage(): JSX.Element {
   const [dbNotice, setDbNotice] = useState<string | null>(null);
   const [wizardForm, setWizardForm] = useState<WizardForm>({
     pgHost: "postgres",
-    pgPort: 5432,
+    pgPort: "5432",
     pgDatabase: "arranalytics",
     pgUsername: "arradmin",
     pgPassword: "",
     arrappPassword: "",
+    setupToken: "",
     sonarrEnabled: true,
     sonarrSkip: false,
     sonarrBaseUrl: "",
@@ -109,32 +116,39 @@ export function SetupPage(): JSX.Element {
     }));
   }, [setupStatus.data]);
 
+  // Sent as X-Setup-Token on every mutating setup call; a no-op once the
+  // server stops requiring it (bootstrap_token_required flips false).
+  const setupToken = wizardForm.setupToken.trim() || undefined;
+
   const submitWizard = async (): Promise<void> => {
     setWizardBusy(true);
     try {
-      await api.setupWizard({
-        sonarr: {
-          skip: wizardForm.sonarrSkip,
-          enabled: wizardForm.sonarrEnabled,
-          base_url: wizardForm.sonarrBaseUrl,
-          api_key: wizardForm.sonarrApiKey,
-          webhook_enabled: true,
+      await api.setupWizard(
+        {
+          sonarr: {
+            skip: wizardForm.sonarrSkip,
+            enabled: wizardForm.sonarrEnabled,
+            base_url: wizardForm.sonarrBaseUrl,
+            api_key: wizardForm.sonarrApiKey,
+            webhook_enabled: true,
+          },
+          radarr: {
+            skip: wizardForm.radarrSkip,
+            enabled: wizardForm.radarrEnabled,
+            base_url: wizardForm.radarrBaseUrl,
+            api_key: wizardForm.radarrApiKey,
+            webhook_enabled: true,
+          },
+          webhook_secret: wizardForm.webhookSecret,
+          admin_password: wizardForm.allowNoAuth ? "" : wizardForm.adminPassword,
+          schedules: {
+            incremental: wizardForm.incrementalCron,
+            reconcile: wizardForm.reconcileCron,
+          },
+          timezone: wizardForm.timezone,
         },
-        radarr: {
-          skip: wizardForm.radarrSkip,
-          enabled: wizardForm.radarrEnabled,
-          base_url: wizardForm.radarrBaseUrl,
-          api_key: wizardForm.radarrApiKey,
-          webhook_enabled: true,
-        },
-        webhook_secret: wizardForm.webhookSecret,
-        admin_password: wizardForm.allowNoAuth ? "" : wizardForm.adminPassword,
-        schedules: {
-          incremental: wizardForm.incrementalCron,
-          reconcile: wizardForm.reconcileCron,
-        },
-        timezone: wizardForm.timezone,
-      });
+        setupToken,
+      );
       if (!wizardForm.allowNoAuth && wizardForm.adminPassword) {
         // Sign in with the freshly created password so the redirect lands in the app, not /login.
         await api.authLogin(wizardForm.adminPassword);
@@ -148,7 +162,7 @@ export function SetupPage(): JSX.Element {
           setupSources.push("radarr");
         }
         if (setupSources.length > 0) {
-          await api.setupInitialSync(setupSources);
+          await api.setupInitialSync(setupSources, setupToken);
         }
       }
       await Promise.all([
@@ -169,7 +183,7 @@ export function SetupPage(): JSX.Element {
   const skipWizard = async (): Promise<void> => {
     setWizardBusy(true);
     try {
-      await api.setupSkip();
+      await api.setupSkip(setupToken);
       await queryClient.invalidateQueries({ queryKey: ["setup-status"] });
       navigate(PATHS.home, { replace: true });
     } catch (err) {
@@ -183,14 +197,17 @@ export function SetupPage(): JSX.Element {
     setWizardBusy(true);
     setDbNotice(null);
     try {
-      const res = await api.setupInitializePostgres({
-        host: wizardForm.pgHost.trim(),
-        port: wizardForm.pgPort,
-        database: wizardForm.pgDatabase.trim(),
-        username: wizardForm.pgUsername.trim(),
-        password: wizardForm.pgPassword,
-        arrapp_password: wizardForm.arrappPassword.trim() || undefined,
-      });
+      const res = await api.setupInitializePostgres(
+        {
+          host: wizardForm.pgHost.trim(),
+          port: Number.parseInt(wizardForm.pgPort, 10) || 5432,
+          database: wizardForm.pgDatabase.trim(),
+          username: wizardForm.pgUsername.trim(),
+          password: wizardForm.pgPassword,
+          arrapp_password: wizardForm.arrappPassword.trim() || undefined,
+        },
+        setupToken,
+      );
       setDbNotice(
         res.restart_recommended
           ? "Database initialized. You may restart the container later; the app is already using the new connection."
@@ -246,41 +263,64 @@ export function SetupPage(): JSX.Element {
             </div>
           </div>
         </div>
+        {setupStatus.data?.bootstrap_token_required ? (
+          <div className="space-y-2 rounded-xl border border-warn/40 bg-warn/10 p-4">
+            <Label htmlFor="setup-bootstrap-token" className="text-sm font-medium">
+              Setup token required
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              This server printed a one-time setup token to its startup log ("Setup bootstrap token: …") to stop
+              anyone else on the network from finishing setup before you do. Paste it here — it's required for every
+              action on this page until setup completes.
+            </p>
+            <Input
+              id="setup-bootstrap-token"
+              autoComplete="off"
+              placeholder="Setup token from the container log"
+              value={wizardForm.setupToken}
+              onChange={(event) => setWizardForm({ ...wizardForm, setupToken: event.target.value })}
+            />
+          </div>
+        ) : null}
         <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
           <div className="flex flex-col gap-3 sm:flex-row">
             <Input
+              aria-label="Host"
               placeholder="Host (e.g. postgres)"
               value={wizardForm.pgHost}
               onChange={(event) => setWizardForm({ ...wizardForm, pgHost: event.target.value })}
             />
             <Input
+              aria-label="Port"
               type="number"
               placeholder="Port"
-              value={wizardForm.pgPort || ""}
-              onChange={(event) =>
-                setWizardForm({ ...wizardForm, pgPort: Number.parseInt(event.target.value, 10) || 5432 })
-              }
+              value={wizardForm.pgPort}
+              onChange={(event) => setWizardForm({ ...wizardForm, pgPort: event.target.value })}
             />
           </div>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Input
+              aria-label="Database name"
               placeholder="Database name"
               value={wizardForm.pgDatabase}
               onChange={(event) => setWizardForm({ ...wizardForm, pgDatabase: event.target.value })}
             />
             <Input
+              aria-label="Username"
               placeholder="Username (superuser)"
               value={wizardForm.pgUsername}
               onChange={(event) => setWizardForm({ ...wizardForm, pgUsername: event.target.value })}
             />
           </div>
           <Input
+            aria-label="Password"
             type="password"
             placeholder="Password"
             value={wizardForm.pgPassword}
             onChange={(event) => setWizardForm({ ...wizardForm, pgPassword: event.target.value })}
           />
           <Input
+            aria-label="arrapp role password (optional)"
             type="password"
             placeholder="Optional: arrapp role password (recommended for least privilege)"
             value={wizardForm.arrappPassword}
@@ -326,12 +366,14 @@ export function SetupPage(): JSX.Element {
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
           <Input
+            aria-label="Sonarr base URL"
             disabled={wizardForm.sonarrSkip}
             placeholder="Sonarr base URL"
             value={wizardForm.sonarrBaseUrl}
             onChange={(event) => setWizardForm({ ...wizardForm, sonarrBaseUrl: event.target.value })}
           />
           <Input
+            aria-label="Sonarr API key"
             type="password"
             autoComplete="off"
             disabled={wizardForm.sonarrSkip}
@@ -371,12 +413,14 @@ export function SetupPage(): JSX.Element {
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
           <Input
+            aria-label="Radarr base URL"
             disabled={wizardForm.radarrSkip}
             placeholder="Radarr base URL"
             value={wizardForm.radarrBaseUrl}
             onChange={(event) => setWizardForm({ ...wizardForm, radarrBaseUrl: event.target.value })}
           />
           <Input
+            aria-label="Radarr API key"
             type="password"
             autoComplete="off"
             disabled={wizardForm.radarrSkip}
@@ -393,6 +437,7 @@ export function SetupPage(): JSX.Element {
       <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
         <p className="font-medium">Webhook and Schedule</p>
         <Input
+          aria-label="Webhook shared secret"
           type="password"
           autoComplete="off"
           placeholder="Webhook shared secret (optional now)"
@@ -401,16 +446,19 @@ export function SetupPage(): JSX.Element {
         />
         <div className="flex flex-col gap-3 sm:flex-row">
           <Input
+            aria-label="Incremental cron"
             placeholder="Incremental cron (optional)"
             value={wizardForm.incrementalCron}
             onChange={(event) => setWizardForm({ ...wizardForm, incrementalCron: event.target.value })}
           />
           <Input
+            aria-label="Reconcile cron"
             placeholder="Reconcile cron (optional)"
             value={wizardForm.reconcileCron}
             onChange={(event) => setWizardForm({ ...wizardForm, reconcileCron: event.target.value })}
           />
           <Input
+            aria-label="Timezone"
             placeholder="Timezone (IANA)"
             value={wizardForm.timezone}
             onChange={(event) => setWizardForm({ ...wizardForm, timezone: event.target.value })}
@@ -429,6 +477,7 @@ export function SetupPage(): JSX.Element {
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
           <Input
+            aria-label="Admin password"
             type="password"
             autoComplete="new-password"
             disabled={wizardForm.allowNoAuth}
@@ -437,6 +486,7 @@ export function SetupPage(): JSX.Element {
             onChange={(event) => setWizardForm({ ...wizardForm, adminPassword: event.target.value })}
           />
           <Input
+            aria-label="Confirm admin password"
             type="password"
             autoComplete="new-password"
             disabled={wizardForm.allowNoAuth}
@@ -585,15 +635,22 @@ export function SetupPage(): JSX.Element {
                 Next
               </Button>
             ) : (
-              <>
-                <Button type="button" variant="secondary" disabled={wizardBusy || !engineReady} onClick={() => void skipWizard()}>
-                  Skip for now
-                </Button>
-                <Button type="button" disabled={wizardBusy || !engineReady} onClick={() => void submitWizard()}>
-                  {wizardBusy ? "Saving…" : "Complete setup"}
-                </Button>
-              </>
+              <Button type="button" disabled={wizardBusy || !engineReady} onClick={() => void submitWizard()}>
+                {wizardBusy ? "Saving…" : "Complete setup"}
+              </Button>
             )}
+            {/* Reachable from step 1 onward (not just the last step) — an
+                operator who only needs the database connected shouldn't have
+                to click through every integration step first. */}
+            <Button
+              type="button"
+              variant="secondary"
+              className="ml-auto"
+              disabled={wizardBusy || !engineReady}
+              onClick={() => void skipWizard()}
+            >
+              Skip for now
+            </Button>
           </div>
         </CardContent>
       </GlassCard>

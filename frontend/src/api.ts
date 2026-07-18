@@ -99,6 +99,8 @@ interface RequestOptions {
   timeoutMs?: number;
   /** Caller-supplied abort signal, merged with the request timeout. */
   signal?: AbortSignal;
+  /** Extra headers (e.g. X-Setup-Token during first-run setup). */
+  headers?: Record<string, string>;
 }
 
 async function requestJson<T>(
@@ -110,11 +112,13 @@ async function requestJson<T>(
   const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = opts?.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
+  const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
+  if (body) headers["content-type"] = "application/json";
   let response: Response;
   try {
     response = await fetch(path, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
       signal,
     });
@@ -164,15 +168,26 @@ export const api = {
     revoke_api_token?: boolean;
   }) => requestJson<AuthConfigResponse>("/api/auth/config", "PUT", payload),
   setupStatus: () => requestJson<SetupStatus>("/api/setup/status"),
-  setupSkip: () => requestJson<{ status: string; completed: boolean }>("/api/setup/skip", "POST"),
-  setupInitializePostgres: (payload: {
-    host: string;
-    port: number;
-    database: string;
-    username: string;
-    password: string;
-    arrapp_password?: string;
-  }) => requestJson<{ status: string; restart_recommended: boolean }>("/api/setup/initialize-postgres", "POST", payload),
+  // `setupToken` is only required while `bootstrap_token_required` is true
+  // (see SetupStatus); harmless to send once it stops mattering server-side.
+  setupSkip: (setupToken?: string) =>
+    requestJson<{ status: string; completed: boolean }>("/api/setup/skip", "POST", undefined, {
+      headers: setupToken ? { "X-Setup-Token": setupToken } : undefined,
+    }),
+  setupInitializePostgres: (
+    payload: {
+      host: string;
+      port: number;
+      database: string;
+      username: string;
+      password: string;
+      arrapp_password?: string;
+    },
+    setupToken?: string,
+  ) =>
+    requestJson<{ status: string; restart_recommended: boolean }>("/api/setup/initialize-postgres", "POST", payload, {
+      headers: setupToken ? { "X-Setup-Token": setupToken } : undefined,
+    }),
   setupBootstrapDatabase: (payload: {
     admin_database_url: string;
     database_name: string;
@@ -180,9 +195,14 @@ export const api = {
   }) => requestJson<{ status: string; restart_required: boolean }>("/api/setup/bootstrap-database", "POST", payload),
   setupPersistRuntimeDatabaseUrl: () =>
     requestJson<{ status: string; restart_required: boolean }>("/api/setup/persist-runtime-database-url", "POST"),
-  setupWizard: (payload: unknown) => requestJson<{ status: string; completed: boolean }>("/api/setup/wizard", "POST", payload),
-  setupInitialSync: (sources: string[]) =>
-    requestJson<{ status: string; running: boolean; sources: string[] }>("/api/setup/initial-sync", "POST", { sources }),
+  setupWizard: (payload: unknown, setupToken?: string) =>
+    requestJson<{ status: string; completed: boolean }>("/api/setup/wizard", "POST", payload, {
+      headers: setupToken ? { "X-Setup-Token": setupToken } : undefined,
+    }),
+  setupInitialSync: (sources: string[], setupToken?: string) =>
+    requestJson<{ status: string; running: boolean; sources: string[] }>("/api/setup/initial-sync", "POST", { sources }, {
+      headers: setupToken ? { "X-Setup-Token": setupToken } : undefined,
+    }),
   setupInitialSyncStatus: () =>
     requestJson<{ running: boolean; sources: string[] }>("/api/setup/initial-sync-status"),
   syncActivity: () => requestJson<SyncActivityRow[]>("/api/ui/sync-activity"),

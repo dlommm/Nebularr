@@ -427,6 +427,9 @@ export type SetupStatus = {
     runtime_url_persisted: boolean;
     arrapp_role_exists: boolean;
   };
+  /** True while the one-time X-Setup-Token gate (printed to the container
+      log at startup) still applies to mutating /api/setup/* endpoints. */
+  bootstrap_token_required: boolean;
 };
 
 export type AlertEventFlags = {

@@ -66,6 +66,24 @@ describe("api request contract", () => {
     await expect(failure).rejects.toBeInstanceOf(ApiError);
     await expect(failure).rejects.toMatchObject({ status: 0, detail: "invalid response from server" });
   });
+
+  it("sends X-Setup-Token on setup mutations only when a token is provided", async () => {
+    await api.setupSkip("bootstrap-token-123");
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Setup-Token"]).toBe("bootstrap-token-123");
+
+    fetchMock.mockClear();
+    await api.setupSkip();
+    const headersWithoutToken = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string> | undefined;
+    expect(headersWithoutToken?.["X-Setup-Token"]).toBeUndefined();
+  });
+
+  it("still sets content-type alongside X-Setup-Token for JSON-bodied setup mutations", async () => {
+    await api.setupWizard({ foo: "bar" }, "tok");
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Setup-Token"]).toBe("tok");
+    expect(headers["content-type"]).toBe("application/json");
+  });
 });
 
 describe("api pagination and export helpers", () => {

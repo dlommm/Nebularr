@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { fmtDate, fmtSize, useDebouncedValue, useLocalStorageState } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { queryKeys } from "../lib/queryKeys";
 import type { EpisodeRow, MovieRow, ShowRow } from "../types";
 import { Pagination } from "../components/ui";
 import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
@@ -18,7 +19,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Clapperboard, Film, ListVideo } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SavedViews } from "../components/nebula/SavedViews";
-import { serializeLibraryState } from "./libraryUrlState";
+import { clearSeasonOnShowSelect, serializeLibraryState } from "./libraryUrlState";
 import type { LibraryFilters, LibraryMode } from "./libraryUrlState";
 
 // Sort keys accepted by each backend endpoint (routers/library.py sort maps).
@@ -135,17 +136,18 @@ export function LibraryPage(): JSX.Element {
     return [...names].sort();
   }, [integrations.data, libraryFilters.instance]);
 
+  const showsParams = {
+    search: debouncedSearch,
+    limit: libraryFilters.limit,
+    offset: libraryFilters.offset,
+    sort_by: libraryFilters.sortBy,
+    sort_dir: libraryFilters.sortDir,
+  };
   const shows = useQuery({
-    queryKey: ["shows", debouncedSearch, libraryFilters.limit, libraryFilters.offset, libraryFilters.sortBy, libraryFilters.sortDir],
-    queryFn: () =>
-      api.shows({
-        search: debouncedSearch,
-        limit: libraryFilters.limit,
-        offset: libraryFilters.offset,
-        sort_by: libraryFilters.sortBy,
-        sort_dir: libraryFilters.sortDir,
-      }),
+    queryKey: queryKeys.shows(showsParams),
+    queryFn: () => api.shows(showsParams),
     enabled: libraryMode === "drilldown",
+    placeholderData: keepPreviousData,
   });
 
   const showSeasons = useQuery({
@@ -154,76 +156,54 @@ export function LibraryPage(): JSX.Element {
     enabled: !!selectedShow && libraryMode === "drilldown",
   });
 
+  const showEpisodesParams = {
+    season_number: libraryFilters.showSeason,
+    limit: libraryFilters.limit,
+    offset: episodesOffset,
+    sort_by: episodeSortBy,
+    sort_dir: libraryFilters.sortDir,
+  };
   const showEpisodes = useQuery({
-    queryKey: [
-      "show-episodes",
-      selectedShow?.id,
-      selectedShow?.instance,
-      libraryFilters.showSeason,
-      libraryFilters.limit,
-      episodesOffset,
-      episodeSortBy,
-      libraryFilters.sortDir,
-    ],
-    queryFn: () =>
-      api.showEpisodes(selectedShow!.id, selectedShow!.instance, {
-        season_number: libraryFilters.showSeason,
-        limit: libraryFilters.limit,
-        offset: episodesOffset,
-        sort_by: episodeSortBy,
-        sort_dir: libraryFilters.sortDir,
-      }),
+    queryKey: queryKeys.showEpisodes(selectedShow?.id, selectedShow?.instance, showEpisodesParams),
+    queryFn: () => api.showEpisodes(selectedShow!.id, selectedShow!.instance, showEpisodesParams),
     enabled: !!selectedShow && libraryMode === "drilldown",
+    placeholderData: keepPreviousData,
   });
 
+  const allEpisodesParams = {
+    search: debouncedSearch,
+    instance_name: debouncedInstance,
+    limit: libraryFilters.limit,
+    offset: libraryFilters.offset,
+    sort_by: libraryFilters.sortBy,
+    sort_dir: libraryFilters.sortDir,
+  };
   const allEpisodes = useQuery({
-    queryKey: [
-      "all-episodes",
-      debouncedSearch,
-      debouncedInstance,
-      libraryFilters.limit,
-      libraryFilters.offset,
-      libraryFilters.sortBy,
-      libraryFilters.sortDir,
-    ],
-    queryFn: () =>
-      api.allEpisodes({
-        search: debouncedSearch,
-        instance_name: debouncedInstance,
-        limit: libraryFilters.limit,
-        offset: libraryFilters.offset,
-        sort_by: libraryFilters.sortBy,
-        sort_dir: libraryFilters.sortDir,
-      }),
+    queryKey: queryKeys.allEpisodes(allEpisodesParams),
+    queryFn: () => api.allEpisodes(allEpisodesParams),
     enabled: libraryMode === "all-episodes",
+    placeholderData: keepPreviousData,
   });
 
+  const moviesParams = {
+    search: debouncedSearch,
+    instance_name: debouncedInstance,
+    limit: libraryFilters.limit,
+    offset: libraryFilters.offset,
+    sort_by: libraryFilters.sortBy,
+    sort_dir: libraryFilters.sortDir,
+  };
   const movies = useQuery({
-    queryKey: [
-      "movies",
-      debouncedSearch,
-      debouncedInstance,
-      libraryFilters.limit,
-      libraryFilters.offset,
-      libraryFilters.sortBy,
-      libraryFilters.sortDir,
-    ],
-    queryFn: () =>
-      api.movies({
-        search: debouncedSearch,
-        instance_name: debouncedInstance,
-        limit: libraryFilters.limit,
-        offset: libraryFilters.offset,
-        sort_by: libraryFilters.sortBy,
-        sort_dir: libraryFilters.sortDir,
-      }),
+    queryKey: queryKeys.movies(moviesParams),
+    queryFn: () => api.movies(moviesParams),
     enabled: libraryMode === "movies",
+    placeholderData: keepPreviousData,
   });
 
   const renderLibraryRows = (rows: EpisodeRow[]) =>
     rows.map((row) => (
       <tr
-        key={row.episode_id}
+        key={`${row.instance_name}-${row.episode_id}`}
         tabIndex={0}
         onClick={() => setDetailDrawer(row)}
         onKeyDown={(event) => {
@@ -355,24 +335,26 @@ export function LibraryPage(): JSX.Element {
                     className="h-9"
                   />
                 </div>
-                <div className="grid w-full gap-2 sm:max-w-[200px]">
-                  <Label htmlFor="nebularr-library-instance" className="text-xs text-muted-foreground">
-                    Instance
-                  </Label>
-                  <select
-                    id="nebularr-library-instance"
-                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                    value={libraryFilters.instance}
-                    onChange={(event) => setLibraryFilters({ ...libraryFilters, instance: event.target.value, offset: 0 })}
-                  >
-                    <option value="">All instances</option>
-                    {instanceNames.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {libraryMode !== "drilldown" ? (
+                  <div className="grid w-full gap-2 sm:max-w-[200px]">
+                    <Label htmlFor="nebularr-library-instance" className="text-xs text-muted-foreground">
+                      Instance
+                    </Label>
+                    <select
+                      id="nebularr-library-instance"
+                      className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                      value={libraryFilters.instance}
+                      onChange={(event) => setLibraryFilters({ ...libraryFilters, instance: event.target.value, offset: 0 })}
+                    >
+                      <option value="">All instances</option>
+                      {instanceNames.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <select
                     aria-label="Sort direction"
@@ -414,7 +396,9 @@ export function LibraryPage(): JSX.Element {
                           search: libraryFilters.search,
                           instance_name: libraryMode === "drilldown" ? selectedShow?.instance : libraryFilters.instance,
                           season_number: libraryFilters.showSeason ?? undefined,
-                          sort_by: libraryFilters.sortBy,
+                          // The episodes table (drilldown) sorts independently of the
+                          // shows-list sort, so its export must match what's on screen.
+                          sort_by: libraryMode === "drilldown" ? episodeSortBy : libraryFilters.sortBy,
                           sort_dir: libraryFilters.sortDir,
                         },
                       );
@@ -447,7 +431,10 @@ export function LibraryPage(): JSX.Element {
                         <button
                           type="button"
                           key={`${row.instance_name}-${row.series_id}`}
-                          onClick={() => setSelectedShow({ id: row.series_id, instance: row.instance_name, title: row.title })}
+                          onClick={() => {
+                            setSelectedShow({ id: row.series_id, instance: row.instance_name, title: row.title });
+                            setLibraryFilters(clearSeasonOnShowSelect(libraryFilters));
+                          }}
                           className={cn(
                             "w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl",
                           )}
@@ -562,28 +549,32 @@ export function LibraryPage(): JSX.Element {
               <CardContent>
                 {allEpisodes.isError ? (
                   <QueryErrorNotice label="episodes" retry={() => void allEpisodes.refetch()} error={allEpisodes.error} />
-                ) : null}
-                <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full min-w-[900px] text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                        <th className="p-2 font-medium">Series</th>
-                        <th className="p-2 font-medium">Instance</th>
-                        <th className="p-2 font-medium">S</th>
-                        <th className="p-2 font-medium">E</th>
-                        <th className="p-2 font-medium">Title</th>
-                        <th className="p-2 font-medium">Air</th>
-                        <th className="p-2 font-medium">Size</th>
-                        <th className="p-2 font-medium">Video</th>
-                        <th className="p-2 font-medium">Audio</th>
-                        <th className="p-2 font-medium">Status</th>
-                        {compareMode ? <th className="p-2 font-medium">Cmp</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>{renderLibraryRows(allEpisodes.data?.items ?? [])}</tbody>
-                  </table>
-                </div>
-                {allEpisodes.isLoading ? <p className="mt-2 text-xs text-muted-foreground">Loading…</p> : null}
+                ) : allEpisodes.isLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading…</p>
+                ) : (allEpisodes.data?.items.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">No episodes match current filters.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-border">
+                    <table className="w-full min-w-[900px] text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
+                          <th className="p-2 font-medium">Series</th>
+                          <th className="p-2 font-medium">Instance</th>
+                          <th className="p-2 font-medium">S</th>
+                          <th className="p-2 font-medium">E</th>
+                          <th className="p-2 font-medium">Title</th>
+                          <th className="p-2 font-medium">Air</th>
+                          <th className="p-2 font-medium">Size</th>
+                          <th className="p-2 font-medium">Video</th>
+                          <th className="p-2 font-medium">Audio</th>
+                          <th className="p-2 font-medium">Status</th>
+                          {compareMode ? <th className="p-2 font-medium">Cmp</th> : null}
+                        </tr>
+                      </thead>
+                      <tbody>{renderLibraryRows(allEpisodes.data?.items ?? [])}</tbody>
+                    </table>
+                  </div>
+                )}
                 <Pagination
                   total={allEpisodes.data?.total ?? 0}
                   offset={libraryFilters.offset}

@@ -51,4 +51,30 @@ describe("ReportingTablePanel", () => {
     expect(container.querySelectorAll("tbody tr").length).toBe(10);
     expect(screen.queryByText(/for the complete dataset/i)).not.toBeInTheDocument();
   });
+
+  it("snaps a stale offset to the last page boundary instead of a 1-row remainder", () => {
+    // Page size 10, previously on offset 90 (page 10). If filtering shrinks the
+    // row count to 25, the naive `min(offset, total - 1)` clamp lands on index 24
+    // (a single trailing row); the fix should land on the page-aligned offset 20
+    // (rows 21-25) like clampPageOffset does elsewhere in the app.
+    const { container } = render(
+      <ReportingTablePanel
+        panel={buildPanel(25)}
+        panelStateKey="overview:big-table"
+        sharedTerms={[]}
+        ignoreSeasonZero={false}
+        panelFilter=""
+        onPanelFilterChange={vi.fn()}
+        pageSize={10}
+        onPageSizeChange={vi.fn()}
+        offset={90}
+        onOffsetChange={vi.fn()}
+        columnFilters={{}}
+        onColumnFilterChange={vi.fn()}
+        exportUrl="/api/reporting/dashboards/overview/panels/big-table/export.csv"
+      />,
+    );
+    expect(container.querySelectorAll("tbody tr").length).toBe(5);
+    expect(container.textContent).toContain("21–25 of 25");
+  });
 });

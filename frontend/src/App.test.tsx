@@ -16,6 +16,7 @@ const DEFAULT_SETUP_STATUS = {
     runtime_url_persisted: true,
     arrapp_role_exists: true,
   },
+  bootstrap_token_required: false,
 };
 
 vi.mock("./api", async () => {

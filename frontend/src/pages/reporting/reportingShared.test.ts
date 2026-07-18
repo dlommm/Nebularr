@@ -1,5 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadCsv } from "./reportingShared";
+import { downloadCsv, resetPanelOffset } from "./reportingShared";
+
+describe("resetPanelOffset", () => {
+  it("drops only the specified panel's offset, leaving sibling panels untouched", () => {
+    const offsets = { "overview:a": 20, "overview:b": 40 };
+    expect(resetPanelOffset(offsets, "overview:a")).toEqual({ "overview:b": 40 });
+  });
+
+  it("returns the same object reference when the key is already absent (no extra re-render)", () => {
+    const offsets = { "overview:b": 40 };
+    expect(resetPanelOffset(offsets, "overview:a")).toBe(offsets);
+  });
+});
 
 // jsdom lacks the object-URL APIs and Blob.text(); stub Blob to capture the
 // CSV string directly and mock createObjectURL/revoke to observe calls.

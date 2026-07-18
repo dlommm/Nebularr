@@ -53,6 +53,14 @@ export function buildLibrarySearchParams(query: string): URLSearchParams {
   return serializeLibraryState(mode, filters, null);
 }
 
+/** Filters to apply when the user selects a different show in drilldown
+    mode: the previous show's season filter almost never applies to the new
+    show, and if it happens not to exist there the episode query would
+    silently return zero rows instead of "no filter". */
+export function clearSeasonOnShowSelect(filters: LibraryFilters): LibraryFilters {
+  return filters.showSeason == null ? filters : { ...filters, showSeason: null };
+}
+
 /** Canonical URL form of the library state; only non-defaults are written so
     plain visits keep a clean address bar. */
 export function serializeLibraryState(

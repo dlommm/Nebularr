@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { serializeLibraryState } from "./libraryUrlState";
+import { clearSeasonOnShowSelect, serializeLibraryState } from "./libraryUrlState";
 
 const defaults = {
   search: "",
@@ -37,6 +37,26 @@ describe("serializeLibraryState", () => {
     expect(drill.get("show")).toBe("42|default|Some | Show");
     const movies = serializeLibraryState("movies", defaults, show);
     expect(movies.get("show")).toBeNull();
+  });
+});
+
+describe("clearSeasonOnShowSelect", () => {
+  it("clears a set season filter", () => {
+    const filters = { ...defaults, showSeason: 3 };
+    expect(clearSeasonOnShowSelect(filters)).toEqual({ ...defaults, showSeason: null });
+  });
+
+  it("returns the same object reference when no season is set (avoids an extra re-render)", () => {
+    const filters = { ...defaults, showSeason: null };
+    expect(clearSeasonOnShowSelect(filters)).toBe(filters);
+  });
+
+  it("leaves other filters untouched", () => {
+    const filters = { ...defaults, search: "attack on", offset: 40, showSeason: 2 };
+    const result = clearSeasonOnShowSelect(filters);
+    expect(result.search).toBe("attack on");
+    expect(result.offset).toBe(40);
+    expect(result.showSeason).toBeNull();
   });
 });
 

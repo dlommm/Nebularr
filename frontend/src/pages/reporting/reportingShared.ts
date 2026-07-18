@@ -41,6 +41,17 @@ export function rowPassesSeasonFilter(row: Record<string, unknown>, ignoreSeason
   return true;
 }
 
+/** Drop a single panel's stored offset (e.g. after that panel's own filter
+    changes) without disturbing sibling panels sharing the same offsets
+    record — a dashboard-wide filter change still resets every panel via a
+    fresh `{}`, but a panel-local filter should only paginate that panel. */
+export function resetPanelOffset(offsets: Record<string, number>, panelStateKey: string): Record<string, number> {
+  if (!(panelStateKey in offsets)) return offsets;
+  const next = { ...offsets };
+  delete next[panelStateKey];
+  return next;
+}
+
 /** Cycle through the theme's categorical chart tokens so charts follow the
     active light/dark palette instead of hard-coded colors. */
 export function chartColor(index: number): string {

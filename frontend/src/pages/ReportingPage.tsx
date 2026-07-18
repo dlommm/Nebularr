@@ -1,17 +1,19 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { fmtDate, useLocalStorageState } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { queryKeys } from "../lib/queryKeys";
 import type { ReportingPanel } from "../types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { QueryErrorNotice } from "../components/nebula/QueryErrorNotice";
 import { SavedViews } from "../components/nebula/SavedViews";
 import { ReportingDistributionPanel } from "./reporting/ReportingDistributionPanel";
 import { ReportingTablePanel } from "./reporting/ReportingTablePanel";
 import { ReportingTimeseriesPanel } from "./reporting/ReportingTimeseriesPanel";
-import { tokenizeFilter } from "./reporting/reportingShared";
+import { resetPanelOffset, tokenizeFilter } from "./reporting/reportingShared";
 
 export function ReportingPage(): JSX.Element {
   usePageTitle("Reporting");
@@ -68,10 +70,10 @@ export function ReportingPage(): JSX.Element {
     const nextKey = dash ?? "overview";
     setReportingDashboardKey(nextKey);
     setReportingGlobalFilter(searchParams.get("q") ?? "");
-    setReportingDashboardFilters({
-      ...reportingDashboardFilters,
+    setReportingDashboardFilters((prev) => ({
+      ...prev,
       [nextKey]: searchParams.get("dq") ?? "",
-    });
+    }));
     setReportingInstance(searchParams.get("inst") ?? "");
     const limitRaw = searchParams.get("limit");
     // limit=0 is a valid deep link (the "Max" setting), so don't || it away.
@@ -80,17 +82,15 @@ export function ReportingPage(): JSX.Element {
   }, [searchParams]);
 
   const reportingDashboards = useQuery({
-    queryKey: ["reporting-dashboards"],
+    queryKey: queryKeys.reportingDashboards,
     queryFn: api.reportingDashboards,
   });
+  const reportingDashboardParams = { instance_name: reportingInstance, limit: reportingLimit };
   const reportingDashboard = useQuery({
-    queryKey: ["reporting-dashboard", reportingDashboardKey, reportingInstance, reportingLimit],
-    queryFn: () =>
-      api.reportingDashboard(reportingDashboardKey, {
-        instance_name: reportingInstance,
-        limit: reportingLimit,
-      }),
+    queryKey: queryKeys.reportingDashboard(reportingDashboardKey, reportingDashboardParams),
+    queryFn: () => api.reportingDashboard(reportingDashboardKey, reportingDashboardParams),
     refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const reportingDashboardFilter = reportingDashboardFilters[reportingDashboardKey] ?? "";
@@ -102,6 +102,11 @@ export function ReportingPage(): JSX.Element {
   );
   const reportingLimitUnlimited = reportingLimit <= 0;
 
+  // Dashboard-wide changes (different data, different global/dashboard filter,
+  // shared page size) invalidate every panel's pagination. A single panel's
+  // own filter (reportingPanelFilters/reportingColumnFilters) only affects
+  // that panel, so it's scoped in the handlers below instead of resetting
+  // every other panel's page back to the start.
   useEffect(() => {
     setReportingTableOffsets({});
   }, [
@@ -111,19 +116,19 @@ export function ReportingPage(): JSX.Element {
     reportingTablePageSize,
     deferredGlobalFilter,
     deferredDashboardFilter,
-    reportingPanelFilters,
-    reportingColumnFilters,
     reportingIgnoreSeasonZero,
   ]);
 
   const handlePanelFilterChange = useCallback((panelStateKey: string, value: string) => {
     setReportingPanelFilters((prev) => ({ ...prev, [panelStateKey]: value }));
+    setReportingTableOffsets((prev) => resetPanelOffset(prev, panelStateKey));
   }, []);
   const handleOffsetChange = useCallback((panelStateKey: string, value: number) => {
     setReportingTableOffsets((prev) => ({ ...prev, [panelStateKey]: value }));
   }, []);
   const handleColumnFilterChange = useCallback((panelStateKey: string, column: string, next: string[]) => {
     setReportingColumnFilters((prev) => ({ ...prev, [`${panelStateKey}:${column}`]: next }));
+    setReportingTableOffsets((prev) => resetPanelOffset(prev, panelStateKey));
   }, []);
   const handlePageSizeChange = useCallback(
     (value: number) => setReportingTablePageSize(value),
@@ -213,24 +218,34 @@ export function ReportingPage(): JSX.Element {
   return (
     <div className="grid grid-cols-12 gap-4">
       <div className="col-span-12 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
-        <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="Reporting dashboards">
-          {(reportingDashboards.data ?? []).map((dash) => (
-            <button
-              type="button"
-              key={dash.key}
-              role="tab"
-              aria-selected={reportingDashboardKey === dash.key}
-              className={
-                reportingDashboardKey === dash.key
-                  ? "rounded-md bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
-                  : "rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-              }
-              onClick={() => setReportingDashboardKey(dash.key)}
-            >
-              {dash.title}
-            </button>
-          ))}
-        </div>
+        {reportingDashboards.isError ? (
+          <div className="mb-3">
+            <QueryErrorNotice
+              label="reporting dashboards"
+              retry={() => void reportingDashboards.refetch()}
+              error={reportingDashboards.error}
+            />
+          </div>
+        ) : (
+          <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="Reporting dashboards">
+            {(reportingDashboards.data ?? []).map((dash) => (
+              <button
+                type="button"
+                key={dash.key}
+                role="tab"
+                aria-selected={reportingDashboardKey === dash.key}
+                className={
+                  reportingDashboardKey === dash.key
+                    ? "rounded-md bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
+                    : "rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                }
+                onClick={() => setReportingDashboardKey(dash.key)}
+              >
+                {dash.title}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex flex-wrap items-end gap-3">
           <label className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
             <span className="text-xs text-muted-foreground">Global filter</span>
@@ -334,6 +349,16 @@ export function ReportingPage(): JSX.Element {
           </div>
         </div>
       </div>
+
+      {reportingDashboard.isError ? (
+        <div className="col-span-12">
+          <QueryErrorNotice
+            label="reporting dashboard"
+            retry={() => void reportingDashboard.refetch()}
+            error={reportingDashboard.error}
+          />
+        </div>
+      ) : null}
 
       {reportingDashboard.data ? (
         <div className="col-span-12 flex flex-wrap items-end justify-between gap-2 px-1">

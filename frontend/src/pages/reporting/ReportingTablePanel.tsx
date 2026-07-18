@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/table";
 import type { ReportingPanel } from "../../types";
 import { MultiSelectFilter } from "../../components/nebula/MultiSelectFilter";
+import { clampPageOffset } from "../syncQueueShared";
 import {
   MAX_UNLIMITED_ROWS,
   downloadCsv,
@@ -99,7 +100,10 @@ function ReportingTablePanelImpl({
 
   const unlimited = pageSize <= 0;
   const total = filteredRows.length;
-  const offset = unlimited ? 0 : Math.min(requestedOffset, Math.max(0, total - 1));
+  // Filtering can shrink `total` out from under a stale requested offset (e.g.
+  // page 10 of 10 becomes page 3 of 3): snap to the last page boundary instead
+  // of `total - 1`, which would show a single trailing row.
+  const offset = unlimited ? 0 : clampPageOffset(requestedOffset, total, pageSize);
   const effectivePageSize = unlimited ? Math.min(total, MAX_UNLIMITED_ROWS) : pageSize;
   const end = unlimited ? effectivePageSize : Math.min(offset + effectivePageSize, total);
   const pagedRows = filteredRows.slice(offset, end);
