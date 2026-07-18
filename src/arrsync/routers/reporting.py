@@ -639,6 +639,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                          and ef.instance_name = e.instance_name
                          and not ef.deleted
                         where not e.deleted
+                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
                           and (ef.subtitle_languages is null or cardinality(ef.subtitle_languages) = 0)
                           and (:instance_name = '' or e.instance_name = :instance_name)
                         order by s.title, e.season_number, e.episode_number
@@ -1573,9 +1574,12 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     text(
                         """
                         select coalesce(max(extract(epoch from (now() - coalesce(last_history_time, now())))), 0)
-                        from app.sync_state where source = 'sonarr'
+                        from app.sync_state
+                        where source = 'sonarr'
+                          and (:instance_name = '' or instance_name = :instance_name)
                         """
-                    )
+                    ),
+                    {"instance_name": normalized_instance},
                 ).scalar_one()
                 or 0
             )
@@ -1584,9 +1588,12 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     text(
                         """
                         select coalesce(max(extract(epoch from (now() - coalesce(last_history_time, now())))), 0)
-                        from app.sync_state where source = 'radarr'
+                        from app.sync_state
+                        where source = 'radarr'
+                          and (:instance_name = '' or instance_name = :instance_name)
                         """
-                    )
+                    ),
+                    {"instance_name": normalized_instance},
                 ).scalar_one()
                 or 0
             )
@@ -1747,10 +1754,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "records_24h", "title": "Records Processed (24h)", "kind": "stat", "value": records_24h},
                 {"id": "records_per_run_24h", "title": "Records Per Run Avg (24h)", "kind": "stat", "value": records_per_run_24h},
                 {"id": "freshness_min", "title": "Freshness (min since last run)", "kind": "stat", "value": freshness_minutes},
-                {"id": "queued_webhooks", "title": "Webhook Queue Open", "kind": "stat", "value": queued_webhooks},
-                {"id": "retrying_webhooks", "title": "Webhook Retrying", "kind": "stat", "value": retrying_webhooks},
-                {"id": "dead_letter_webhooks", "title": "Webhook Dead Letter", "kind": "stat", "value": dead_letter_webhooks},
-                {"id": "webhook_oldest_pending_min", "title": "Oldest Pending Webhook (min)", "kind": "stat", "value": webhook_oldest_pending_min},
+                {"id": "queued_webhooks", "title": "Webhook Queue Open (all instances)", "kind": "stat", "value": queued_webhooks},
+                {"id": "retrying_webhooks", "title": "Webhook Retrying (all instances)", "kind": "stat", "value": retrying_webhooks},
+                {"id": "dead_letter_webhooks", "title": "Webhook Dead Letter (all instances)", "kind": "stat", "value": dead_letter_webhooks},
+                {"id": "webhook_oldest_pending_min", "title": "Oldest Pending Webhook (min) (all instances)", "kind": "stat", "value": webhook_oldest_pending_min},
                 {"id": "sonarr_history_lag_sec", "title": "Sonarr History Lag (s)", "kind": "stat", "value": sonarr_lag_seconds},
                 {"id": "radarr_history_lag_sec", "title": "Radarr History Lag (s)", "kind": "stat", "value": radarr_lag_seconds},
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
@@ -2012,7 +2019,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                                round(v.size_bytes::numeric / 1024 / 1024 / 1024, 2) as size_gib, v.audio_codec, v.video_codec, v.path
                         from warehouse.v_large_files v
                         left join warehouse.series s
-                          on s.title = v.series_title
+                          on s.source_id = v.series_source_id
                          and s.instance_name = v.instance_name
                          and not s.deleted
                         where (:instance_name = '' or v.instance_name = :instance_name)
@@ -2190,6 +2197,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                              and not ef.deleted
                             where not e.deleted
                               and not s.monitored
+                              and ef.source_id is not null
                               and (ef.subtitle_languages is null or cardinality(ef.subtitle_languages) = 0)
                               and (:instance_name = '' or e.instance_name = :instance_name)
                             union all
@@ -2210,6 +2218,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                              and not mf.deleted
                             where not m.deleted
                               and not m.monitored
+                              and mf.source_id is not null
                               and (mf.subtitle_languages is null or cardinality(mf.subtitle_languages) = 0)
                               and (:instance_name = '' or m.instance_name = :instance_name)
                         ) x
@@ -2248,6 +2257,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                              and not ef.deleted
                             where not e.deleted
                               and not s.monitored
+                              and ef.source_id is not null
                               and coalesce(ef.quality, '') not ilike '%1080p%'
                               and (:instance_name = '' or e.instance_name = :instance_name)
                             union all
@@ -2268,6 +2278,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                              and not mf.deleted
                             where not m.deleted
                               and not m.monitored
+                              and mf.source_id is not null
                               and coalesce(mf.quality, '') not ilike '%1080p%'
                               and (:instance_name = '' or m.instance_name = :instance_name)
                         ) x
