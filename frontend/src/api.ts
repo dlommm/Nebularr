@@ -38,34 +38,58 @@ type HttpMethod = "GET" | "POST" | "PUT";
 
 const AUTH_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/status"]);
 
-export function redirectToLogin(): void {
-  if (window.location.pathname !== "/login") {
-    const next = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.assign(`/login?next=${next}`);
+/** Thrown by every failed request; carries the HTTP status (0 for a
+    malformed/undecodable body on an otherwise-2xx response) and a
+    human-readable detail message safe to show in a toast. */
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
   }
+}
+
+/** Session expired (a non-exempt 401): let the shell show a re-login prompt
+    instead of yanking the user away mid-task. */
+export function redirectToLogin(): void {
+  if (window.location.pathname === "/login") return;
+  window.dispatchEvent(new CustomEvent("nebularr:session-expired"));
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const ERROR_MESSAGE_MAX_CHARS = 300;
 
-async function errorMessageFrom(response: Response): Promise<string> {
-  // Prefer the API's {"detail": ...} shape; never surface a raw HTML error page.
+/** Read the body once via text(), then try to parse it as JSON. Never
+    throws — callers get `{ ok: false }` for a body that isn't valid JSON. */
+async function readJsonBody(response: Response): Promise<{ ok: true; value: unknown } | { ok: false; text: string }> {
+  let text: string;
   try {
-    const text = await response.text();
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (parsed && typeof parsed === "object" && "detail" in parsed) {
-        const detail = (parsed as { detail: unknown }).detail;
-        const message = typeof detail === "string" ? detail : JSON.stringify(detail);
-        if (message) return message.slice(0, ERROR_MESSAGE_MAX_CHARS);
-      }
-    } catch {
-      if (text && !text.trimStart().startsWith("<")) {
-        return text.slice(0, ERROR_MESSAGE_MAX_CHARS);
-      }
-    }
+    text = await response.text();
   } catch {
-    // fall through to the status line
+    return { ok: false, text: "" };
+  }
+  try {
+    return { ok: true, value: JSON.parse(text) as unknown };
+  } catch {
+    return { ok: false, text };
+  }
+}
+
+function detailMessageFrom(response: Response, body: { ok: true; value: unknown } | { ok: false; text: string }): string {
+  // Prefer the API's {"detail": ...} shape; never surface a raw HTML error page.
+  if (body.ok) {
+    const parsed = body.value;
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const detail = (parsed as { detail: unknown }).detail;
+      const message = typeof detail === "string" ? detail : JSON.stringify(detail);
+      if (message) return message.slice(0, ERROR_MESSAGE_MAX_CHARS);
+    }
+  } else if (body.text && !body.text.trimStart().startsWith("<")) {
+    return body.text.slice(0, ERROR_MESSAGE_MAX_CHARS);
   }
   return `HTTP ${response.status} ${response.statusText}`.trim();
 }
@@ -73,6 +97,8 @@ async function errorMessageFrom(response: Response): Promise<string> {
 interface RequestOptions {
   /** Override the default 30s abort for known long-running blocking calls. */
   timeoutMs?: number;
+  /** Caller-supplied abort signal, merged with the request timeout. */
+  signal?: AbortSignal;
 }
 
 async function requestJson<T>(
@@ -82,13 +108,15 @@ async function requestJson<T>(
   opts?: RequestOptions,
 ): Promise<T> {
   const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = opts?.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
   let response: Response;
   try {
     response = await fetch(path, {
       method,
       headers: body ? { "content-type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -96,14 +124,20 @@ async function requestJson<T>(
     }
     throw error;
   }
+  const parsedBody = await readJsonBody(response);
   if (!response.ok) {
     const apiPath = path.split("?")[0];
     if (response.status === 401 && !AUTH_EXEMPT_PATHS.has(apiPath)) {
       redirectToLogin();
     }
-    throw new Error(await errorMessageFrom(response));
+    throw new ApiError(response.status, detailMessageFrom(response, parsedBody));
   }
-  return (await response.json()) as T;
+  if (!parsedBody.ok) {
+    // 2xx with a body that isn't valid JSON: our own bug or a proxy/error
+    // page slipping through with a 200 — never hand callers `undefined`.
+    throw new ApiError(0, "invalid response from server");
+  }
+  return parsedBody.value as T;
 }
 
 function withParams(path: string, params: Record<string, string | number | boolean | undefined | null>): string {

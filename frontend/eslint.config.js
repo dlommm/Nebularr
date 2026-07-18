@@ -3,6 +3,7 @@ import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
+import localRules from "./eslint-local-rules/no-unstable-nested-components.js";
 
 export default [
   { ignores: ["dist"] },
@@ -18,12 +19,17 @@ export default [
       "@typescript-eslint": tsPlugin,
       "react-hooks": reactHooks,
       "react-refresh": reactRefresh,
+      local: localRules,
     },
     rules: {
       ...tsPlugin.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
       "no-undef": "off",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      // eslint-plugin-react's `react/no-unstable-nested-components` isn't a
+      // project dependency (adding one is out of scope here); this local
+      // rule catches the same real bug class — see eslint-local-rules/.
+      "local/no-unstable-nested-components": "error",
     },
   },
   {

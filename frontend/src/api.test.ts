@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 
 function okJson(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -49,6 +49,22 @@ describe("api request contract", () => {
       new Response(JSON.stringify({ detail: "sync already running" }), { status: 409 }),
     );
     await expect(api.runSync("sonarr", "full")).rejects.toThrow("sync already running");
+  });
+
+  it("throws an ApiError preserving status and detail for a JSON error body (e.g. 429)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "too many attempts" }), { status: 429 }),
+    );
+    const failure = api.authLogin("wrong");
+    await expect(failure).rejects.toBeInstanceOf(ApiError);
+    await expect(failure).rejects.toMatchObject({ status: 429, detail: "too many attempts" });
+  });
+
+  it("throws a friendly ApiError when a 2xx response body isn't valid JSON", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    const failure = api.status();
+    await expect(failure).rejects.toBeInstanceOf(ApiError);
+    await expect(failure).rejects.toMatchObject({ status: 0, detail: "invalid response from server" });
   });
 });
 

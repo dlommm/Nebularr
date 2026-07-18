@@ -4,14 +4,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LoginPage } from "./LoginPage";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 
-vi.mock("../api", () => ({
-  api: {
-    authStatus: vi.fn(),
-    authLogin: vi.fn(),
-  },
-}));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    api: {
+      authStatus: vi.fn(),
+      authLogin: vi.fn(),
+    },
+  };
+});
 
 const mockedApi = vi.mocked(api);
 
@@ -72,6 +76,14 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText("Password"), "wrong-password");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
     expect(await screen.findByText("Invalid password.")).toBeInTheDocument();
+  });
+
+  it("shows a rate-limit message for a 429 ApiError", async () => {
+    mockedApi.authLogin.mockRejectedValue(new ApiError(429, "rate limited"));
+    renderLogin();
+    await userEvent.type(screen.getByLabelText("Password"), "wrong-password");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    expect(await screen.findByText("Too many attempts. Try again shortly.")).toBeInTheDocument();
   });
 
   it("redirects home when auth is disabled", async () => {

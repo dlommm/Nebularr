@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { queryKeys } from "../lib/queryKeys";
 import {
-  ActionErrorContext,
+  ActionErrorActionsContext,
+  ActionErrorStateContext,
   type ActionErrorContextValue,
   type RunActionOptions,
 } from "./actionErrorContextBase";
@@ -21,7 +23,7 @@ export function ActionErrorProvider({ children }: { children: ReactNode }): JSX.
   }, []);
 
   const runAction = useCallback(
-    async (fn: () => Promise<unknown>, context: string, opts?: RunActionOptions): Promise<void> => {
+    async (fn: () => Promise<unknown>, context: string, opts?: RunActionOptions): Promise<boolean> => {
       try {
         await fn();
         setLastError(null);
@@ -31,29 +33,32 @@ export function ActionErrorProvider({ children }: { children: ReactNode }): JSX.
         }
         const extraKeys = opts?.invalidate ?? [];
         await Promise.all(
-          [["status"], ["sync-activity"], ["runs"], ["work-status"], ...extraKeys].map((queryKey) =>
-            queryClient.invalidateQueries({ queryKey }),
+          [queryKeys.status, queryKeys.syncActivity, queryKeys.runs, queryKeys.workStatus, ...extraKeys].map(
+            (queryKey) => queryClient.invalidateQueries({ queryKey: queryKey as unknown[] }),
           ),
         );
+        return true;
       } catch (err) {
         setError(err, context);
         toast.error(`${context} failed`);
+        return false;
       }
     },
     [queryClient, setError],
   );
 
-  const value = useMemo(
-    () => ({
-      lastError,
-      setLastError,
-      errorContext,
-      setErrorContext,
-      setError,
-      runAction,
-    }),
-    [lastError, errorContext, setError, runAction],
+  // Stable regardless of lastError/errorContext, so consumers that only need
+  // to fire actions (not read the shared error state) don't re-render on
+  // every unrelated action's error.
+  const actionsValue = useMemo(() => ({ setError, runAction }), [setError, runAction]);
+  const stateValue = useMemo(
+    () => ({ lastError, setLastError, errorContext, setErrorContext }),
+    [lastError, errorContext],
   );
 
-  return <ActionErrorContext.Provider value={value}>{children}</ActionErrorContext.Provider>;
+  return (
+    <ActionErrorActionsContext.Provider value={actionsValue}>
+      <ActionErrorStateContext.Provider value={stateValue}>{children}</ActionErrorStateContext.Provider>
+    </ActionErrorActionsContext.Provider>
+  );
 }

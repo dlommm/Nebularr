@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { errText, fmtDate, fmtDuration } from "./hooks";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { errText, fmtDate, fmtDuration, useLocalStorageState } from "./hooks";
 
 describe("fmtDate", () => {
   it("formats valid dates", () => {
@@ -46,5 +47,54 @@ describe("reconnectDelayMs", () => {
     expect(reconnectDelayMs(4)).toBe(40_000);
     expect(reconnectDelayMs(5)).toBe(60_000);
     expect(reconnectDelayMs(10)).toBe(60_000);
+  });
+});
+
+describe("useLocalStorageState", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("resets to the new key's stored value when the key changes", () => {
+    window.localStorage.setItem("nebularr.a", JSON.stringify("value-a"));
+    window.localStorage.setItem("nebularr.b", JSON.stringify("value-b"));
+    const { result, rerender } = renderHook(({ key }: { key: string }) => useLocalStorageState(key, "default"), {
+      initialProps: { key: "nebularr.a" },
+    });
+    expect(result.current[0]).toBe("value-a");
+
+    rerender({ key: "nebularr.b" });
+    expect(result.current[0]).toBe("value-b");
+  });
+
+  it("falls back to the initial value when switching to a key with nothing stored", () => {
+    const { result, rerender } = renderHook(({ key }: { key: string }) => useLocalStorageState(key, "default"), {
+      initialProps: { key: "nebularr.c" },
+    });
+    expect(result.current[0]).toBe("default");
+
+    rerender({ key: "nebularr.d" });
+    expect(result.current[0]).toBe("default");
+  });
+
+  it("does not reset when re-rendered with the same key", () => {
+    const { result, rerender } = renderHook(({ key }: { key: string }) => useLocalStorageState(key, "default"), {
+      initialProps: { key: "nebularr.e" },
+    });
+    act(() => {
+      result.current[1]("changed");
+    });
+    expect(result.current[0]).toBe("changed");
+
+    rerender({ key: "nebularr.e" });
+    expect(result.current[0]).toBe("changed");
+  });
+
+  it("supports functional updates like React's setState", () => {
+    const { result } = renderHook(() => useLocalStorageState("nebularr.counter", 0));
+    act(() => {
+      result.current[1]((prev) => prev + 1);
+    });
+    expect(result.current[0]).toBe(1);
   });
 });

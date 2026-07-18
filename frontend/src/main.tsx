@@ -11,7 +11,10 @@ import "./index.css";
 // Background promises (fire-and-forget actions, effects) otherwise fail silently.
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
-  toast.error(reason.slice(0, 200));
+  const message = reason.slice(0, 200);
+  // Same `id` merges repeats of the same message into one toast instead of
+  // stacking duplicates (e.g. a poll failing repeatedly while offline).
+  toast.error(message, { id: message });
 });
 
 const queryClient = new QueryClient({

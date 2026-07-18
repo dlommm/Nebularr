@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { GlassCard } from "@/components/nebula/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,7 @@ export function LoginPage(): JSX.Element {
       navigate(safeNextPath(searchParams.get("next")), { replace: true });
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error && err.message.includes("429") ? "Too many attempts. Try again shortly." : "Invalid password.");
+      setError(err instanceof ApiError && err.status === 429 ? "Too many attempts. Try again shortly." : "Invalid password.");
     },
   });
 

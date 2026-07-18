@@ -6,8 +6,11 @@ import { Bookmark, Link2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "../../api";
+import { queryKeys } from "../../lib/queryKeys";
 import type { SavedViewEntry } from "../../types";
 import { pageKeyFromStorageKey } from "./savedViewsShared";
+
+type SavedViewsResponse = { views: Record<string, SavedViewEntry[]> };
 
 function readLegacyLocalViews(storageKey: string): SavedViewEntry[] {
   try {
@@ -35,7 +38,7 @@ function readLegacyLocalViews(storageKey: string): SavedViewEntry[] {
 export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element {
   const pageKey = pageKeyFromStorageKey(storageKey);
   const queryClient = useQueryClient();
-  const serverViews = useQuery({ queryKey: ["saved-views"], queryFn: api.savedViews, staleTime: 30_000 });
+  const serverViews = useQuery({ queryKey: queryKeys.savedViews, queryFn: api.savedViews, staleTime: 30_000 });
   const [searchParams, setSearchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -44,10 +47,27 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
 
   const views: SavedViewEntry[] = serverViews.data?.views?.[pageKey] ?? readLegacyLocalViews(storageKey);
 
+  // Always read the live cache (not the `views` above, which can be a stale
+  // render behind) so a save built right after another one landed doesn't
+  // clobber it with an outdated list.
+  const currentViews = (): SavedViewEntry[] =>
+    queryClient.getQueryData<SavedViewsResponse>(queryKeys.savedViews)?.views?.[pageKey] ??
+    readLegacyLocalViews(storageKey);
+
   const persist = useMutation({
     mutationFn: (next: SavedViewEntry[]) => api.saveSavedViews(pageKey, next),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["saved-views"] }),
-    onError: (_err, next) => {
+    onMutate: async (next: SavedViewEntry[]) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.savedViews });
+      const previous = queryClient.getQueryData<SavedViewsResponse>(queryKeys.savedViews);
+      queryClient.setQueryData<SavedViewsResponse>(queryKeys.savedViews, (old) => ({
+        views: { ...(old?.views ?? {}), [pageKey]: next },
+      }));
+      return { previous };
+    },
+    onError: (_err, next, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(queryKeys.savedViews, context.previous);
+      }
       // Server unreachable: keep the views usable locally and say so once.
       try {
         window.localStorage.setItem(storageKey, JSON.stringify(next));
@@ -56,6 +76,7 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
       }
       toast.error("Could not sync views to the server; kept locally");
     },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: queryKeys.savedViews }),
   });
 
   // One-time migration: pre-2.6 localStorage views move to the server.
@@ -83,7 +104,7 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
     const name = draftName.trim();
     if (!name) return;
     const search = searchParams.toString();
-    persist.mutate([...views.filter((view) => view.name !== name), { name, search }]);
+    persist.mutate([...currentViews().filter((view) => view.name !== name), { name, search }]);
     setDraftName("");
     toast.success(`Saved view "${name}"`);
   };
@@ -133,7 +154,7 @@ export function SavedViews({ storageKey }: { storageKey: string }): JSX.Element 
                     type="button"
                     aria-label={`Delete saved view ${view.name}`}
                     className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-critical"
-                    onClick={() => persist.mutate(views.filter((entry) => entry.name !== view.name))}
+                    onClick={() => persist.mutate(currentViews().filter((entry) => entry.name !== view.name))}
                   >
                     <Trash2 className="size-3.5" aria-hidden />
                   </button>

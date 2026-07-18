@@ -1,22 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-export function useLocalStorageState<T>(key: string, initial: T): [T, (next: T) => void] {
-  const [state, setState] = useState<T>(() => {
-    const storage = window.localStorage as Storage | Record<string, unknown>;
-    const getter = (storage as Storage).getItem;
-    if (typeof getter !== "function") {
-      return initial;
-    }
-    const raw = getter.call(storage, key);
-    if (!raw) {
-      return initial;
-    }
-    try {
-      return JSON.parse(raw) as T;
-    } catch {
-      return initial;
-    }
-  });
+function readLocalStorageState<T>(key: string, initial: T): T {
+  const storage = window.localStorage as Storage | Record<string, unknown>;
+  const getter = (storage as Storage).getItem;
+  if (typeof getter !== "function") {
+    return initial;
+  }
+  const raw = getter.call(storage, key);
+  if (!raw) {
+    return initial;
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return initial;
+  }
+}
+
+export function useLocalStorageState<T>(key: string, initial: T): [T, Dispatch<SetStateAction<T>>] {
+  const [state, setState] = useState<T>(() => readLocalStorageState(key, initial));
+
+  // Adjust state during render when `key` changes, per React's documented
+  // pattern for resetting state on a prop change — avoids an extra render
+  // flicker with the previous key's (now-stale) value.
+  const keyRef = useRef(key);
+  if (keyRef.current !== key) {
+    keyRef.current = key;
+    setState(readLocalStorageState(key, initial));
+  }
 
   useEffect(() => {
     const storage = window.localStorage as Storage | Record<string, unknown>;

@@ -6,8 +6,8 @@ import { PageFallback } from "./components/PageFallback";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import { RequireSetup } from "./routes/RequireSetup";
 import { PATHS } from "./routes/paths";
-import { SetupPage } from "./pages/SetupPage";
 
+const SetupPage = lazy(() => import("./pages/SetupPage").then((m) => ({ default: m.SetupPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const ReportingPage = lazy(() => import("./pages/ReportingPage").then((m) => ({ default: m.ReportingPage })));
@@ -30,7 +30,9 @@ export function App(): JSX.Element {
           path={PATHS.setup}
           element={
             <RouteErrorBoundary>
-              <SetupPage />
+              <Suspense fallback={<PageFallback />}>
+                <SetupPage />
+              </Suspense>
             </RouteErrorBoundary>
           }
         />

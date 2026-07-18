@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { errText, fmtDuration } from "@/hooks";
 import { pollInterval, useServerEventsStatus } from "@/hooks/useServerEvents";
+import { queryKeys } from "@/lib/queryKeys";
 import type { WorkMalItem, WorkStatusItem, WorkWarehouseItem } from "@/types";
 import { ProgressBar } from "./ProgressBar";
 import { GlassCard, CardContent, CardDescription, CardHeader, CardTitle } from "./GlassCard";
@@ -44,10 +45,13 @@ function warehouseSubtitle(w: WorkWarehouseItem): string {
   return stage;
 }
 
+const POLL_MS_ACTIVE = 2_000;
+const POLL_MS_RELAXED = 30_000;
+
 export function WorkStatusPanel({
   className,
   title = "Active work",
-  description = "Warehouse syncs, MAL pipelines, and setup-wizard imports. Polls every 2s. ETA uses recent run history when available.",
+  description,
   dense = false,
 }: {
   className?: string;
@@ -56,19 +60,27 @@ export function WorkStatusPanel({
   dense?: boolean;
 }): JSX.Element {
   const { connected: sseConnected } = useServerEventsStatus();
+  const refetchInterval = pollInterval(sseConnected, POLL_MS_ACTIVE, POLL_MS_RELAXED);
   const q = useQuery({
-    queryKey: ["work-status"],
+    queryKey: queryKeys.workStatus,
     queryFn: api.workStatus,
-    refetchInterval: pollInterval(sseConnected, 2_000, 30_000),
+    refetchInterval,
   });
 
   const items = q.data?.items ?? [];
+  // Reflect the interval this panel is actually polling at, not a
+  // hardcoded number that drifts from reality when SSE is connected.
+  const pollingCopy = sseConnected
+    ? `Live updates via server events (${refetchInterval / 1000}s fallback poll).`
+    : `Polls every ${refetchInterval / 1000}s.`;
+  const effectiveDescription =
+    description ?? `Warehouse syncs, MAL pipelines, and setup-wizard imports. ${pollingCopy} ETA uses recent run history when available.`;
 
   return (
     <GlassCard className={className}>
       <CardHeader className={dense ? "pb-2" : undefined}>
         <CardTitle className="text-base">{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        <CardDescription>{effectiveDescription}</CardDescription>
       </CardHeader>
       <CardContent className={cn("space-y-4", dense ? "pt-0" : undefined)}>
         {q.isLoading && !q.data ? (

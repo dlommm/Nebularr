@@ -8,6 +8,12 @@ type State = { error: Error | null };
 
 /**
  * Catches render errors in the routed page tree; keeps the shell visible when wrapped outside outlet.
+ *
+ * A caught error lives in `state` until this component unmounts — if it
+ * wraps a long-lived `<Outlet />` (as AppLayout's does), navigating to a
+ * *different* page won't otherwise clear it. Callers that persist across
+ * route changes must pass `key={location.pathname}` so React remounts (and
+ * resets) the boundary whenever the route changes.
  */
 export class RouteErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {

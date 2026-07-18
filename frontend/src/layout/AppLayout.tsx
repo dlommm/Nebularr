@@ -1,5 +1,5 @@
-import { Suspense, useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import {
@@ -27,6 +27,7 @@ import { api } from "../api";
 import { useActionError } from "../hooks/useActionError";
 import { ServerEventsContext, pollInterval, useServerEvents } from "../hooks/useServerEvents";
 import { useLocalStorageState } from "../hooks";
+import { queryKeys } from "../lib/queryKeys";
 import { LegacyViewRedirect } from "./LegacyViewRedirect";
 import { buildLibrarySearchParams } from "../pages/libraryUrlState";
 import { pathTitle, PATHS } from "../routes/paths";
@@ -34,10 +35,12 @@ import { DiagnosticsPanel } from "../components/ui";
 import { SecurityBanner } from "../components/nebula/SecurityBanner";
 import { PageFallback } from "../components/PageFallback";
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
+import { SessionExpiredDialog } from "../components/SessionExpiredDialog";
 import type { HealthDimensions } from "@/types";
 import { DIM_LABELS } from "@/constants/health";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -68,6 +71,78 @@ function healthTone(state: string | undefined): { dot: string; pill: string } {
   return { dot: "bg-critical", pill: "border-critical/30 bg-critical/10 text-critical" };
 }
 
+function navLinkClassName(isActive: boolean, collapsed: boolean): string {
+  return cn(
+    "group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+    isActive
+      ? "bg-primary/10 text-foreground [&_svg]:text-primary"
+      : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
+    collapsed && "justify-center px-2 py-2",
+  );
+}
+
+/** Hoisted to module scope: an inline component definition inside AppLayout
+    would be recreated every render, remounting (and losing focus/state in)
+    the whole nav tree on every keystroke elsewhere in the shell. */
+function NavLinks({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }): JSX.Element {
+  return (
+    <nav className="flex flex-1 flex-col gap-0.5 px-2 py-3" aria-label="App sections">
+      <p className={cn("mb-1 px-2.5 text-[11px] font-semibold tracking-widest text-muted-foreground uppercase", collapsed && "sr-only")}>
+        Main
+      </p>
+      {NAV_PRIMARY.map(({ to, label, end, Icon }) => (
+        <NavLink
+          key={to}
+          to={to}
+          end={end}
+          title={collapsed ? label : undefined}
+          onClick={onNavigate}
+          className={({ isActive }) => navLinkClassName(isActive, collapsed)}
+        >
+          <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+          {!collapsed ? <span>{label}</span> : null}
+        </NavLink>
+      ))}
+
+      <Separator className="my-3 bg-sidebar-border" />
+      <p className={cn("mb-1 px-2.5 text-[11px] font-semibold tracking-widest text-muted-foreground uppercase", collapsed && "sr-only")}>
+        Settings
+      </p>
+      {NAV_CONFIG.map(({ to, label, Icon }) => (
+        <NavLink
+          key={to}
+          to={to}
+          title={collapsed ? label : undefined}
+          onClick={onNavigate}
+          className={({ isActive }) => navLinkClassName(isActive, collapsed)}
+        >
+          <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+          {!collapsed ? <span>{label}</span> : null}
+        </NavLink>
+      ))}
+
+      {!collapsed ? (
+        <p className="mt-auto px-2.5 pt-4 text-[11px] text-muted-foreground">
+          <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9px]">⌘K</kbd> command palette
+        </p>
+      ) : null}
+    </nav>
+  );
+}
+
+function isEditableElement(el: Element | null): boolean {
+  if (!el) return false;
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return true;
+  return (el as HTMLElement).isContentEditable === true;
+}
+
+type PaletteCommand = {
+  id: string;
+  label: string;
+  group: "Navigate" | "Actions";
+  onSelect: () => void;
+};
+
 export function AppLayout(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
@@ -78,15 +153,18 @@ export function AppLayout(): JSX.Element {
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState("nebularr.ui.sidebar-collapsed", false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandPalette, setCommandPalette] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteIndex, setPaletteIndex] = useState(0);
   const [headerSearch, setHeaderSearch] = useState("");
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const serverEvents = useServerEvents();
   const status = useQuery({
-    queryKey: ["status"],
+    queryKey: queryKeys.status,
     queryFn: api.status,
     refetchInterval: pollInterval(serverEvents.connected, 15_000, 60_000),
   });
-  const authStatus = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus, staleTime: 60_000 });
+  const authStatus = useQuery({ queryKey: queryKeys.authStatus, queryFn: api.authStatus, staleTime: 60_000 });
   const showLogout = authStatus.data?.enabled === true && authStatus.data.authenticated;
   const currentTitle = pathTitle(location.pathname);
 
@@ -101,12 +179,22 @@ export function AppLayout(): JSX.Element {
   };
 
   useEffect(() => {
+    const onSessionExpired = (): void => setSessionExpired(true);
+    window.addEventListener("nebularr:session-expired", onSessionExpired);
+    return () => window.removeEventListener("nebularr:session-expired", onSessionExpired);
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setCommandPalette((v) => !v);
       }
-      if (event.key === "/" && location.pathname === PATHS.library && document.activeElement?.id !== "nebularr-library-search") {
+      if (
+        event.key === "/" &&
+        location.pathname === PATHS.library &&
+        !isEditableElement(document.activeElement)
+      ) {
         event.preventDefault();
         document.getElementById("nebularr-library-search")?.focus();
       }
@@ -115,7 +203,6 @@ export function AppLayout(): JSX.Element {
         navigate(PATHS.library);
       }
       if (event.key === "Escape") {
-        setCommandPalette(false);
         setMobileOpen(false);
       }
     };
@@ -142,70 +229,57 @@ export function AppLayout(): JSX.Element {
       )
     : [];
 
-  const NavLinks = ({ onNavigate }: { onNavigate?: () => void }): JSX.Element => (
-    <nav className="flex flex-1 flex-col gap-0.5 px-2 py-3" aria-label="App sections">
-      <p className={cn("mb-1 px-2.5 text-[10px] font-semibold tracking-widest text-muted-foreground/80 uppercase", sidebarCollapsed && "sr-only")}>
-        Main
-      </p>
-      {NAV_PRIMARY.map(({ to, label, end, Icon }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={end}
-          title={sidebarCollapsed ? label : undefined}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              "group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
-              isActive
-                ? "bg-primary/10 text-foreground [&_svg]:text-primary"
-                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-              sidebarCollapsed && "justify-center px-2 py-2",
-            )
-          }
-        >
-          <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
-          {!sidebarCollapsed ? <span>{label}</span> : null}
-        </NavLink>
-      ))}
-
-      <Separator className="my-3 bg-sidebar-border" />
-      <p
-        className={cn(
-          "mb-1 px-2.5 text-[10px] font-semibold tracking-widest text-muted-foreground/80 uppercase",
-          sidebarCollapsed && "sr-only",
-        )}
-      >
-        Settings
-      </p>
-      {NAV_CONFIG.map(({ to, label, Icon }) => (
-        <NavLink
-          key={to}
-          to={to}
-          title={sidebarCollapsed ? label : undefined}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              "group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
-              isActive
-                ? "bg-primary/10 text-foreground [&_svg]:text-primary"
-                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-              sidebarCollapsed && "justify-center px-2 py-2",
-            )
-          }
-        >
-          <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
-          {!sidebarCollapsed ? <span>{label}</span> : null}
-        </NavLink>
-      ))}
-
-      {!sidebarCollapsed ? (
-        <p className="mt-auto px-2.5 pt-4 text-[10px] text-muted-foreground/70">
-          <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9px]">⌘K</kbd> command palette
-        </p>
-      ) : null}
-    </nav>
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      { id: "nav-home", label: "Go to home", group: "Navigate", onSelect: () => navigate(PATHS.home) },
+      { id: "nav-dashboard", label: "Go to dashboard", group: "Navigate", onSelect: () => navigate(PATHS.dashboard) },
+      { id: "nav-library", label: "Go to library", group: "Navigate", onSelect: () => navigate(PATHS.library) },
+      { id: "nav-reporting", label: "Go to reporting", group: "Navigate", onSelect: () => navigate(PATHS.reporting) },
+      { id: "nav-logs", label: "Go to logs", group: "Navigate", onSelect: () => navigate(PATHS.logs) },
+      {
+        id: "action-sync-sonarr",
+        label: "Run Sonarr incremental sync",
+        group: "Actions",
+        onSelect: () =>
+          void runAction(() => api.runSync("sonarr", "incremental"), "palette sync sonarr", {
+            successMessage: "Sonarr incremental sync queued",
+          }),
+      },
+      {
+        id: "action-sync-radarr",
+        label: "Run Radarr incremental sync",
+        group: "Actions",
+        onSelect: () =>
+          void runAction(() => api.runSync("radarr", "incremental"), "palette sync radarr", {
+            successMessage: "Radarr incremental sync queued",
+          }),
+      },
+    ],
+    [navigate, runAction],
   );
+
+  const filteredCommands = useMemo(() => {
+    const q = paletteQuery.trim().toLowerCase();
+    if (!q) return paletteCommands;
+    return paletteCommands.filter((command) => command.label.toLowerCase().includes(q));
+  }, [paletteCommands, paletteQuery]);
+
+  useEffect(() => {
+    setPaletteIndex(0);
+  }, [paletteQuery]);
+
+  useEffect(() => {
+    if (!commandPalette) {
+      setPaletteQuery("");
+      setPaletteIndex(0);
+    }
+  }, [commandPalette]);
+
+  const runCommand = (command: PaletteCommand | undefined): void => {
+    if (!command) return;
+    command.onSelect();
+    setCommandPalette(false);
+  };
 
   return (
     <ServerEventsContext.Provider value={serverEvents}>
@@ -214,6 +288,7 @@ export function AppLayout(): JSX.Element {
         Skip to content
       </a>
       <LegacyViewRedirect />
+      <SessionExpiredDialog open={sessionExpired} />
 
       {/* Desktop sidebar */}
       <aside
@@ -242,7 +317,7 @@ export function AppLayout(): JSX.Element {
             {sidebarCollapsed ? <PanelLeft className="size-4" /> : <PanelLeftClose className="size-4" />}
           </Button>
         </div>
-        <NavLinks />
+        <NavLinks collapsed={sidebarCollapsed} />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -268,7 +343,7 @@ export function AppLayout(): JSX.Element {
                   </SheetTitle>
                 </SheetHeader>
                 <div className="p-2">
-                  <NavLinks onNavigate={() => setMobileOpen(false)} />
+                  <NavLinks collapsed={false} onNavigate={() => setMobileOpen(false)} />
                 </div>
               </SheetContent>
             </Sheet>
@@ -395,7 +470,7 @@ export function AppLayout(): JSX.Element {
         <main className="w-full min-w-0 max-w-full flex-1 overflow-x-hidden bg-transparent px-3 py-4 sm:px-4 lg:px-6 lg:py-5" id="main-content" tabIndex={-1}>
           <SecurityBanner />
           <DiagnosticsPanel message={lastError} context={errorContext} clear={() => setLastError(null)} />
-          <RouteErrorBoundary>
+          <RouteErrorBoundary key={location.pathname}>
             <Suspense fallback={<PageFallback />}>
               <Outlet />
             </Suspense>
@@ -403,78 +478,91 @@ export function AppLayout(): JSX.Element {
         </main>
       </div>
 
-      {commandPalette ? (
-        <div
-          className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 px-3 pt-[12vh] backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Command palette"
-          onClick={() => setCommandPalette(false)}
-        >
-          <div
-            className="w-full max-w-md overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-              <h3 className="text-sm font-semibold">Command palette</h3>
-              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">esc</kbd>
-            </div>
-            <div className="flex max-h-[min(50vh,360px)] flex-col gap-0.5 overflow-y-auto p-1.5">
-              <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">Navigate</p>
-              {[
-                { label: "Go to home", to: PATHS.home },
-                { label: "Go to dashboard", to: PATHS.dashboard },
-                { label: "Go to library", to: PATHS.library },
-                { label: "Go to reporting", to: PATHS.reporting },
-                { label: "Go to logs", to: PATHS.logs },
-              ].map(({ label, to }) => (
-                <Button
-                  key={to}
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-start font-normal"
-                  onClick={() => {
-                    navigate(to);
-                    setCommandPalette(false);
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
-              <p className="px-2.5 pb-1 pt-2 text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">Actions</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start font-normal"
-                onClick={() => {
-                  void runAction(() => api.runSync("sonarr", "incremental"), "palette sync sonarr", {
-                    successMessage: "Sonarr incremental sync queued",
-                  });
-                  setCommandPalette(false);
-                }}
-              >
-                Run Sonarr incremental sync
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start font-normal"
-                onClick={() => {
-                  void runAction(() => api.runSync("radarr", "incremental"), "palette sync radarr", {
-                    successMessage: "Radarr incremental sync queued",
-                  });
-                  setCommandPalette(false);
-                }}
-              >
-                Run Radarr incremental sync
-              </Button>
-            </div>
-            <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
-              Or use the sidebar. <Link to={PATHS.home} className="text-primary hover:underline" onClick={() => setCommandPalette(false)}>Home</Link>
-            </p>
+      <Dialog open={commandPalette} onOpenChange={setCommandPalette}>
+        <DialogContent showCloseButton={false} className="max-w-md gap-0 overflow-hidden p-0 sm:max-w-md">
+          <DialogHeader className="flex-row items-center justify-between space-y-0 border-b border-border px-4 py-2.5">
+            <DialogTitle className="text-sm font-semibold">Command palette</DialogTitle>
+          </DialogHeader>
+          <div className="p-2">
+            <Input
+              autoFocus
+              value={paletteQuery}
+              onChange={(event) => setPaletteQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setPaletteIndex((i) => Math.min(i + 1, filteredCommands.length - 1));
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setPaletteIndex((i) => Math.max(i - 1, 0));
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  runCommand(filteredCommands[paletteIndex]);
+                }
+              }}
+              placeholder="Type a command or search…"
+              aria-label="Filter commands"
+              role="combobox"
+              aria-expanded="true"
+              aria-controls="command-palette-list"
+              aria-activedescendant={filteredCommands[paletteIndex]?.id}
+              className="h-9"
+            />
           </div>
-        </div>
-      ) : null}
+          <div
+            id="command-palette-list"
+            role="listbox"
+            aria-label="Commands"
+            className="flex max-h-[min(50vh,360px)] flex-col gap-0.5 overflow-y-auto p-1.5 pt-0"
+          >
+            {filteredCommands.length === 0 ? (
+              <p className="px-2.5 py-3 text-center text-xs text-muted-foreground">No matching commands.</p>
+            ) : (
+              (["Navigate", "Actions"] as const).map((group) => {
+                const items = filteredCommands.filter((command) => command.group === group);
+                if (items.length === 0) return null;
+                return (
+                  <div key={group}>
+                    <p className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+                      {group}
+                    </p>
+                    {items.map((command) => {
+                      const idx = filteredCommands.indexOf(command);
+                      const active = idx === paletteIndex;
+                      return (
+                        <Button
+                          key={command.id}
+                          id={command.id}
+                          role="option"
+                          aria-selected={active}
+                          variant="ghost"
+                          size="sm"
+                          className={cn("w-full justify-start font-normal", active && "bg-accent text-accent-foreground")}
+                          onMouseEnter={() => setPaletteIndex(idx)}
+                          onClick={() => runCommand(command)}
+                        >
+                          {command.label}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <p className="flex items-center gap-3 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+            <span>
+              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">↑↓</kbd> navigate
+            </span>
+            <span>
+              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">↵</kbd> select
+            </span>
+            <span>
+              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">esc</kbd> close
+            </span>
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
     </ServerEventsContext.Provider>
   );
