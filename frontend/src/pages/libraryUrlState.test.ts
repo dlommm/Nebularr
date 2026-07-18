@@ -88,4 +88,22 @@ describe("buildLibrarySearchParams", () => {
     expect(params.get("mode")).toBeNull(); // drilldown default
     expect(params.get("q")).toBe("hi");
   });
+
+  it("drops the season filter (no show is selected to scope it to) while keeping mode and every other filter", () => {
+    window.localStorage.setItem("nebularr.library.mode", JSON.stringify("all-episodes"));
+    window.localStorage.setItem(
+      "nebularr.library.filters",
+      JSON.stringify({ instance: "main", limit: 100, sortBy: "air_date", sortDir: "desc", showSeason: 3 }),
+    );
+    const params = buildLibrarySearchParams("naruto");
+    expect(params.get("season")).toBeNull();
+    expect(params.get("show")).toBeNull();
+    // Everything else still carries through unchanged.
+    expect(params.get("mode")).toBe("all-episodes");
+    expect(params.get("q")).toBe("naruto");
+    expect(params.get("inst")).toBe("main");
+    expect(params.get("limit")).toBe("100");
+    expect(params.get("sort")).toBe("air_date");
+    expect(params.get("dir")).toBe("desc");
+  });
 });

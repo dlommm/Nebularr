@@ -29,3 +29,24 @@ function ensureWorkingStorage(name: "localStorage" | "sessionStorage"): void {
 
 ensureWorkingStorage("localStorage");
 ensureWorkingStorage("sessionStorage");
+
+// jsdom doesn't implement PointerEvent; base-ui's Checkbox/Switch/etc. read
+// pointer-specific fields (pointerType, button) in their click handlers, so a
+// plain MouseEvent-based click from userEvent throws "PointerEvent is not
+// defined" instead of toggling. A minimal MouseEvent-backed polyfill is
+// enough for those handlers to run in tests.
+if (typeof window.PointerEvent === "undefined") {
+  class PointerEventPolyfill extends MouseEvent {
+    pointerId: number;
+    pointerType: string;
+    isPrimary: boolean;
+
+    constructor(type: string, params: PointerEventInit = {}) {
+      super(type, params);
+      this.pointerId = params.pointerId ?? 0;
+      this.pointerType = params.pointerType ?? "mouse";
+      this.isPrimary = params.isPrimary ?? true;
+    }
+  }
+  Object.defineProperty(window, "PointerEvent", { value: PointerEventPolyfill, configurable: true });
+}

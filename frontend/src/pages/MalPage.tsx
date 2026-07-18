@@ -66,7 +66,12 @@ export function MalPage(): JSX.Element {
   );
   const [malBacklogCycles, setMalBacklogCycles] = useState(10);
   const [malCycleDelaySeconds, setMalCycleDelaySeconds] = useState(2);
-  const [malBatchSize, setMalBatchSize] = useState(200);
+  // Raw text draft, not a parsed number: coercing on every keystroke (the
+  // previous `Number(value || 200)` behavior) snaps an emptied field
+  // straight back to "200", making it impossible to type a different value.
+  // Parsed (and clamped) into `malBatchSize` below only when a pipeline is
+  // actually triggered.
+  const [malBatchSizeDraft, setMalBatchSizeDraft] = useState("200");
   const [malImportAll, setMalImportAll] = useState(false);
 
   // Populate the batch-size draft from the server default exactly once: a
@@ -79,9 +84,11 @@ export function MalPage(): JSX.Element {
     const n = malConfig.data?.mal_max_ids_per_run;
     if (typeof n === "number" && Number.isFinite(n) && n > 0) {
       malBatchSizePopulatedRef.current = true;
-      setMalBatchSize(Math.max(1, Math.min(500, n)));
+      setMalBatchSizeDraft(String(Math.max(1, Math.min(500, n))));
     }
   }, [malConfig.data?.mal_max_ids_per_run]);
+
+  const malBatchSize = Math.max(1, Math.min(500, Number.parseInt(malBatchSizeDraft, 10) || 200));
 
   // Pipeline triggers can block for up to ~30 minutes server-side; a shared
   // busy flag (guarded by a ref so a second click landing before the state
@@ -125,7 +132,7 @@ export function MalPage(): JSX.Element {
       const ingestBacklog = await api.triggerMalIngestBacklog({
         max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
         cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
-        max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
+        max_ids_per_run: malBatchSize,
       });
       const matcher = await api.triggerMalMatchRefresh();
       const tagSync = await api.triggerMalTagSync();
@@ -229,8 +236,8 @@ export function MalPage(): JSX.Element {
                 min={1}
                 max={500}
                 className="w-[72px] rounded border border-input bg-background px-1.5 py-0.5"
-                value={malBatchSize}
-                onChange={(event) => setMalBatchSize(Math.max(1, Math.min(500, Number(event.target.value || 200))))}
+                value={malBatchSizeDraft}
+                onChange={(event) => setMalBatchSizeDraft(event.target.value)}
                 title="MAL_MAX_IDS_PER_RUN override for this action (1–500)"
               />
             </label>
@@ -273,7 +280,7 @@ export function MalPage(): JSX.Element {
               disabled={malPipelineBusy}
               onClick={() =>
                 void runMalPipeline(
-                  () => api.triggerMalIngest({ max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)) }),
+                  () => api.triggerMalIngest({ max_ids_per_run: malBatchSize }),
                   "MAL ingest",
                 )
               }
@@ -290,7 +297,7 @@ export function MalPage(): JSX.Element {
                       import_all: malImportAll,
                       max_cycles: Math.max(1, Math.min(200, malBacklogCycles)),
                       cycle_delay_seconds: Math.max(0, Math.min(30, malCycleDelaySeconds)),
-                      max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
+                      max_ids_per_run: malBatchSize,
                       // Unbounded imports run as a tracked background job.
                       wait: !malImportAll,
                     }),
@@ -314,7 +321,7 @@ export function MalPage(): JSX.Element {
                       () =>
                         api.triggerMalIngestBacklog({
                           import_all: true,
-                          max_ids_per_run: Math.max(1, Math.min(500, malBatchSize)),
+                          max_ids_per_run: malBatchSize,
                           cycle_delay_seconds: Math.max(1, Math.min(30, malCycleDelaySeconds)),
                           wait: false,
                         }),

@@ -67,6 +67,17 @@ const EMPTY_WORK_STATUS: WorkStatusResponse = {
   setup_running: false,
 };
 
+/** The batch-size input's `useState("200")` default happens to match the
+    mocked server default, so `findByDisplayValue("200")`/`findByTitle(...)`
+    can resolve on the very first render — before the async `malConfig` query
+    settles and its populate-once effect fires, which would then stomp
+    whatever the test just typed. Wait for malConfig-derived render output
+    first so the effect has already run before interacting with the field. */
+async function findBatchInput(): Promise<HTMLInputElement> {
+  await screen.findByText(/default from server: 200 per batch/i);
+  return screen.getByTitle("MAL_MAX_IDS_PER_RUN override for this action (1–500)") as HTMLInputElement;
+}
+
 function renderMalPage(): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -133,14 +144,9 @@ describe("MalPage", () => {
       </QueryClientProvider>,
     );
 
-    const batchInput = await screen.findByDisplayValue("200");
-    // Replace the whole current value in one keystroke (rather than clearing
-    // first) so this test doesn't also exercise the input's own
-    // clear-snaps-back quirk, which is out of scope here.
-    await userEvent.type(batchInput, "350", {
-      initialSelectionStart: 0,
-      initialSelectionEnd: (batchInput as HTMLInputElement).value.length,
-    });
+    const batchInput = await findBatchInput();
+    await userEvent.clear(batchInput);
+    await userEvent.type(batchInput, "350");
     await waitFor(() => expect(screen.getByDisplayValue("350")).toBeInTheDocument());
 
     // Simulate a server-driven refetch (e.g. saved on the Integrations page,
@@ -150,5 +156,28 @@ describe("MalPage", () => {
 
     await waitFor(() => expect(mockedApi.malConfig).toHaveBeenCalledTimes(2));
     expect(screen.getByDisplayValue("350")).toBeInTheDocument();
+  });
+
+  it("keeps the batch-size input editable when cleared, instead of snapping back to the server default", async () => {
+    renderMalPage();
+    const batchInput = await findBatchInput();
+
+    await userEvent.clear(batchInput);
+    expect(batchInput.value).toBe("");
+
+    await userEvent.type(batchInput, "350");
+    expect(batchInput.value).toBe("350");
+  });
+
+  it("parses the batch-size draft to a clamped number only when a pipeline is triggered", async () => {
+    mockedApi.triggerMalIngest.mockResolvedValue({ status: "ok", details: {} });
+    renderMalPage();
+    const batchInput = await findBatchInput();
+
+    await userEvent.clear(batchInput);
+    await userEvent.type(batchInput, "999999"); // well above the 500 cap
+
+    await userEvent.click(screen.getByRole("button", { name: "Run MAL ingest" }));
+    await waitFor(() => expect(mockedApi.triggerMalIngest).toHaveBeenCalledWith({ max_ids_per_run: 500 }));
   });
 });

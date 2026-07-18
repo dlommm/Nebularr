@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { errText } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
 import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -57,6 +58,10 @@ export function SetupPage(): JSX.Element {
   });
 
   const [wizardBusy, setWizardBusy] = useState(false);
+  // SetupPage renders outside AppLayout (no DiagnosticsPanel, no toasts reach
+  // it), so `setError`'s shared context state is invisible here — every
+  // mutating action also needs its own inline surface for failures.
+  const [pageError, setPageError] = useState<string | null>(null);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardRunInitialSync, setWizardRunInitialSync] = useState(false);
   const [wizardRunSonarr, setWizardRunSonarr] = useState(true);
@@ -122,6 +127,7 @@ export function SetupPage(): JSX.Element {
 
   const submitWizard = async (): Promise<void> => {
     setWizardBusy(true);
+    setPageError(null);
     try {
       await api.setupWizard(
         {
@@ -175,6 +181,7 @@ export function SetupPage(): JSX.Element {
       navigate(PATHS.home, { replace: true });
     } catch (err) {
       setError(err, "setup wizard submit");
+      setPageError(errText(err));
     } finally {
       setWizardBusy(false);
     }
@@ -182,12 +189,14 @@ export function SetupPage(): JSX.Element {
 
   const skipWizard = async (): Promise<void> => {
     setWizardBusy(true);
+    setPageError(null);
     try {
       await api.setupSkip(setupToken);
       await queryClient.invalidateQueries({ queryKey: ["setup-status"] });
       navigate(PATHS.home, { replace: true });
     } catch (err) {
       setError(err, "setup wizard skip");
+      setPageError(errText(err));
     } finally {
       setWizardBusy(false);
     }
@@ -196,6 +205,7 @@ export function SetupPage(): JSX.Element {
   const runInitializePostgres = async (): Promise<void> => {
     setWizardBusy(true);
     setDbNotice(null);
+    setPageError(null);
     try {
       const res = await api.setupInitializePostgres(
         {
@@ -216,6 +226,7 @@ export function SetupPage(): JSX.Element {
       await queryClient.invalidateQueries({ queryKey: ["setup-status"] });
     } catch (err) {
       setError(err, "initialize postgres");
+      setPageError(errText(err));
     } finally {
       setWizardBusy(false);
     }
@@ -617,6 +628,11 @@ export function SetupPage(): JSX.Element {
             ))}
           </div>
           {stepBody}
+          {pageError ? (
+            <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+              {pageError}
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-2 border-t border-border pt-4">
             <Button
               type="button"

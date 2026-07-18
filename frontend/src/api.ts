@@ -188,11 +188,17 @@ export const api = {
     requestJson<{ status: string; restart_recommended: boolean }>("/api/setup/initialize-postgres", "POST", payload, {
       headers: setupToken ? { "X-Setup-Token": setupToken } : undefined,
     }),
-  setupBootstrapDatabase: (payload: {
-    admin_database_url: string;
-    database_name: string;
-    arrapp_password: string;
-  }) => requestJson<{ status: string; restart_required: boolean }>("/api/setup/bootstrap-database", "POST", payload),
+  setupBootstrapDatabase: (
+    payload: {
+      admin_database_url: string;
+      database_name: string;
+      arrapp_password: string;
+    },
+    setupToken?: string,
+  ) =>
+    requestJson<{ status: string; restart_required: boolean }>("/api/setup/bootstrap-database", "POST", payload, {
+      headers: setupToken ? { "X-Setup-Token": setupToken } : undefined,
+    }),
   setupPersistRuntimeDatabaseUrl: () =>
     requestJson<{ status: string; restart_required: boolean }>("/api/setup/persist-runtime-database-url", "POST"),
   setupWizard: (payload: unknown, setupToken?: string) =>

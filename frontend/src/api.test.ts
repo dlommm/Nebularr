@@ -84,6 +84,15 @@ describe("api request contract", () => {
     expect(headers["X-Setup-Token"]).toBe("tok");
     expect(headers["content-type"]).toBe("application/json");
   });
+
+  it("sends X-Setup-Token on setupBootstrapDatabase too (also gated server-side)", async () => {
+    await api.setupBootstrapDatabase(
+      { admin_database_url: "postgresql://x", database_name: "db", arrapp_password: "pw" },
+      "tok",
+    );
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Setup-Token"]).toBe("tok");
+  });
 });
 
 describe("api pagination and export helpers", () => {

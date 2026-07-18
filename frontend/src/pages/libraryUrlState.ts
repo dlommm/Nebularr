@@ -35,6 +35,14 @@ function storedJson<T>(key: string, fallback: T): T {
   }
 }
 
+/** Filters to apply when the user selects a different show in drilldown
+    mode: the previous show's season filter almost never applies to the new
+    show, and if it happens not to exist there the episode query would
+    silently return zero rows instead of "no filter". */
+export function clearSeasonOnShowSelect(filters: LibraryFilters): LibraryFilters {
+  return filters.showSeason == null ? filters : { ...filters, showSeason: null };
+}
+
 /** Header-search URL: the user's persisted mode/filters with the new query and
     a reset offset, so searching never silently switches the view or drops
     instance/sort/limit choices (the URL→state effect applies full snapshots). */
@@ -43,22 +51,18 @@ export function buildLibrarySearchParams(query: string): URLSearchParams {
   const mode: LibraryMode =
     rawMode === "all-episodes" || rawMode === "movies" ? rawMode : "drilldown";
   const stored = storedJson<Partial<LibraryFilters>>(LIBRARY_FILTERS_STORAGE_KEY, {});
-  const filters: LibraryFilters = {
+  // Selected show is intentionally dropped so the search results are visible —
+  // and with it, the season filter: it's meaningless without a show to scope
+  // it to, and a dangling `season` param would otherwise ride along into the
+  // URL (surfacing as an optionless Season dropdown, and a stray
+  // `season_number` on Movies/All-episodes CSV exports).
+  const filters: LibraryFilters = clearSeasonOnShowSelect({
     ...DEFAULT_LIBRARY_FILTERS,
     ...stored,
     search: query,
     offset: 0,
-  };
-  // Selected show is intentionally dropped so the search results are visible.
+  });
   return serializeLibraryState(mode, filters, null);
-}
-
-/** Filters to apply when the user selects a different show in drilldown
-    mode: the previous show's season filter almost never applies to the new
-    show, and if it happens not to exist there the episode query would
-    silently return zero rows instead of "no filter". */
-export function clearSeasonOnShowSelect(filters: LibraryFilters): LibraryFilters {
-  return filters.showSeason == null ? filters : { ...filters, showSeason: null };
 }
 
 /** Canonical URL form of the library state; only non-defaults are written so

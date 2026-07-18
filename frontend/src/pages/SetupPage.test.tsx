@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SetupPage } from "./SetupPage";
 import { ActionErrorProvider } from "../context/ActionErrorContext";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import type { SetupStatus } from "../types";
 
 vi.mock("../api", async (importOriginal) => {
@@ -39,6 +39,20 @@ const READY_STATUS: SetupStatus = {
   ...NOT_READY_STATUS,
   database: { engine_ready: true, runtime_url_persisted: true, arrapp_role_exists: true },
 };
+
+/** Walks the wizard from step 1 (PostgreSQL) to the final Review step,
+    checking "run without authentication" at the Security step so Next isn't
+    blocked there. Assumes `engineReady` is already true (READY_STATUS). */
+async function goToReviewStep(): Promise<void> {
+  await screen.findByText(/step 1 of/i);
+  for (let i = 0; i < 4; i++) {
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  }
+  await userEvent.click(screen.getByRole("checkbox", { name: /run without authentication/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Next" })); // Security -> Initial Sync
+  await userEvent.click(screen.getByRole("button", { name: "Next" })); // Initial Sync -> Review
+  await screen.findByText(/step 7 of/i);
+}
 
 function renderSetup(): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -131,5 +145,56 @@ describe("SetupPage", () => {
     expect(screen.queryByLabelText("Setup token required")).not.toBeInTheDocument();
     await userEvent.click(skipButton);
     await waitFor(() => expect(mockedApi.setupSkip).toHaveBeenCalledWith(undefined));
+  });
+
+  // SetupPage renders outside AppLayout, so neither the shared DiagnosticsPanel
+  // nor toasts reach it — every mutating action needs its own inline surface.
+  describe("inline error surfacing", () => {
+    it("renders the backend's detail text when wizard submit fails (e.g. a missing/invalid setup token)", async () => {
+      mockedApi.setupStatus.mockResolvedValue(READY_STATUS);
+      mockedApi.setupWizard.mockRejectedValue(new ApiError(403, "missing or invalid X-Setup-Token header"));
+      renderSetup();
+
+      await goToReviewStep();
+      await userEvent.click(screen.getByRole("button", { name: "Complete setup" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("missing or invalid X-Setup-Token header");
+    });
+
+    it("renders the backend's detail text when Skip fails", async () => {
+      mockedApi.setupStatus.mockResolvedValue(READY_STATUS);
+      mockedApi.setupSkip.mockRejectedValue(new ApiError(403, "missing or invalid X-Setup-Token header"));
+      renderSetup();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Skip for now" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("missing or invalid X-Setup-Token header");
+    });
+
+    it("renders the backend's detail text when initializing Postgres fails", async () => {
+      mockedApi.setupInitializePostgres.mockRejectedValue(new ApiError(504, "Postgres did not become ready in time"));
+      renderSetup();
+
+      await userEvent.click(await screen.findByRole("button", { name: /wait for postgres/i }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Postgres did not become ready in time");
+    });
+
+    it("clears a previous inline error once a new attempt is made", async () => {
+      mockedApi.setupInitializePostgres
+        .mockRejectedValueOnce(new ApiError(500, "connection refused"))
+        .mockResolvedValueOnce({ status: "ok", restart_recommended: false });
+      renderSetup();
+
+      const connectButton = await screen.findByRole("button", { name: /wait for postgres/i });
+      await userEvent.click(connectButton);
+      expect(await screen.findByRole("alert")).toHaveTextContent("connection refused");
+
+      await userEvent.click(connectButton);
+      await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    });
   });
 });
