@@ -31,7 +31,7 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
         return selected_index.read_text(encoding="utf-8")
 
     @router.get("/", response_class=HTMLResponse)
-    async def ui_home():
+    def ui_home():
         if not app_state.session_factory.ready:
             return RedirectResponse(url="/setup", status_code=307)
         with app_state.session_scope() as session:
@@ -41,7 +41,7 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
         return _index_html()
 
     @router.get("/setup", response_class=HTMLResponse)
-    async def ui_setup():
+    def ui_setup():
         if app_state.session_factory.ready:
             with app_state.session_scope() as session:
                 setup_completed = get_setting(session, "app.setup_completed", "false").lower() == "true"
@@ -51,16 +51,21 @@ def build_ui_shell_router(app_state: Any) -> APIRouter:
 
     @router.get("/assets/{asset_name:path}")
     async def ui_asset(asset_name: str) -> FileResponse:
-        if ".." in asset_name:
+        def _safe(base: Path) -> Path | None:
+            if not base.is_dir():
+                return None
+            candidate = (base / asset_name).resolve()
+            if not candidate.is_relative_to(base.resolve()):
+                return None
+            return candidate if candidate.is_file() else None
+
+        if asset_name.startswith(("/", "\\")) or ".." in asset_name.split("/"):
             raise HTTPException(status_code=404, detail="asset not found")
-        if web_dist_dir.exists():
-            dist_asset = web_dist_dir.joinpath("assets", asset_name)
-            if dist_asset.exists() and dist_asset.is_file():
-                return FileResponse(dist_asset)
-        asset_path = web_assets_dir.joinpath(asset_name)
-        if not asset_path.exists() or not asset_path.is_file():
-            raise HTTPException(status_code=404, detail="asset not found")
-        return FileResponse(asset_path)
+        for base in (web_dist_dir / "assets", web_assets_dir):
+            found = _safe(base)
+            if found is not None:
+                return FileResponse(found)
+        raise HTTPException(status_code=404, detail="asset not found")
 
     @router.get("/{frontend_path:path}", response_class=HTMLResponse)
     async def ui_spa_fallback(frontend_path: str) -> str:

@@ -7,12 +7,13 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import text
 
 from arrsync.auth import (
     auth_required,
+    request_is_authenticated,
 )
 from arrsync.runtime_secrets import encryption_at_rest_active
 from arrsync.services.health_service import compute_health_status
@@ -27,7 +28,7 @@ def build_system_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
     @router.get("/healthz")
-    async def healthz() -> dict[str, Any]:
+    def healthz() -> dict[str, Any]:
         payload: dict[str, Any] = {
             "status": "ok",
             "version": app_state.settings.app_version,
@@ -49,11 +50,19 @@ def build_system_router(app_state: Any) -> APIRouter:
         return payload
 
     @router.get("/metrics")
-    async def metrics() -> PlainTextResponse:
+    def metrics(request: Request) -> PlainTextResponse:
+        # /metrics sits outside the /api/* auth gate (Prometheus scrapers rarely carry
+        # a session cookie), so once auth is enabled it must gate itself — unless the
+        # operator has explicitly opted into public metrics via metrics.public.
+        if auth_required(app_state):
+            with app_state.session_scope() as session:
+                public = get_setting(session, "metrics.public", "false").lower() == "true"
+            if not public and not request_is_authenticated(request, app_state):
+                raise HTTPException(status_code=401, detail="authentication required")
         return PlainTextResponse(app_state.metrics.render_prometheus(), media_type="text/plain")
 
     @router.get("/api/status")
-    async def status() -> dict[str, Any]:
+    def status() -> dict[str, Any]:
         # Health alerts fire from the background loop in database_lifecycle (every 60s);
         # kicking one off per status poll duplicated alerts and leaked untracked tasks.
         # The loop also refreshes app_state.status_cache, so most polls are served

@@ -33,6 +33,8 @@ class ConfigFakeSession:
             return FakeResult()
         if "from app.integration_instance" in sql and "where source" in sql:
             return FakeResult(rows=self.integrations)
+        if "insert into app.integration_instance" in sql:
+            return FakeResult()
         raise RuntimeError(f"unexpected SQL: {sql}")
 
     def commit(self) -> None:
@@ -117,6 +119,34 @@ def test_integration_test_falls_back_to_stored_row() -> None:
     assert response.json()["ok"] is True
 
 
+def test_upsert_integration_accepts_valid_name() -> None:
+    client, _state = _client()
+    response = client.put(
+        "/api/config/integrations/sonarr",
+        json={"name": "main-sonarr", "base_url": "http://sonarr.example:8989", "api_key": "key"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_upsert_integration_rejects_invalid_name() -> None:
+    client, _state = _client()
+    response = client.put(
+        "/api/config/integrations/sonarr",
+        json={"name": "bad name!", "base_url": "http://sonarr.example:8989", "api_key": "key"},
+    )
+    assert response.status_code == 422
+
+
+def test_upsert_integration_rejects_oversized_base_url() -> None:
+    client, _state = _client()
+    response = client.put(
+        "/api/config/integrations/sonarr",
+        json={"base_url": "http://sonarr.example/" + "x" * 512, "api_key": "key"},
+    )
+    assert response.status_code == 422
+
+
 def test_integration_test_unknown_stored_name_404s() -> None:
     client, _state = _client()
     response = client.post("/api/config/integrations/sonarr/test", json={"name": "nope"})
@@ -161,6 +191,15 @@ def test_queue_policy_round_trip_and_validation() -> None:
     assert client.get("/api/config/queue").json()["max_attempts"] == 8
     assert client.put("/api/config/queue", json={"batch_size": "x"}).status_code == 400
     assert client.put("/api/config/queue", json={}).status_code == 400
+
+
+def test_metrics_public_setting_round_trip_defaults_closed() -> None:
+    client, _state = _client()
+    assert client.get("/api/config/metrics").json() == {"public": False}
+    updated = client.put("/api/config/metrics", json={"public": True})
+    assert updated.status_code == 200
+    assert updated.json() == {"status": "ok", "public": True}
+    assert client.get("/api/config/metrics").json() == {"public": True}
 
 
 def test_saved_views_round_trip_and_validation() -> None:

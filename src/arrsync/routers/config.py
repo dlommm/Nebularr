@@ -18,6 +18,7 @@ from arrsync.logging import apply_root_log_level, normalize_log_level
 from arrsync.routers.shared import (
     parse_webhook_urls,
     require_egress_allowed,
+    run_db,
     to_bool,
 )
 from arrsync.security import encrypt_secret, hash_secret
@@ -61,6 +62,10 @@ SAVED_VIEWS_MAX_PER_PAGE = 50
 SAVED_VIEWS_NAME_MAX = 80
 SAVED_VIEWS_SEARCH_MAX = 2000
 
+INTEGRATION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+INTEGRATION_BASE_URL_MAX_LENGTH = 512
+METRICS_PUBLIC_KEY = "metrics.public"
+
 log = logging.getLogger(__name__)
 
 
@@ -68,7 +73,7 @@ def build_config_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/config/integrations")
-    async def list_integrations() -> list[dict[str, Any]]:
+    def list_integrations() -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
             rows = session.execute(
                 text(
@@ -87,14 +92,24 @@ def build_config_router(app_state: Any) -> APIRouter:
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=400, detail="source must be sonarr or radarr")
         name = payload.get("name", "default")
+        if not INTEGRATION_NAME_RE.fullmatch(str(name)):
+            raise HTTPException(
+                status_code=422, detail="name must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+            )
         base_url = payload.get("base_url")
         if not base_url:
             raise HTTPException(status_code=400, detail="base_url is required")
-        require_egress_allowed(str(base_url), "base_url", app_state.settings.egress_policy)
+        if len(str(base_url)) > INTEGRATION_BASE_URL_MAX_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"base_url must be at most {INTEGRATION_BASE_URL_MAX_LENGTH} characters",
+            )
+        await asyncio.to_thread(require_egress_allowed, str(base_url), "base_url", app_state.settings.egress_policy)
         api_key = str(payload.get("api_key", ""))
         enabled = bool(payload.get("enabled", True))
         webhook_enabled = bool(payload.get("webhook_enabled", True))
-        with app_state.session_scope() as session:
+
+        def _upsert(session: Any) -> None:
             session.execute(
                 text(
                     """
@@ -120,6 +135,8 @@ def build_config_router(app_state: Any) -> APIRouter:
                     "webhook_enabled": webhook_enabled,
                 },
             )
+
+        await run_db(app_state, _upsert)
         return {"status": "ok"}
 
     @router.post("/api/config/integrations/{source}/test")
@@ -136,10 +153,10 @@ def build_config_router(app_state: Any) -> APIRouter:
         base_url = str(payload.get("base_url") or "").strip()
         api_key = str(payload.get("api_key") or "")
         if not base_url or not api_key:
-            with app_state.session_scope() as session:
-                stored = {
-                    row["name"]: row for row in repo.list_enabled_integrations(session, source)
-                }
+            def _load_stored(session: Any) -> dict[str, Any]:
+                return {row["name"]: row for row in repo.list_enabled_integrations(session, source)}
+
+            stored = await run_db(app_state, _load_stored)
             row = stored.get(name)
             if row is None:
                 raise HTTPException(
@@ -147,7 +164,7 @@ def build_config_router(app_state: Any) -> APIRouter:
                 )
             base_url = base_url or str(row["base_url"])
             api_key = api_key or str(row.get("api_key", ""))
-        require_egress_allowed(base_url, "base_url", app_state.settings.egress_policy)
+        await asyncio.to_thread(require_egress_allowed, base_url, "base_url", app_state.settings.egress_policy)
         client = app_state.arr_client_class(
             app_state.settings, source, instance_name=name, base_url=base_url, api_key=api_key
         )
@@ -164,7 +181,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         }
 
     @router.get("/api/config/mal")
-    async def get_mal_config() -> dict[str, Any]:
+    def get_mal_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
             client_id_configured = mal_client_id_is_configured(session, app_state.settings)
             mal_flags = read_mal_feature_flags(session, app_state.settings)
@@ -189,7 +206,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         }
 
     @router.put("/api/config/mal")
-    async def put_mal_config(payload: dict[str, Any]) -> dict[str, Any]:
+    def put_mal_config(payload: dict[str, Any]) -> dict[str, Any]:
         clear_flag = to_bool(payload.get("clear_client_id", False), False)
         client_id = str(payload.get("client_id", ""))
         ingest_enabled = payload.get("ingest_enabled", None)
@@ -237,7 +254,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"status": "ok"}
 
     @router.get("/api/config/logging")
-    async def get_logging_config() -> dict[str, Any]:
+    def get_logging_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
             stored = read_stored_log_level(session)
             effective = effective_log_level(session, app_state.settings)
@@ -248,7 +265,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         }
 
     @router.put("/api/config/logging")
-    async def put_logging_config(payload: dict[str, Any]) -> dict[str, Any]:
+    def put_logging_config(payload: dict[str, Any]) -> dict[str, Any]:
         use_env = to_bool(payload.get("use_environment_default", False), False)
         if use_env:
             with app_state.session_scope() as session:
@@ -269,13 +286,13 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "effective_level": eff}
 
     @router.get("/api/config/webhook")
-    async def get_webhook_config() -> dict[str, Any]:
+    def get_webhook_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
             stored_hash = get_setting(session, "app.webhook_secret_hash", "")
         return {"secret_set": bool(stored_hash)}
 
     @router.put("/api/config/webhook")
-    async def update_webhook_config(payload: dict[str, Any]) -> dict[str, Any]:
+    def update_webhook_config(payload: dict[str, Any]) -> dict[str, Any]:
         secret = str(payload.get("secret", "")).strip()
         if not secret:
             raise HTTPException(status_code=400, detail="secret is required")
@@ -284,7 +301,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"status": "ok"}
 
     @router.get("/api/config/alert-webhooks")
-    async def get_alert_webhook_config() -> dict[str, Any]:
+    def get_alert_webhook_config() -> dict[str, Any]:
         with app_state.session_scope() as session:
             config = read_alert_webhook_config(session, app_state.settings)
         email = config["email"]
@@ -311,20 +328,28 @@ def build_config_router(app_state: Any) -> APIRouter:
     async def update_alert_webhook_config(payload: dict[str, Any]) -> dict[str, Any]:
         clear_urls = to_bool(payload.get("clear_urls", False), False)
         provided_urls = payload.get("webhook_urls", None)
-        with app_state.session_scope() as session:
+        # Resolved and egress-checked *before* the DB session is opened: DNS lookups
+        # are slow, and there's no reason to hold a connection idle for them.
+        parsed_urls: list[str] | None = None
+        if not clear_urls and provided_urls is not None:
+            parsed_urls = parse_webhook_urls(provided_urls)
+            for webhook_url in parsed_urls:
+                # ntfy:// is an accepted alias for self-hosted ntfy; the egress
+                # check runs against the https URL it resolves to.
+                await asyncio.to_thread(
+                    require_egress_allowed,
+                    normalize_ntfy_url(webhook_url),
+                    "webhook_urls",
+                    app_state.settings.egress_policy,
+                )
+
+        def _apply(session: Any) -> dict[str, Any]:
             current = read_alert_webhook_config(session, app_state.settings)
             webhook_urls = list(current["webhook_urls"])
             if clear_urls:
                 webhook_urls = []
                 store_alert_webhook_urls(session, webhook_urls)
-            elif provided_urls is not None:
-                parsed_urls = parse_webhook_urls(provided_urls)
-                for webhook_url in parsed_urls:
-                    # ntfy:// is an accepted alias for self-hosted ntfy; the egress
-                    # check runs against the https URL it resolves to.
-                    require_egress_allowed(
-                        normalize_ntfy_url(webhook_url), "webhook_urls", app_state.settings.egress_policy
-                    )
+            elif parsed_urls is not None:
                 webhook_urls = parsed_urls
                 store_alert_webhook_urls(session, webhook_urls)
             timeout_seconds = float(payload.get("timeout_seconds", current["timeout_seconds"]))
@@ -364,17 +389,27 @@ def build_config_router(app_state: Any) -> APIRouter:
                     raise HTTPException(status_code=400, detail="email.password must be a string")
                 store_alert_email_config(session, merged_email, password=password)
             email_config = read_alert_email_config(session)
+            return {
+                "webhook_urls": webhook_urls,
+                "timeout_seconds": timeout_seconds,
+                "min_state": min_state,
+                "notify_recovery": notify_recovery,
+                "events": events,
+                "email_config": dict(email_config),
+            }
+
+        applied = await run_db(app_state, _apply)
         alert_notifier = getattr(app_state, "alert_notifier", None)
         if alert_notifier is not None:
             await alert_notifier.configure(
-                webhook_urls=webhook_urls,
-                timeout_seconds=timeout_seconds,
-                min_state=min_state,
-                notify_recovery=notify_recovery,
-                events=events,
-                email=dict(email_config),
+                webhook_urls=applied["webhook_urls"],
+                timeout_seconds=applied["timeout_seconds"],
+                min_state=applied["min_state"],
+                notify_recovery=applied["notify_recovery"],
+                events=applied["events"],
+                email=applied["email_config"],
             )
-        return {"status": "ok", "url_count": len(webhook_urls), "events": events}
+        return {"status": "ok", "url_count": len(applied["webhook_urls"]), "events": applied["events"]}
 
     @router.post("/api/config/alert-webhooks/test")
     async def send_alert_webhook_test(payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -400,8 +435,21 @@ def build_config_router(app_state: Any) -> APIRouter:
             )
         return {"status": "ok" if any_ok else "failed", "results": results}
 
+    @router.get("/api/config/metrics")
+    def get_metrics_config() -> dict[str, Any]:
+        with app_state.session_scope() as session:
+            public = get_setting(session, METRICS_PUBLIC_KEY, "false").lower() == "true"
+        return {"public": public}
+
+    @router.put("/api/config/metrics")
+    def update_metrics_config(payload: dict[str, Any]) -> dict[str, Any]:
+        public = to_bool(payload.get("public", False), False)
+        with app_state.session_scope() as session:
+            set_setting(session, METRICS_PUBLIC_KEY, "true" if public else "false")
+        return {"status": "ok", "public": public}
+
     @router.get("/api/config/schedules")
-    async def list_schedules() -> list[dict[str, Any]]:
+    def list_schedules() -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
             rows = session.execute(
                 text(
@@ -415,12 +463,12 @@ def build_config_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/config/retention")
-    async def get_retention() -> dict[str, Any]:
+    def get_retention() -> dict[str, Any]:
         with app_state.session_scope() as session:
             return dict(read_retention_policy(session))
 
     @router.put("/api/config/retention")
-    async def update_retention(payload: dict[str, Any]) -> dict[str, Any]:
+    def update_retention(payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, object] = {}
         for key in ("queue_days", "sync_run_days", "stat_snapshot_days"):
             if key not in payload:
@@ -441,12 +489,12 @@ def build_config_router(app_state: Any) -> APIRouter:
             return dict(write_retention_policy(session, updates))
 
     @router.get("/api/config/queue")
-    async def get_queue_policy() -> dict[str, Any]:
+    def get_queue_policy() -> dict[str, Any]:
         with app_state.session_scope() as session:
             return dict(read_queue_policy(session))
 
     @router.put("/api/config/queue")
-    async def update_queue_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    def update_queue_policy(payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, object] = {}
         for key in ("batch_size", "max_attempts", "backoff_base_seconds", "backoff_cap_seconds"):
             if key not in payload:
@@ -488,7 +536,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"valid": True, "timezone": timezone, "next_fire_times": fire_times}
 
     @router.get("/api/config/saved-views")
-    async def get_saved_views() -> dict[str, Any]:
+    def get_saved_views() -> dict[str, Any]:
         with app_state.session_scope() as session:
             raw = get_setting(session, SAVED_VIEWS_KEY, "")
         try:
@@ -498,7 +546,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"views": parsed if isinstance(parsed, dict) else {}}
 
     @router.put("/api/config/saved-views")
-    async def put_saved_views(payload: dict[str, Any]) -> dict[str, Any]:
+    def put_saved_views(payload: dict[str, Any]) -> dict[str, Any]:
         page = str(payload.get("page", "")).strip().lower()
         if not SAVED_VIEWS_PAGE_RE.fullmatch(page):
             raise HTTPException(status_code=400, detail="invalid page key")
@@ -538,7 +586,7 @@ def build_config_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "page": page, "count": len(views)}
 
     @router.put("/api/config/schedules/{mode}")
-    async def update_schedule(mode: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def update_schedule(mode: str, payload: dict[str, Any]) -> dict[str, Any]:
         allowed_modes = frozenset(
             {
                 "incremental",

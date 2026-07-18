@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from arrsync.routers.shared import run_db
 from arrsync.security import verify_secret_hash
 from arrsync.services import repository as repo
 from arrsync.services.settings_store import get_setting
@@ -28,7 +29,8 @@ def build_hooks_router(app_state: Any) -> APIRouter:
             raise HTTPException(status_code=404, detail="unknown source")
 
         received_secret = request.headers.get("x-arr-shared-secret", "")
-        with app_state.session_scope() as session:
+
+        def _resolve_webhook_context(session: Any) -> tuple[str, bool, str]:
             stored_hash = get_setting(session, "app.webhook_secret_hash", "")
             # Legacy unsuffixed route: any enabled integration accepts the webhook
             # (the integration name is NOT required to be "default"); the event is
@@ -36,9 +38,25 @@ def build_hooks_router(app_state: Any) -> APIRouter:
             ingest_allowed = repo.webhook_ingest_allowed(session, source, instance_name)
             if instance_name is None:
                 enabled_names = repo.enabled_webhook_instance_names(session, source)
-                resolved_instance = enabled_names[0] if len(enabled_names) == 1 else "default"
+                if len(enabled_names) == 1:
+                    resolved = enabled_names[0]
+                elif "default" in enabled_names:
+                    # More than one enabled, but one is literally named "default": use it.
+                    resolved = "default"
+                elif len(enabled_names) > 1:
+                    # Ambiguous: stamping a phantom "default" would misattribute the
+                    # event to an integration that doesn't exist under that name.
+                    raise HTTPException(
+                        status_code=409,
+                        detail="multiple integrations enabled; use /hooks/{source}/{instance_name}",
+                    )
+                else:
+                    resolved = "default"
             else:
-                resolved_instance = instance_name
+                resolved = instance_name
+            return stored_hash, ingest_allowed, resolved
+
+        stored_hash, ingest_allowed, resolved_instance = await run_db(app_state, _resolve_webhook_context)
         if stored_hash:
             if not verify_secret_hash(received_secret, stored_hash):
                 raise HTTPException(status_code=401, detail="invalid secret")
@@ -87,8 +105,12 @@ def build_hooks_router(app_state: Any) -> APIRouter:
         dedupe_key = hashlib.sha256(
             json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
-        with app_state.session_scope() as session:
-            repo.enqueue_webhook(session, source=source, event_type=event_type, payload=payload, dedupe_key=dedupe_key)
+        await run_db(
+            app_state,
+            lambda session: repo.enqueue_webhook(
+                session, source=source, event_type=event_type, payload=payload, dedupe_key=dedupe_key
+            ),
+        )
         app_state.metrics.inc("arrsync_webhooks_received_total")
         request_drain = getattr(app_state, "request_webhook_drain", None)
         if request_drain is not None:

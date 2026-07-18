@@ -98,17 +98,25 @@ def build_library_router(app_state: Any) -> APIRouter:
                         s.monitored,
                         s.status,
                         s.path,
-                        count(e.source_id) filter (where not e.deleted) as episode_count,
-                        count(distinct e.season_number) filter (where not e.deleted) as season_count,
+                        (
+                            select count(*)
+                            from warehouse.episode e
+                            where e.series_source_id = s.source_id
+                              and e.instance_name = s.instance_name
+                              and not e.deleted
+                        ) as episode_count,
+                        (
+                            select count(distinct e.season_number)
+                            from warehouse.episode e
+                            where e.series_source_id = s.source_id
+                              and e.instance_name = s.instance_name
+                              and not e.deleted
+                        ) as season_count,
                         s.last_seen_at
                     from warehouse.series s
-                    left join warehouse.episode e
-                        on e.series_source_id = s.source_id
-                       and e.instance_name = s.instance_name
                     where not s.deleted
                       and (:search = '' or s.title ilike :search_like)
-                    group by s.instance_name, s.source_id, s.title, s.monitored, s.status, s.path, s.last_seen_at
-                    order by {sort_expr} {direction}, s.source_id asc
+                    order by {sort_expr} {direction}, s.instance_name asc, s.source_id asc
                     limit :limit
                     offset :offset
                     """
@@ -211,7 +219,7 @@ def build_library_router(app_state: Any) -> APIRouter:
                       and e.series_source_id = :series_id
                       and e.instance_name = :instance_name
                       and (cast(:season_number as int) is null or e.season_number = cast(:season_number as int))
-                    order by {sort_expr} {direction}, e.source_id asc
+                    order by {sort_expr} {direction}, e.instance_name asc, e.source_id asc
                     limit :limit
                     offset :offset
                     """
@@ -340,7 +348,7 @@ def build_library_router(app_state: Any) -> APIRouter:
                         or s.title ilike :search_like
                         or e.title ilike :search_like
                       )
-                    order by {sort_expr} {direction}, e.source_id asc
+                    order by {sort_expr} {direction}, e.instance_name asc, e.source_id asc
                     limit :limit
                     offset :offset
                     """
@@ -432,7 +440,7 @@ def build_library_router(app_state: Any) -> APIRouter:
                     where not m.deleted
                       and (:instance_name = '' or m.instance_name = :instance_name)
                       and (:search = '' or m.title ilike :search_like)
-                    order by {sort_expr} {direction}, m.source_id asc
+                    order by {sort_expr} {direction}, m.instance_name asc, m.source_id asc
                     limit :limit
                     offset :offset
                     """
@@ -509,7 +517,7 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> StreamingResponse:
-        row_cap = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
+        row_cap = EXPORT_ROW_CAP if export_all else min(clamp_limit(limit, default=EXPORT_ROW_CAP), EXPORT_ROW_CAP)
         season_part = "all" if season_number is None else str(season_number)
         return csv_stream_response(
             filename=f"show-{series_id}-{instance_name}-season-{season_part}-episodes.csv",
@@ -554,7 +562,7 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> StreamingResponse:
-        row_cap = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
+        row_cap = EXPORT_ROW_CAP if export_all else min(clamp_limit(limit, default=EXPORT_ROW_CAP), EXPORT_ROW_CAP)
         instance_part = instance_name.strip() or "all"
         return csv_stream_response(
             filename=f"episodes-{instance_part}.csv",
@@ -598,7 +606,7 @@ def build_library_router(app_state: Any) -> APIRouter:
         sort_dir: str = "asc",
         export_all: bool = False,
     ) -> StreamingResponse:
-        row_cap = EXPORT_ROW_CAP if export_all else min(limit, EXPORT_ROW_CAP)
+        row_cap = EXPORT_ROW_CAP if export_all else min(clamp_limit(limit, default=EXPORT_ROW_CAP), EXPORT_ROW_CAP)
         instance_part = instance_name.strip() or "all"
         return csv_stream_response(
             filename=f"movies-{instance_part}.csv",

@@ -30,6 +30,8 @@ class SetupSyncState:
     task: asyncio.Task[None] | None = None
     sources: list[str] = field(default_factory=list)
     started_at: datetime | None = None
+    results: dict[str, str] = field(default_factory=dict)
+    error: str | None = None
 
     @property
     def running(self) -> bool:
@@ -42,6 +44,20 @@ def setup_sync_state(app_state: Any) -> SetupSyncState:
         state = SetupSyncState()
         app_state.setup_sync_state = state
     return state
+
+
+async def run_db(app_state: Any, fn: Any) -> Any:
+    """Run sync DB work off the event loop: opens a session, calls fn(session), closes it.
+
+    Use this from ``async def`` handlers that need a database session but also do other
+    async work (so they can't just be plain ``def`` and let FastAPI thread the whole thing).
+    """
+
+    def _call() -> Any:
+        with app_state.session_scope() as session:
+            return fn(session)
+
+    return await asyncio.to_thread(_call)
 
 
 def clamp_limit(limit: int, default: int = 200, max_limit: int = 2000) -> int:
@@ -128,11 +144,19 @@ def _normalize_csv_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def csv_response(filename: str, rows: list[dict[str, Any]]) -> PlainTextResponse:
+def _csv_fieldnames(first_row: dict[str, Any], fieldnames: list[str] | None) -> list[str]:
+    return list(dict.fromkeys([*first_row.keys(), *(fieldnames or [])]))
+
+
+def csv_response(
+    filename: str, rows: list[dict[str, Any]], fieldnames: list[str] | None = None
+) -> PlainTextResponse:
     output = io.StringIO()
     if rows:
-        fieldnames = list(rows[0].keys())
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        cols = _csv_fieldnames(rows[0], fieldnames)
+        # extrasaction="ignore": a later row carrying a key the first row lacked
+        # must not crash the export; it's dropped rather than raising.
+        writer = csv.DictWriter(output, fieldnames=cols, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
             writer.writerow(_normalize_csv_row(row))
@@ -143,7 +167,9 @@ def csv_response(filename: str, rows: list[dict[str, Any]]) -> PlainTextResponse
     )
 
 
-def csv_stream_response(filename: str, rows_iter: Iterator[dict[str, Any]]) -> StreamingResponse:
+def csv_stream_response(
+    filename: str, rows_iter: Iterator[dict[str, Any]], fieldnames: list[str] | None = None
+) -> StreamingResponse:
     """CSV as an incrementally produced stream.
 
     The encoder is a *sync* generator, so Starlette iterates it in a thread pool
@@ -156,7 +182,9 @@ def csv_stream_response(filename: str, rows_iter: Iterator[dict[str, Any]]) -> S
         writer: csv.DictWriter[str] | None = None
         for row in rows_iter:
             if writer is None:
-                writer = csv.DictWriter(buffer, fieldnames=list(row.keys()))
+                writer = csv.DictWriter(
+                    buffer, fieldnames=_csv_fieldnames(row, fieldnames), extrasaction="ignore"
+                )
                 writer.writeheader()
             writer.writerow(_normalize_csv_row(row))
             yield buffer.getvalue()

@@ -4,6 +4,7 @@ GET /api/config/alert-webhooks
 GET /api/config/integrations
 GET /api/config/logging
 GET /api/config/mal
+GET /api/config/metrics
 GET /api/config/queue
 GET /api/config/retention
 GET /api/config/saved-views
@@ -75,6 +76,7 @@ PUT /api/config/alert-webhooks
 PUT /api/config/integrations/{source}
 PUT /api/config/logging
 PUT /api/config/mal
+PUT /api/config/metrics
 PUT /api/config/queue
 PUT /api/config/retention
 PUT /api/config/saved-views

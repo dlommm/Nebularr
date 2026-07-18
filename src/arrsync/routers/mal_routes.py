@@ -13,6 +13,7 @@ from sqlalchemy import text
 from arrsync.mal import repository as mal_repo
 from arrsync.mal.ingest_service import MalIngestAlreadyRunningError
 from arrsync.routers.shared import (
+    run_db,
     to_bool,
 )
 
@@ -23,7 +24,7 @@ def build_mal_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/mal/job-runs")
-    async def list_mal_job_runs(job_type: str = "all", limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def list_mal_job_runs(job_type: str = "all", limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         normalized = job_type.lower()
         allowed = {"all", "ingest", "matcher", "tag_sync", "coverage_tag_sync", "ingest_backlog"}
         if normalized not in allowed:
@@ -52,7 +53,7 @@ def build_mal_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/mal/overview")
-    async def mal_overview(unmatched_limit: int = 100) -> dict[str, Any]:
+    def mal_overview(unmatched_limit: int = 100) -> dict[str, Any]:
         bounded_limit = max(1, min(unmatched_limit, 500))
         with app_state.session_scope() as session:
             dubbed_total = int(
@@ -282,8 +283,7 @@ def build_mal_router(app_state: Any) -> APIRouter:
             # Space out batch runs so we do not hammer MAL / Jikan between cycles.
             cycle_delay_seconds = max(1.0, cycle_delay_seconds)
 
-        with app_state.session_scope() as session:
-            pending_before = mal_repo.count_anime_needing_mal_fetch(session)
+        pending_before = await run_db(app_state, mal_repo.count_anime_needing_mal_fetch)
 
         batch_size_for_plan = max(
             1,
@@ -323,7 +323,8 @@ def build_mal_router(app_state: Any) -> APIRouter:
             existing = app_state.mal_backlog_task
             if existing is not None and not existing.done():
                 raise HTTPException(status_code=409, detail="backlog import already running")
-            with app_state.session_scope() as session:
+
+            def _start_backlog_job_run(session: Any) -> int:
                 run_id = mal_repo.insert_mal_job_run(session, "ingest_backlog")
                 mal_repo.merge_mal_job_run_details(
                     session,
@@ -337,6 +338,9 @@ def build_mal_router(app_state: Any) -> APIRouter:
                         }
                     },
                 )
+                return run_id
+
+            run_id = await run_db(app_state, _start_backlog_job_run)
             app_state.mal_backlog_task = asyncio.create_task(_run_backlog_job(run_id, **cycle_kwargs))
             return JSONResponse(
                 {
@@ -394,7 +398,7 @@ def build_mal_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "details": details}
 
     @router.post("/api/mal/reset-data")
-    async def reset_mal_data(payload: dict[str, Any]) -> dict[str, Any]:
+    def reset_mal_data(payload: dict[str, Any]) -> dict[str, Any]:
         """Clear MAL dub list snapshots, anime rows, links, externals, checkpoints, and job history.
 
         Does not modify Sonarr/Radarr warehouse tables, ``app.settings``, or integration credentials.

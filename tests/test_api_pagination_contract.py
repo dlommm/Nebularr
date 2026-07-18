@@ -44,9 +44,10 @@ class FakeResult:
 class FakeSession:
     def execute(self, query: Any, _params: dict[str, Any] | None = None) -> FakeResult:
         sql = str(query)
-        if "count(*)" in sql and "from warehouse.series" in sql:
-            return FakeResult(scalar_value=2)
-        if "from warehouse.series s" in sql and "group by" in sql:
+        # More specific pattern first: the rows query also contains "count(*)" (in its
+        # per-row episode_count subquery) and "from warehouse.series", so it would
+        # otherwise be swallowed by the plain total-count branch below.
+        if "from warehouse.series s" in sql and "s.source_id as series_id" in sql:
             return FakeResult(
                 rows=[
                     {
@@ -62,6 +63,8 @@ class FakeSession:
                     }
                 ]
             )
+        if "count(*)" in sql and "from warehouse.series" in sql:
+            return FakeResult(scalar_value=2)
         if "count(*)" in sql and "from warehouse.episode e" in sql:
             return FakeResult(scalar_value=1)
         if "from warehouse.episode e" in sql and "series_title" in sql:

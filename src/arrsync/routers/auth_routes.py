@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from typing import Any
@@ -60,9 +61,12 @@ def build_auth_router(app_state: Any) -> APIRouter:
         password = str(payload.get("password", ""))
         config = get_auth_config(app_state)
         recovery = app_state.settings.auth_recovery_password.strip()
-        authenticated = bool(config and config.password_hash and verify_password(password, config.password_hash))
+        authenticated = False
+        if config and config.password_hash:
+            authenticated = await asyncio.to_thread(verify_password, password, config.password_hash)
         if not authenticated and recovery and password:
-            if secrets.compare_digest(password, recovery):
+            # bytes, not str: secrets.compare_digest rejects non-ASCII str arguments.
+            if secrets.compare_digest(password.encode("utf-8"), recovery.encode("utf-8")):
                 authenticated = True
                 log.warning("login accepted via AUTH_RECOVERY_PASSWORD; set a regular password and unset it")
         if not authenticated:
@@ -106,10 +110,11 @@ def build_auth_router(app_state: Any) -> APIRouter:
         revoke_token = bool(payload.get("revoke_api_token", False))
         if new_password and len(new_password) < 8:
             raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+        new_password_hash = await asyncio.to_thread(hash_password, new_password) if new_password else None
         result: dict[str, Any] = {}
         with app_state.session_scope() as session:
-            if new_password:
-                store_auth_password_hash(session, hash_password(new_password))
+            if new_password_hash is not None:
+                store_auth_password_hash(session, new_password_hash)
                 # A password change revokes every outstanding session cookie.
                 bump_session_epoch(session)
             if enabled_value is not None:

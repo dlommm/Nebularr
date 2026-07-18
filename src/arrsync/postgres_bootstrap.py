@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 
+from psycopg import sql as psql
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.url import make_url
 
 
@@ -63,16 +64,23 @@ def bootstrap_arrapp_from_admin_url(admin_database_url: str, database_name: str,
     return rebuilt
 
 
+def _exec_role_password(conn: Connection, exists: bool, pw: str) -> None:
+    # CREATE/ALTER ROLE ... PASSWORD cannot take a bound parameter under psycopg3's
+    # server-side binding (it's not a DML statement), so the password is quoted and
+    # escaped client-side via psycopg.sql instead of :pw.
+    driver = conn.connection.driver_connection  # type: ignore[union-attr]
+    assert driver is not None
+    stmt = "alter role arrapp password {}" if exists else "create role arrapp login password {}"
+    driver.execute(psql.SQL(stmt).format(psql.Literal(pw)))
+
+
 def _grant_arrapp_privileges(admin_engine: Engine, dbn: str, pw: str, admin_user: str) -> None:
     # ac_engine shares admin_engine's pool; disposing admin_engine covers both.
     ac_engine = admin_engine.execution_options(isolation_level="AUTOCOMMIT")
 
     with ac_engine.connect() as conn:
         exists = conn.execute(text("select 1 from pg_roles where rolname = 'arrapp' limit 1")).scalar() == 1
-        if exists:
-            conn.execute(text("alter role arrapp password :pw"), {"pw": pw})
-        else:
-            conn.execute(text("create role arrapp login password :pw"), {"pw": pw})
+        _exec_role_password(conn, exists, pw)
 
         conn.execute(text("alter role arrapp set search_path = app, warehouse, public"))
         conn.execute(text(f"grant create on database {_quote_ident(dbn)} to arrapp"))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import signal
 import time
 import uuid
@@ -14,7 +15,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from arrsync.api import build_router
-from arrsync.auth import auth_required, enforce_auth
+from arrsync.auth import auth_required, enforce_auth, get_auth_config
 from arrsync.config import Settings, get_settings
 from arrsync.runtime_secrets import encryption_at_rest_active
 from arrsync.services.auth_store import read_setting
@@ -67,6 +68,7 @@ class AppState:
     request_webhook_drain: Any | None = field(default=None, repr=False)
     auth_config_cache: Any | None = field(default=None, repr=False)
     auth_config_cached_at: float = field(default=0.0, repr=False)
+    setup_bootstrap_token: str | None = field(default=None, repr=False)
     _engine: Any | None = field(default=None, repr=False)
     _pending_alert_config: dict[str, Any] | None = field(default=None, repr=False)
     scheduler_started: bool = field(default=False, repr=False)
@@ -229,6 +231,31 @@ def _log_security_posture() -> None:
         )
 
 
+def _maybe_issue_bootstrap_token() -> None:
+    """Print a one-time setup token when the box is unauthenticated and unconfigured.
+
+    Without this, a fresh install's /api/setup/* mutating endpoints (which can point
+    the app at attacker-controlled Postgres credentials) are open to anyone who can
+    reach it on the network before the operator finishes the setup wizard.
+    """
+    if app_state.session_factory.ready:
+        with app_state.session_scope() as session:
+            setup_completed = read_setting(session, "app.setup_completed").lower() == "true"
+        config = get_auth_config(app_state)
+        auth_configured = bool(config and config.password_set)
+    else:
+        setup_completed = False
+        auth_configured = False
+    if setup_completed or auth_configured:
+        return
+    token = secrets.token_urlsafe(24)
+    app_state.setup_bootstrap_token = token
+    log.warning(
+        "Setup bootstrap token: %s — required for setup API calls until setup completes",
+        token,
+    )
+
+
 async def _startup() -> None:
     _register_signal_handlers()
     event_bus.bind_loop(asyncio.get_running_loop())
@@ -236,12 +263,14 @@ async def _startup() -> None:
         validate_settings(settings, require_database_url=False)
         apply_root_log_level(settings.log_level)
         log.warning("DATABASE_URL not configured; Web UI setup will connect to Postgres and run migrations")
+        _maybe_issue_bootstrap_token()
         _log_security_posture()
         return
     validate_settings(settings)
     app_state._engine = bind_database_engine(settings, app_state.session_factory)
     await asyncio.to_thread(run_migrations_and_seed, app_state, settings)
     await finalize_application_services(app_state)
+    _maybe_issue_bootstrap_token()
     _log_security_posture()
     log.info("startup complete")
 

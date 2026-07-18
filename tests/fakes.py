@@ -72,6 +72,10 @@ class FakeSession:
             return FakeResult(1)
         if "insert into app.webhook_queue" in sql:
             return FakeResult()
+        if "insert into app.job_lock" in sql:
+            # try_job_lock: CAS-style acquire; already-held (per job_lock_held) means
+            # the WHERE expires_at < now() predicate doesn't match, so no row comes back.
+            return FakeResult(rows=[] if self.job_lock_held else [("owner",)])
         if "from app.job_lock" in sql:
             return FakeResult(rows=[(1,)] if self.job_lock_held else [])
         if "select name from app.integration_instance" in sql:
@@ -82,6 +86,12 @@ class FakeSession:
             if allowed and params and "instance_name" in params and self.known_webhook_instances is not None:
                 allowed = str(params["instance_name"]) in self.known_webhook_instances
             return FakeResult(rows=[(1,)] if allowed else [])
+        if "from app.integration_instance" in sql and "where name = 'default'" in sql:
+            return FakeResult(rows=[])
+        if "from app.sync_schedule" in sql and "select mode, cron, timezone, enabled" in sql:
+            return FakeResult(rows=[])
+        if "select exists(select 1 from pg_roles where rolname = 'arrapp')" in sql:
+            return FakeResult(scalar_value=False)
         raise RuntimeError(f"unexpected SQL in fake session: {sql}")
 
     # No-ops so this fake also works under the real db.session_scope().
@@ -144,6 +154,9 @@ class FakeMetrics:
     def inc(self, _name: str) -> None:
         return None
 
+    def render_prometheus(self) -> str:
+        return ""
+
 
 @dataclass
 class FakeAppState:
@@ -159,6 +172,9 @@ class FakeAppState:
         self.session = FakeSession()
         self.session_factory = SimpleNamespace(ready=True, unbind=lambda: None)
         self.event_bus = EventBus()
+        self.scheduler = SimpleNamespace(reload=lambda: None, settings=self.settings)
+        self.manual_sync_tasks: set = set()
+        self.setup_bootstrap_token: str | None = None
 
     @contextmanager
     def session_scope(self) -> Iterator[FakeSession]:

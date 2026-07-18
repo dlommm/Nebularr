@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from psycopg import sql as psql
 
 from arrsync.postgres_bootstrap import (
     _quote_ident,
@@ -43,3 +44,24 @@ class TestBootstrapValidation:
     def test_rejects_invalid_database_name(self) -> None:
         with pytest.raises(ValueError, match="letters, digits"):
             bootstrap_arrapp_from_admin_url("postgresql+psycopg://admin@db/arr-x", "arr-x", "pw")
+
+
+class TestComposedRolePasswordSql:
+    """psycopg.sql composition (no live DB): CREATE/ALTER ROLE can't bind :pw
+    under psycopg3 server-side binding, so the password must be quoted client-side."""
+
+    def test_create_role_quotes_and_escapes_password(self) -> None:
+        composed = psql.SQL("create role arrapp login password {}").format(
+            psql.Literal("a'b\\c")
+        ).as_string(None)
+        assert "a''b\\\\c" in composed  # ' doubled, \ doubled: safe even with escape-string syntax
+        assert composed.startswith("create role arrapp login password")
+        assert "'" in composed
+
+    def test_alter_role_quotes_and_escapes_password(self) -> None:
+        composed = psql.SQL("alter role arrapp password {}").format(
+            psql.Literal("a'b\\c")
+        ).as_string(None)
+        assert "a''b\\\\c" in composed
+        assert composed.startswith("alter role arrapp password")
+        assert "'" in composed

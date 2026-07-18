@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,7 +30,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/ui/recent-runs")
-    async def recent_runs() -> list[dict[str, Any]]:
+    def recent_runs() -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
             rows = session.execute(
                 text(
@@ -44,7 +45,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/ui/sync-progress")
-    async def sync_progress() -> dict[str, Any]:
+    def sync_progress() -> dict[str, Any]:
         """Primary running Sonarr/Radarr warehouse sync (any trigger: manual, scheduler, webhook, etc.)."""
         with app_state.session_scope() as session:
             active_run = session.execute(
@@ -117,7 +118,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
         }
 
     @router.get("/api/ui/work-status")
-    async def work_status() -> dict[str, Any]:
+    def work_status() -> dict[str, Any]:
         """Aggregated active work: warehouse syncs, MAL jobs, and setup-wizard initial sync."""
         items: list[dict[str, Any]] = []
         wh_running = False
@@ -144,28 +145,31 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
                     """
                 )
             ).mappings().all()
+
+            # One grouped baseline query instead of one per running row (N+1).
+            wh_baselines: dict[tuple[str, str, str], Any] = {}
+            if wh_rows:
+                wh_baselines = {
+                    (str(r["source"]), str(r["mode"]), str(r["instance_name"])): r
+                    for r in session.execute(
+                        text(
+                            """
+                            select
+                                source, mode, instance_name,
+                                round(avg(extract(epoch from (finished_at - started_at)))::numeric, 1) as avg_seconds,
+                                count(*)::int as sample_size
+                            from warehouse.sync_run
+                            where status in ('success', 'failed')
+                              and finished_at is not null
+                            group by source, mode, instance_name
+                            """
+                        )
+                    ).mappings()
+                }
+
             for row in wh_rows:
                 wh_running = True
-                baseline = session.execute(
-                    text(
-                        """
-                        select
-                            round(avg(extract(epoch from (finished_at - started_at)))::numeric, 1) as avg_seconds,
-                            count(*)::int as sample_size
-                        from warehouse.sync_run
-                        where source = :source
-                          and mode = :mode
-                          and instance_name = :instance_name
-                          and status in ('success', 'failed')
-                          and finished_at is not null
-                        """
-                    ),
-                    {
-                        "source": row["source"],
-                        "mode": row["mode"],
-                        "instance_name": row["instance_name"],
-                    },
-                ).mappings().first()
+                baseline = wh_baselines.get((str(row["source"]), str(row["mode"]), str(row["instance_name"])))
                 elapsed_seconds = float(row["elapsed_seconds"] or 0)
                 avg_seconds = float(baseline["avg_seconds"]) if baseline and baseline["avg_seconds"] is not None else None
                 eta_seconds = max(avg_seconds - elapsed_seconds, 0.0) if avg_seconds is not None else None
@@ -207,22 +211,30 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
                     """
                 )
             ).mappings().all()
+
+            mal_baselines: dict[str, Any] = {}
+            if mal_rows:
+                mal_baselines = {
+                    str(r["job_type"]): r
+                    for r in session.execute(
+                        text(
+                            """
+                            select
+                                job_type,
+                                round(avg(extract(epoch from (finished_at - started_at)))::numeric, 1) as avg_seconds,
+                                count(*)::int as sample_size
+                            from app.mal_job_run
+                            where status in ('success', 'failed')
+                              and finished_at is not null
+                            group by job_type
+                            """
+                        )
+                    ).mappings()
+                }
+
             for row in mal_rows:
                 jt = str(row["job_type"])
-                baseline_mal = session.execute(
-                    text(
-                        """
-                        select
-                            round(avg(extract(epoch from (finished_at - started_at)))::numeric, 1) as avg_seconds,
-                            count(*)::int as sample_size
-                        from app.mal_job_run
-                        where job_type = :job_type
-                          and status in ('success', 'failed')
-                          and finished_at is not null
-                        """
-                    ),
-                    {"job_type": jt},
-                ).mappings().first()
+                baseline_mal = mal_baselines.get(jt)
                 elapsed_mal = float(row["elapsed_seconds"] or 0)
                 avg_mal = float(baseline_mal["avg_seconds"]) if baseline_mal and baseline_mal["avg_seconds"] is not None else None
                 eta_mal = max(avg_mal - elapsed_mal, 0.0) if avg_mal is not None else None
@@ -278,7 +290,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
         }
 
     @router.get("/api/ui/sync-activity")
-    async def sync_activity() -> list[dict[str, Any]]:
+    def sync_activity() -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
             rows = session.execute(
                 text(
@@ -304,7 +316,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/ui/logs")
-    async def ui_recent_logs(limit: int = 400) -> dict[str, Any]:
+    def ui_recent_logs(limit: int = 400) -> dict[str, Any]:
         bounded = clamp_limit(limit, default=400, max_limit=2000)
         items = get_recent_logs_parsed(bounded)
         with app_state.session_scope() as session:
@@ -312,7 +324,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
         return {"items": items, "capacity": ring_buffer_capacity(), "effective_level": eff}
 
     @router.get("/api/ui/webhook-queue")
-    async def webhook_queue_summary() -> list[dict[str, Any]]:
+    def webhook_queue_summary() -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
             rows = session.execute(
                 text(
@@ -327,7 +339,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             return [dict(r) for r in rows]
 
     @router.get("/api/ui/webhook-jobs")
-    async def webhook_jobs(
+    def webhook_jobs(
         status: str = "all", limit: int = 100, offset: int = 0, paged: bool = False
     ) -> list[dict[str, Any]] | dict[str, Any]:
         """paged=true adds a total for real pagination; the bare-list default is
@@ -350,7 +362,7 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
                     select id, source, event_type, status, attempts, received_at, next_attempt_at, processed_at, error_message
                     from app.webhook_queue
                     {where_clause}
-                    order by received_at desc
+                    order by received_at desc, id desc
                     limit :limit
                     offset :offset
                     """
@@ -366,9 +378,23 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
             ).scalar_one()
             return paged_response(items, int(total), bounded_limit, bounded_offset)
 
-    def _sync_lock_held(lock_name: str) -> bool:
+    def _reserve_sync_slot(lock_name: str) -> bool:
+        """Atomically claim the sync's job lock, then release it back.
+
+        A plain read-then-act check (job_lock_held) leaves a race: two concurrent
+        ?wait=false requests can both see "not held" and both get queued, and the
+        loser silently no-ops inside run_sync's own lock acquisition with no way
+        for its caller to know. try_job_lock is a compare-and-swap, so only one
+        concurrent caller here ever gets True. The slot is released immediately —
+        actual ownership for the run belongs to run_sync's own acquire/heartbeat/
+        release cycle once the background task starts.
+        """
+        owner_id = f"trigger-sync-check:{uuid.uuid4()}"
         with app_state.session_scope() as session:
-            return repo.job_lock_held(session, lock_name)
+            acquired = repo.try_job_lock(session, lock_name, owner_id)
+            if acquired:
+                repo.release_job_lock(session, lock_name, owner_id)
+            return acquired
 
     async def _run_queued_sync(source: str, mode: str) -> None:
         try:
@@ -391,8 +417,8 @@ def build_sync_ops_router(app_state: Any) -> APIRouter:
         if mode not in {"full", "incremental", "reconcile"}:
             raise HTTPException(status_code=400, detail="invalid mode")
         if not wait:
-            if await asyncio.to_thread(_sync_lock_held, f"{source}:{mode}"):
-                raise HTTPException(status_code=409, detail=f"{source}/{mode} sync already running")
+            if not await asyncio.to_thread(_reserve_sync_slot, f"{source}:{mode}"):
+                raise HTTPException(status_code=409, detail="sync already running")
             task = asyncio.create_task(_run_queued_sync(source, mode))
             app_state.manual_sync_tasks.add(task)
             task.add_done_callback(app_state.manual_sync_tasks.discard)

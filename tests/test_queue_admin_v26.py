@@ -30,6 +30,9 @@ class QueueAdminFakeSession:
         ]
         self.statements: list[tuple[str, dict[str, Any] | None]] = []
         self.truncated = False
+        self.truncate_sql = ""
+        # (id, source) for a successful single-job requeue; None simulates "not found".
+        self.requeue_job_row: tuple[int, str] | None = (7, "sonarr")
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> Any:
         sql = " ".join(str(query).lower().split())
@@ -40,6 +43,10 @@ class QueueAdminFakeSession:
             return FakeResult(scalar_value=103)
         if "update app.webhook_queue" in sql and "returning source" in sql:
             return FakeResult(rows=[("sonarr",), ("sonarr",), ("radarr",)])
+        if "update app.webhook_queue" in sql and "returning id, source" in sql:
+            return FakeResult(rows=[self.requeue_job_row] if self.requeue_job_row else [])
+        if "update app.webhook_queue" in sql and "status = 'dead_letter'" in sql:
+            return FakeResult()
         if "select key, value from app.settings" in sql:
             keys = set((params or {}).get("keys", []))
             kept = [
@@ -50,6 +57,7 @@ class QueueAdminFakeSession:
             return FakeResult(rows=kept)
         if "truncate table" in sql:
             self.truncated = True
+            self.truncate_sql = sql
             self.settings = {}
             return FakeResult()
         if "insert into app.settings" in sql:
@@ -91,6 +99,13 @@ def test_webhook_jobs_paged_shape_and_legacy_list() -> None:
     assert isinstance(legacy, list) and len(legacy) == 3
 
 
+def test_webhook_jobs_orders_by_received_at_then_id_for_stable_pagination() -> None:
+    client, _state, session = _client()
+    client.get("/api/ui/webhook-jobs")
+    select_sql = next(sql for sql, _ in session.statements if "select id, source, event_type" in sql)
+    assert "order by received_at desc, id desc" in select_sql
+
+
 def test_requeue_bulk_updates_and_kicks_drain() -> None:
     client, state, session = _client()
     drained: list[str] = []
@@ -102,6 +117,37 @@ def test_requeue_bulk_updates_and_kicks_drain() -> None:
     assert drained == ["radarr", "sonarr"]
     update_sql = next(sql for sql, _ in session.statements if "returning source" in sql)
     assert "set status = 'queued'" in update_sql
+
+
+def test_replay_dead_letter_kicks_drain() -> None:
+    client, state, _session = _client()
+    drained: list[str] = []
+    state.request_webhook_drain = drained.append
+    response = client.post("/api/webhooks/replay-dead-letter/sonarr")
+    assert response.status_code == 200
+    assert response.json() == {"status": "queued"}
+    assert drained == ["sonarr"]
+
+
+def test_requeue_single_job_kicks_drain() -> None:
+    client, state, session = _client()
+    session.requeue_job_row = (7, "radarr")
+    drained: list[str] = []
+    state.request_webhook_drain = drained.append
+    response = client.post("/api/webhooks/requeue/7")
+    assert response.status_code == 200
+    assert response.json() == {"status": "queued", "job_id": 7}
+    assert drained == ["radarr"]
+
+
+def test_requeue_single_job_not_found_does_not_drain() -> None:
+    client, state, session = _client()
+    session.requeue_job_row = None
+    drained: list[str] = []
+    state.request_webhook_drain = drained.append
+    response = client.post("/api/webhooks/requeue/999")
+    assert response.status_code == 404
+    assert drained == []
 
 
 def test_requeue_bulk_validates_inputs() -> None:
@@ -132,3 +178,11 @@ def test_reset_data_preserves_auth_and_config_settings() -> None:
         assert key in session.settings, f"{key} must survive reset"
     # ...derived capability keys do not.
     assert "sonarr.app_version" not in session.settings
+
+
+def test_reset_data_truncates_stat_snapshots_and_integrity_audit_history() -> None:
+    client, _state, session = _client()
+    response = client.post("/api/admin/reset-data", json={"confirmation": "RESET"})
+    assert response.status_code == 200
+    assert "warehouse.library_stat_snapshot" in session.truncate_sql
+    assert "app.integrity_audit_run" in session.truncate_sql

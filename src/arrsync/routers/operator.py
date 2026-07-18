@@ -23,7 +23,7 @@ def build_operator_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/operator/integrity-audit")
-    async def list_integrity_audits(limit: int = 20) -> list[dict[str, Any]]:
+    def list_integrity_audits(limit: int = 20) -> list[dict[str, Any]]:
         with app_state.session_scope() as session:
             return repo.list_integrity_audit_runs(session, limit=limit)
 
@@ -160,7 +160,7 @@ def build_operator_router(app_state: Any) -> APIRouter:
         return out
 
     @router.post("/api/webhooks/replay-dead-letter/{source}")
-    async def replay_dead_letter(source: str) -> dict[str, Any]:
+    def replay_dead_letter(source: str) -> dict[str, Any]:
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=400, detail="source must be sonarr or radarr")
         with app_state.session_scope() as session:
@@ -174,10 +174,13 @@ def build_operator_router(app_state: Any) -> APIRouter:
                 ),
                 {"source": source},
             )
+        request_drain = getattr(app_state, "request_webhook_drain", None)
+        if request_drain is not None:
+            request_drain(source)
         return {"status": "queued"}
 
     @router.post("/api/webhooks/requeue-bulk")
-    async def requeue_webhooks_bulk(payload: dict[str, Any]) -> dict[str, Any]:
+    def requeue_webhooks_bulk(payload: dict[str, Any]) -> dict[str, Any]:
         """Requeue every job in the given status (optionally per source) in one shot."""
         status = str(payload.get("status", "")).strip().lower()
         if status not in {"retrying", "dead_letter"}:
@@ -211,7 +214,7 @@ def build_operator_router(app_state: Any) -> APIRouter:
         return {"status": "queued", "requeued": len(rows), "sources": requeued_sources}
 
     @router.post("/api/webhooks/requeue/{job_id}")
-    async def requeue_webhook_job(job_id: int) -> dict[str, Any]:
+    def requeue_webhook_job(job_id: int) -> dict[str, Any]:
         with app_state.session_scope() as session:
             updated = session.execute(
                 text(
@@ -219,13 +222,16 @@ def build_operator_router(app_state: Any) -> APIRouter:
                     update app.webhook_queue
                     set status = 'queued', next_attempt_at = now(), error_message = null
                     where id = :job_id and status in ('dead_letter', 'retrying')
-                    returning id
+                    returning id, source
                     """
                 ),
                 {"job_id": job_id},
             ).first()
         if not updated:
             raise HTTPException(status_code=404, detail="job not found or not requeueable")
+        request_drain = getattr(app_state, "request_webhook_drain", None)
+        if request_drain is not None:
+            request_drain(str(updated[1]))
         return {"status": "queued", "job_id": job_id}
 
     # Settings that survive a data reset. Integrations (with their API keys) are
@@ -242,7 +248,15 @@ def build_operator_router(app_state: Any) -> APIRouter:
     )
 
     @router.post("/api/admin/reset-data")
-    async def reset_data(payload: dict[str, Any]) -> dict[str, Any]:
+    def reset_data(payload: dict[str, Any]) -> dict[str, Any]:
+        """Wipe library data, sync/audit history, the webhook queue, and MAL data.
+
+        Truncates (cascading): mal.* dub/matcher/tag state, app.mal_job_run,
+        warehouse.{episode,movie}[_file], warehouse.series, warehouse.sync_run,
+        warehouse.library_stat_snapshot, app.integrity_audit_run, app.webhook_queue,
+        app.job_run_summary, app.sync_state, app.job_lock, and app.settings (except the
+        keep-list below). Integrations (with their API keys) are never touched.
+        """
         confirmation = str(payload.get("confirmation", "")).strip().upper()
         if confirmation != "RESET":
             raise HTTPException(status_code=400, detail="confirmation must be RESET")
@@ -284,6 +298,8 @@ def build_operator_router(app_state: Any) -> APIRouter:
                         warehouse.movie,
                         warehouse.series,
                         warehouse.sync_run,
+                        warehouse.library_stat_snapshot,
+                        app.integrity_audit_run,
                         app.webhook_queue,
                         app.job_run_summary,
                         app.sync_state,
@@ -298,7 +314,10 @@ def build_operator_router(app_state: Any) -> APIRouter:
         invalidate_auth_cache(app_state)
         return {
             "status": "ok",
-            "message": "database data reset complete",
+            "message": (
+                "database data reset complete (library, sync history, integrity audit "
+                "history, library stat snapshots, webhook queue, and MAL data cleared)"
+            ),
             "kept_setting_count": len(kept_rows),
         }
 

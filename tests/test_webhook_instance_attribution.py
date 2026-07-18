@@ -171,9 +171,22 @@ def test_legacy_route_stamps_sole_renamed_integration() -> None:
     assert json.loads(rows[0]["payload"])["instance_name"] == "main-sonarr"
 
 
-def test_legacy_route_with_multiple_integrations_falls_back_to_default() -> None:
+def test_legacy_route_with_multiple_integrations_and_no_default_is_ambiguous() -> None:
+    # Regression: neither "a-sonarr" nor "b-sonarr" is named "default", so stamping
+    # "default" would misattribute the event to an integration that doesn't exist.
     state = FakeAppState()
     state.session.enabled_webhook_names = ["a-sonarr", "b-sonarr"]
+    client, _ = _build_client(state)
+
+    response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "Download"})
+    assert response.status_code == 409
+    assert "use /hooks/{source}/{instance_name}" in response.json()["detail"]
+    assert not _enqueued(state)
+
+
+def test_legacy_route_with_multiple_integrations_uses_literal_default() -> None:
+    state = FakeAppState()
+    state.session.enabled_webhook_names = ["default", "b-sonarr"]
     client, _ = _build_client(state)
 
     response = client.post("/hooks/sonarr", headers=SECRET_HEADER, json={"eventType": "Download"})

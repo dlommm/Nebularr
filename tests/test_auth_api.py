@@ -88,6 +88,35 @@ def test_exempt_and_public_paths_stay_reachable_with_auth_enabled() -> None:
     assert hook.status_code == 200
 
 
+def test_metrics_is_open_when_auth_is_disabled() -> None:
+    state = FakeAppState()
+    client = _build_client(state)
+    assert client.get("/metrics").status_code == 200
+
+
+def test_metrics_requires_auth_once_auth_is_enabled() -> None:
+    state = FakeAppState()
+    client = _build_client(state)
+    _enable_auth(state=state, client=client)
+    anonymous = TestClient(client.app)
+    assert anonymous.get("/metrics").status_code == 401
+    assert client.post("/api/auth/login", json={"password": "hunter2secret"}).status_code == 200
+    assert client.get("/metrics").status_code == 200
+
+
+def test_metrics_public_setting_bypasses_the_gate() -> None:
+    state = FakeAppState()
+    client = _build_client(state)
+    _enable_auth(state=state, client=client)
+    assert client.post("/api/auth/login", json={"password": "hunter2secret"}).status_code == 200
+    anonymous = TestClient(client.app)
+    assert anonymous.get("/metrics").status_code == 401
+
+    put = client.put("/api/config/metrics", json={"public": True})
+    assert put.status_code == 200
+    assert anonymous.get("/metrics").status_code == 200
+
+
 def test_tampered_and_expired_session_tokens_are_rejected() -> None:
     state = FakeAppState()
     client = _build_client(state)
@@ -144,6 +173,25 @@ def test_recovery_password_env_override() -> None:
     _enable_auth(state=state, client=client)
     login = client.post("/api/auth/login", json={"password": "break-glass-pass"})
     assert login.status_code == 200
+
+
+def test_non_ascii_password_with_recovery_password_set_is_401_not_500() -> None:
+    # Regression: secrets.compare_digest(str, str) raises TypeError on non-ASCII
+    # input; that must not surface as a 500, and the failed attempt still counts
+    # toward the lockout (mismatch falls through to normal failure handling).
+    state = FakeAppState()
+    state.settings.auth_recovery_password = "break-glass-pass"
+    client = _build_client(state)
+    _enable_auth(state=state, client=client)
+    response = client.post("/api/auth/login", json={"password": "пароль-非-ascii"})
+    assert response.status_code == 401
+    # Four more identical failures should hit the 5-failure lockout, proving
+    # register_failure was actually incremented (not skipped, or never reached).
+    # proving register_failure was actually incremented (not skipped/crashed).
+    for _ in range(4):
+        client.post("/api/auth/login", json={"password": "пароль-非-ascii"})
+    locked = client.post("/api/auth/login", json={"password": "пароль-非-ascii"})
+    assert locked.status_code == 429
 
 
 def test_auth_enabled_env_false_is_lockout_escape_hatch() -> None:

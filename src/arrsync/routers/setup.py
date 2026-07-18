@@ -5,14 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import text
 
 from arrsync.auth import (
+    get_auth_config,
     hash_password,
     invalidate_auth_cache,
 )
@@ -44,8 +46,36 @@ log = logging.getLogger(__name__)
 def build_setup_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
+    def _bootstrap_token_active() -> bool:
+        """Whether the X-Setup-Token gate still applies to mutating setup endpoints.
+
+        The token (issued at startup, see main.py) exists only to protect the window
+        between "container up" and "operator finished the wizard"; it stops mattering
+        the moment either setup completes or a real admin password gets configured.
+        """
+        token = getattr(app_state, "setup_bootstrap_token", None)
+        if not token:
+            return False
+        if app_state.session_factory.ready:
+            with app_state.session_scope() as session:
+                if get_setting(session, "app.setup_completed", "false").lower() == "true":
+                    return False
+        config = get_auth_config(app_state)
+        if config is not None and config.password_set:
+            return False
+        return True
+
+    def _require_bootstrap_token(request: Request) -> None:
+        if not _bootstrap_token_active():
+            return
+        token = app_state.setup_bootstrap_token
+        provided = request.headers.get("x-setup-token", "")
+        if not secrets.compare_digest(provided, token):
+            raise HTTPException(status_code=403, detail="missing or invalid X-Setup-Token header")
+
     @router.get("/api/setup/status")
-    async def setup_status() -> dict[str, Any]:
+    def setup_status() -> dict[str, Any]:
+        bootstrap_token_required = _bootstrap_token_active()
         if not app_state.session_factory.ready:
             return {
                 "completed": False,
@@ -57,6 +87,7 @@ def build_setup_router(app_state: Any) -> APIRouter:
                     "runtime_url_persisted": runtime_database_url_persisted(),
                     "arrapp_role_exists": False,
                 },
+                "bootstrap_token_required": bootstrap_token_required,
             }
         with app_state.session_scope() as session:
             setup_completed = get_setting(session, "app.setup_completed", "false").lower() == "true"
@@ -102,10 +133,11 @@ def build_setup_router(app_state: Any) -> APIRouter:
                     "runtime_url_persisted": runtime_database_url_persisted(),
                     "arrapp_role_exists": arrapp_exists,
                 },
+                "bootstrap_token_required": bootstrap_token_required,
             }
 
     @router.post("/api/setup/skip")
-    async def setup_skip() -> dict[str, Any]:
+    def setup_skip() -> dict[str, Any]:
         if not app_state.session_factory.ready:
             raise HTTPException(
                 status_code=400,
@@ -116,7 +148,8 @@ def build_setup_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "completed": True}
 
     @router.post("/api/setup/initialize-postgres")
-    async def setup_initialize_postgres(payload: dict[str, Any]) -> dict[str, Any]:
+    async def setup_initialize_postgres(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_bootstrap_token(request)
         if app_state.session_factory.ready:
             raise HTTPException(status_code=409, detail="database already initialized")
         host = str(payload.get("host", "")).strip()
@@ -180,7 +213,8 @@ def build_setup_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "restart_recommended": bool(arrapp_pw)}
 
     @router.post("/api/setup/bootstrap-database")
-    async def setup_bootstrap_database(payload: dict[str, Any]) -> dict[str, Any]:
+    async def setup_bootstrap_database(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_bootstrap_token(request)
         if runtime_database_url_persisted():
             raise HTTPException(status_code=409, detail="runtime database URL already configured")
         admin_url = str(payload.get("admin_database_url", "")).strip()
@@ -221,7 +255,8 @@ def build_setup_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "restart_required": True}
 
     @router.post("/api/setup/wizard")
-    async def setup_wizard(payload: dict[str, Any]) -> dict[str, Any]:
+    def setup_wizard(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_bootstrap_token(request)
         if not app_state.session_factory.ready:
             raise HTTPException(
                 status_code=400,
@@ -320,7 +355,8 @@ def build_setup_router(app_state: Any) -> APIRouter:
         return {"status": "ok", "completed": True}
 
     @router.post("/api/setup/initial-sync")
-    async def setup_initial_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    async def setup_initial_sync(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_bootstrap_token(request)
         sync_state = setup_sync_state(app_state)
         if not app_state.session_factory.ready:
             raise HTTPException(
@@ -342,24 +378,42 @@ def build_setup_router(app_state: Any) -> APIRouter:
 
         async def _run_setup_sync(selected_sources: list[str]) -> None:
             for source in selected_sources:
-                await app_state.sync_service.run_sync(source, "full", reason="setup")
+                try:
+                    result = await app_state.sync_service.run_sync(source, "full", reason="setup")
+                    sync_state.results[source] = result.status
+                except Exception as exc:
+                    sync_state.results[source] = f"error: {exc}"
+                    log.exception("setup initial sync failed", extra={"source": source})
 
         sync_state.sources = deduped_sources
+        sync_state.results = {}
+        sync_state.error = None
         sync_state.started_at = datetime.now(timezone.utc)
 
-        def _clear_setup_started(_task: asyncio.Task[None]) -> None:
+        def _on_setup_sync_done(task: asyncio.Task[None]) -> None:
             sync_state.started_at = None
+            app_state.manual_sync_tasks.discard(task)
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                sync_state.error = str(exc) or type(exc).__name__
 
         sync_state.task = asyncio.create_task(_run_setup_sync(deduped_sources))
-        sync_state.task.add_done_callback(_clear_setup_started)
+        app_state.manual_sync_tasks.add(sync_state.task)
+        sync_state.task.add_done_callback(_on_setup_sync_done)
         return {"status": "queued", "running": True, "sources": deduped_sources}
 
     @router.get("/api/setup/initial-sync-status")
     async def setup_initial_sync_status() -> dict[str, Any]:
         sync_state = setup_sync_state(app_state)
-        return {
+        payload: dict[str, Any] = {
             "running": sync_state.running,
             "sources": sync_state.sources,
+            "results": dict(sync_state.results),
         }
+        if sync_state.error:
+            payload["error"] = sync_state.error
+        return payload
 
     return router
