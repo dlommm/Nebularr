@@ -12,6 +12,7 @@ from arrsync.auth import invalidate_auth_cache
 from arrsync.mal import repository as mal_repo
 from arrsync.services.settings_store import set_setting
 from arrsync.routers.shared import (
+    run_db,
     to_bool,
 )
 from arrsync.services import repository as repo
@@ -160,10 +161,11 @@ def build_operator_router(app_state: Any) -> APIRouter:
         return out
 
     @router.post("/api/webhooks/replay-dead-letter/{source}")
-    def replay_dead_letter(source: str) -> dict[str, Any]:
+    async def replay_dead_letter(source: str) -> dict[str, Any]:
         if source not in {"sonarr", "radarr"}:
             raise HTTPException(status_code=400, detail="source must be sonarr or radarr")
-        with app_state.session_scope() as session:
+
+        def _replay(session: Any) -> None:
             session.execute(
                 text(
                     """
@@ -174,13 +176,17 @@ def build_operator_router(app_state: Any) -> APIRouter:
                 ),
                 {"source": source},
             )
+
+        await run_db(app_state, _replay)
+        # Called back on the event loop (we're past the await): request_webhook_drain
+        # sets an asyncio.Event, which is not thread-safe to call off-loop.
         request_drain = getattr(app_state, "request_webhook_drain", None)
         if request_drain is not None:
             request_drain(source)
         return {"status": "queued"}
 
     @router.post("/api/webhooks/requeue-bulk")
-    def requeue_webhooks_bulk(payload: dict[str, Any]) -> dict[str, Any]:
+    async def requeue_webhooks_bulk(payload: dict[str, Any]) -> dict[str, Any]:
         """Requeue every job in the given status (optionally per source) in one shot."""
         status = str(payload.get("status", "")).strip().lower()
         if status not in {"retrying", "dead_letter"}:
@@ -194,8 +200,9 @@ def build_operator_router(app_state: Any) -> APIRouter:
         params: dict[str, Any] = {"status": status}
         if source:
             params["source"] = source
-        with app_state.session_scope() as session:
-            rows = session.execute(
+
+        def _requeue_bulk(session: Any) -> list[Any]:
+            return session.execute(
                 text(
                     f"""
                     update app.webhook_queue
@@ -206,7 +213,10 @@ def build_operator_router(app_state: Any) -> APIRouter:
                 ),
                 params,
             ).fetchall()
+
+        rows = await run_db(app_state, _requeue_bulk)
         requeued_sources = sorted({str(row[0]) for row in rows})
+        # Called back on the event loop, same reason as replay_dead_letter above.
         request_drain = getattr(app_state, "request_webhook_drain", None)
         if request_drain is not None:
             for requeued_source in requeued_sources:
@@ -214,9 +224,9 @@ def build_operator_router(app_state: Any) -> APIRouter:
         return {"status": "queued", "requeued": len(rows), "sources": requeued_sources}
 
     @router.post("/api/webhooks/requeue/{job_id}")
-    def requeue_webhook_job(job_id: int) -> dict[str, Any]:
-        with app_state.session_scope() as session:
-            updated = session.execute(
+    async def requeue_webhook_job(job_id: int) -> dict[str, Any]:
+        def _requeue_job(session: Any) -> Any:
+            return session.execute(
                 text(
                     """
                     update app.webhook_queue
@@ -227,8 +237,11 @@ def build_operator_router(app_state: Any) -> APIRouter:
                 ),
                 {"job_id": job_id},
             ).first()
+
+        updated = await run_db(app_state, _requeue_job)
         if not updated:
             raise HTTPException(status_code=404, detail="job not found or not requeueable")
+        # Called back on the event loop, same reason as replay_dead_letter above.
         request_drain = getattr(app_state, "request_webhook_drain", None)
         if request_drain is not None:
             request_drain(str(updated[1]))
@@ -245,6 +258,7 @@ def build_operator_router(app_state: Any) -> APIRouter:
         "app.retention_policy_json",
         "app.queue_policy_json",
         "app.ui_saved_views_json",
+        "app.metrics_public",
     )
 
     @router.post("/api/admin/reset-data")

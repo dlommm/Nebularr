@@ -89,3 +89,37 @@ def test_status_reports_no_token_required_when_none_issued() -> None:
     state = FakeAppState()
     client = _client(state)
     assert client.get("/api/setup/status").json()["bootstrap_token_required"] is False
+
+
+def test_non_ascii_header_is_rejected_not_500() -> None:
+    # Regression: secrets.compare_digest(str, str) raises TypeError on non-ASCII
+    # input, same footgun as the auth_routes.py recovery-password compare. httpx's
+    # convenience headers=dict[str, str] refuses non-ASCII str values client-side
+    # (UnicodeEncodeError), so send raw high-byte bytes instead — Starlette decodes
+    # ASGI header bytes via latin-1, landing as a non-ASCII str on the server side,
+    # same as a real adversarial/malformed client would produce.
+    state = FakeAppState()
+    state.setup_bootstrap_token = "s3cr3t-token"
+    client = _client(state)
+    response = client.post(
+        "/api/setup/wizard", json=WIZARD_PAYLOAD, headers={"x-setup-token": b"\xe9\xe8\xe7-token"}
+    )
+    assert response.status_code == 403
+
+
+def test_setup_skip_is_gated_by_bootstrap_token() -> None:
+    # setup_skip flips app.setup_completed=true, which deactivates the gate itself —
+    # it must be gated too, not just initialize-postgres/bootstrap-database/wizard/
+    # initial-sync.
+    state = FakeAppState()
+    state.setup_bootstrap_token = "s3cr3t-token"
+    client = _client(state)
+
+    missing = client.post("/api/setup/skip")
+    assert missing.status_code == 403
+
+    wrong = client.post("/api/setup/skip", headers={"x-setup-token": "nope"})
+    assert wrong.status_code == 403
+
+    ok = client.post("/api/setup/skip", headers={"x-setup-token": "s3cr3t-token"})
+    assert ok.status_code == 200

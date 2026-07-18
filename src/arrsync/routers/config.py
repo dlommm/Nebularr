@@ -64,7 +64,7 @@ SAVED_VIEWS_SEARCH_MAX = 2000
 
 INTEGRATION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 INTEGRATION_BASE_URL_MAX_LENGTH = 512
-METRICS_PUBLIC_KEY = "metrics.public"
+METRICS_PUBLIC_KEY = "app.metrics_public"
 
 log = logging.getLogger(__name__)
 

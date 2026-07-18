@@ -70,7 +70,8 @@ def build_setup_router(app_state: Any) -> APIRouter:
             return
         token = app_state.setup_bootstrap_token
         provided = request.headers.get("x-setup-token", "")
-        if not secrets.compare_digest(provided, token):
+        # bytes, not str: secrets.compare_digest rejects non-ASCII str arguments.
+        if not secrets.compare_digest(provided.encode("utf-8"), token.encode("utf-8")):
             raise HTTPException(status_code=403, detail="missing or invalid X-Setup-Token header")
 
     @router.get("/api/setup/status")
@@ -137,7 +138,8 @@ def build_setup_router(app_state: Any) -> APIRouter:
             }
 
     @router.post("/api/setup/skip")
-    def setup_skip() -> dict[str, Any]:
+    def setup_skip(request: Request) -> dict[str, Any]:
+        _require_bootstrap_token(request)
         if not app_state.session_factory.ready:
             raise HTTPException(
                 status_code=400,

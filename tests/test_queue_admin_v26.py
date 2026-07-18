@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
+import httpx
+import pytest
 from fakes import FakeAppState, FakeResult
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,6 +23,7 @@ class QueueAdminFakeSession:
             "app.setup_completed": "true",
             "mal.client_id": "enc:cid",
             "app.alert_webhook_min_state": "warning",
+            "app.metrics_public": "true",
             "sonarr.app_version": "4.0.9",  # derived; must NOT survive reset
         }
         self.job_rows = [
@@ -150,6 +154,35 @@ def test_requeue_single_job_not_found_does_not_drain() -> None:
     assert drained == []
 
 
+@pytest.mark.asyncio
+async def test_webhook_drain_runs_on_the_event_loop_thread_not_a_worker_thread() -> None:
+    # Regression: request_webhook_drain (database_lifecycle.py) sets an asyncio.Event,
+    # which is not thread-safe. A plain `def` handler runs entirely in FastAPI's
+    # worker threadpool, including the drain call — this must never happen again.
+    # ASGITransport calls the app in-process on the current event loop (no portal
+    # thread), so the test's own thread ident is exactly "the loop thread".
+    state = FakeAppState()
+    session = QueueAdminFakeSession()
+    state.session = session  # type: ignore[assignment]
+    drain_thread_idents: list[int] = []
+    state.request_webhook_drain = lambda source: drain_thread_idents.append(threading.get_ident())
+    app = FastAPI()
+    app.include_router(build_router(state))
+    loop_thread_ident = threading.get_ident()
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with client:
+        replay = await client.post("/api/webhooks/replay-dead-letter/sonarr")
+        assert replay.status_code == 200
+        bulk = await client.post("/api/webhooks/requeue-bulk", json={"status": "dead_letter"})
+        assert bulk.status_code == 200
+        single = await client.post("/api/webhooks/requeue/7")
+        assert single.status_code == 200
+
+    assert len(drain_thread_idents) == 4  # replay(1) + bulk(2 sources) + single(1)
+    assert set(drain_thread_idents) == {loop_thread_ident}
+
+
 def test_requeue_bulk_validates_inputs() -> None:
     client, _state, _session = _client()
     assert client.post("/api/webhooks/requeue-bulk", json={"status": "done"}).status_code == 400
@@ -165,8 +198,9 @@ def test_reset_data_preserves_auth_and_config_settings() -> None:
     assert response.status_code == 200
     body = response.json()
     assert session.truncated
-    assert body["kept_setting_count"] == 6
-    # Auth, webhook secret, setup flag, alert + MAL config survive the reset...
+    assert body["kept_setting_count"] == 7
+    # Auth, webhook secret, setup flag, alert + MAL config, and metrics visibility
+    # survive the reset...
     for key in (
         "app.auth_password_hash",
         "app.auth_enabled",
@@ -174,6 +208,7 @@ def test_reset_data_preserves_auth_and_config_settings() -> None:
         "app.setup_completed",
         "mal.client_id",
         "app.alert_webhook_min_state",
+        "app.metrics_public",
     ):
         assert key in session.settings, f"{key} must survive reset"
     # ...derived capability keys do not.

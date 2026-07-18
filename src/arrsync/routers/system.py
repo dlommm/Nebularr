@@ -53,10 +53,10 @@ def build_system_router(app_state: Any) -> APIRouter:
     def metrics(request: Request) -> PlainTextResponse:
         # /metrics sits outside the /api/* auth gate (Prometheus scrapers rarely carry
         # a session cookie), so once auth is enabled it must gate itself — unless the
-        # operator has explicitly opted into public metrics via metrics.public.
+        # operator has explicitly opted into public metrics via app.metrics_public.
         if auth_required(app_state):
             with app_state.session_scope() as session:
-                public = get_setting(session, "metrics.public", "false").lower() == "true"
+                public = get_setting(session, "app.metrics_public", "false").lower() == "true"
             if not public and not request_is_authenticated(request, app_state):
                 raise HTTPException(status_code=401, detail="authentication required")
         return PlainTextResponse(app_state.metrics.render_prometheus(), media_type="text/plain")
