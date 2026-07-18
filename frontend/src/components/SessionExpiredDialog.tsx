@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { PATHS } from "@/routes/paths";
 
 /**
  * Forced re-login prompt shown when `/api/*` returns a 401 outside of the
@@ -15,11 +16,11 @@ export function SessionExpiredDialog({ open }: { open: boolean }): JSX.Element {
   // Never cover the login page with its own re-login prompt: a 401 elsewhere
   // (e.g. a cold-load setup-status check) can both flip this open and route to
   // /login, and the login form must stay unobstructed.
-  const showDialog = open && location.pathname !== "/login";
+  const showDialog = open && location.pathname !== PATHS.login;
 
   const goToLogin = (): void => {
     const next = encodeURIComponent(location.pathname + location.search);
-    navigate(`/login?next=${next}`, { replace: true });
+    navigate(`${PATHS.login}?next=${next}`, { replace: true });
   };
 
   return (

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
@@ -28,6 +28,7 @@ vi.mock("./api", async () => {
       setupStatus: vi.fn(() =>
         Promise.resolve(DEFAULT_SETUP_STATUS satisfies Awaited<ReturnType<typeof actual.api.setupStatus>>),
       ),
+      authLogin: vi.fn(() => Promise.resolve({ status: "ok" })),
     },
   };
 });
@@ -116,6 +117,34 @@ describe("App", () => {
 
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not reopen the session-expired dialog after a successful re-login", async () => {
+    // App never unmounts, so the sessionExpired latch must clear on arrival at
+    // /login — otherwise re-logging in navigates back into the app with the
+    // undismissable dialog still open over the authenticated shell.
+    vi.mocked(api.authLogin).mockResolvedValue({ status: "ok" });
+    renderAppAt("/");
+    expect(await screen.findByRole("heading", { name: "Nebularr" })).toBeInTheDocument();
+
+    // Session expires mid-task: the forced re-login dialog appears.
+    act(() => {
+      window.dispatchEvent(new CustomEvent("nebularr:session-expired"));
+    });
+    expect(await screen.findByText(/session expired/i)).toBeInTheDocument();
+
+    // Follow the dialog's only affordance to the login page; the dialog clears.
+    await userEvent.click(screen.getByRole("button", { name: /^log in$/i }));
+    const passwordField = await screen.findByLabelText(/password/i);
+    expect(screen.queryByText(/session expired/i)).not.toBeInTheDocument();
+
+    // Complete a successful login and return to the authenticated app.
+    await userEvent.type(passwordField, "hunter2");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    // The dialog must NOT reopen over the shell.
+    expect(await screen.findByRole("heading", { name: "Nebularr" })).toBeInTheDocument();
+    expect(screen.queryByText(/session expired/i)).not.toBeInTheDocument();
   });
 
   describe("RouteErrorBoundary", () => {

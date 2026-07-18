@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ActionErrorProvider } from "./context/ActionErrorContext";
 import { AppLayout } from "./layout/AppLayout";
 import { PageFallback } from "./components/PageFallback";
@@ -22,6 +22,7 @@ const NotFoundPage = lazy(() => import("./components/NotFoundPage").then((m) => 
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 
 export function App(): JSX.Element {
+  const location = useLocation();
   const [sessionExpired, setSessionExpired] = useState(false);
 
   // Lives at App level (not inside AppLayout) so it covers every route —
@@ -32,6 +33,14 @@ export function App(): JSX.Element {
     window.addEventListener("nebularr:session-expired", onSessionExpired);
     return () => window.removeEventListener("nebularr:session-expired", onSessionExpired);
   }, []);
+
+  // App never unmounts, so clear the latch on arrival at /login (via the dialog
+  // button or RequireSetup's Navigate). Otherwise a successful re-login would
+  // navigate back into the app with sessionExpired still true, reopening the
+  // undismissable dialog over the authenticated shell.
+  useEffect(() => {
+    if (location.pathname === PATHS.login) setSessionExpired(false);
+  }, [location.pathname]);
 
   return (
     <ActionErrorProvider>
