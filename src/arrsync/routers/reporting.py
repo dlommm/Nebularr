@@ -88,10 +88,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            episode_quality = reg.build_rows(session, reg.PANELS["overview:episode_quality_mix"], p)
-            movie_quality = reg.build_rows(session, reg.PANELS["overview:movie_quality_mix"], p)
-            largest_episodes = reg.build_rows(session, reg.PANELS["overview:largest_episode_files"], p)
-            largest_movies = reg.build_rows(session, reg.PANELS["overview:largest_movie_files"], p)
+            episode_quality = reg.rows_panel(session, reg.PANELS["overview:episode_quality_mix"], p)
+            movie_quality = reg.rows_panel(session, reg.PANELS["overview:movie_quality_mix"], p)
+            largest_episodes = reg.rows_panel(session, reg.PANELS["overview:largest_episode_files"], p)
+            largest_movies = reg.rows_panel(session, reg.PANELS["overview:largest_movie_files"], p)
         return {
             "key": "overview",
             "title": "Overview",
@@ -102,11 +102,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "movie_files", "title": "Movie Files", "kind": "stat", "value": movie_files},
                 {"id": "missing_english_audio", "title": "Episodes Missing English Audio", "kind": "stat", "value": missing_english},
                 {"id": "files_over_3gib", "title": "Files Over 3 GiB", "kind": "stat", "value": files_over_3gib},
-                {"id": "episode_quality_mix", "title": "Episode Quality Distribution", "kind": "distribution", "rows": episode_quality},
-                {"id": "movie_quality_mix", "title": "Movie Quality Distribution", "kind": "distribution", "rows": movie_quality},
+                episode_quality,
+                movie_quality,
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "largest_episode_files", "title": "Largest Episode Files", "kind": "table", "rows": largest_episodes},
-                {"id": "largest_movie_files", "title": "Largest Movie Files", "kind": "table", "rows": largest_movies},
+                largest_episodes,
+                largest_movies,
             ],
         }
 
@@ -142,13 +142,13 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            quality_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:quality_mix"], p)
-            codec_pair_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:codec_pair_mix"], p)
-            audio_language_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:audio_language_mix"], p)
-            subtitle_language_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:subtitle_language_mix"], p)
-            size_bands = reg.build_rows(session, reg.PANELS["sonarr-forensics:size_band_mix"], p)
-            inventory = reg.build_rows(session, reg.PANELS["sonarr-forensics:episode_inventory"], p)
-            missing_files = reg.build_rows(session, reg.PANELS["sonarr-forensics:missing_files"], p)
+            quality_mix = reg.rows_panel(session, reg.PANELS["sonarr-forensics:quality_mix"], p)
+            codec_pair_mix = reg.rows_panel(session, reg.PANELS["sonarr-forensics:codec_pair_mix"], p)
+            audio_language_mix = reg.rows_panel(session, reg.PANELS["sonarr-forensics:audio_language_mix"], p)
+            subtitle_language_mix = reg.rows_panel(session, reg.PANELS["sonarr-forensics:subtitle_language_mix"], p)
+            size_bands = reg.rows_panel(session, reg.PANELS["sonarr-forensics:size_band_mix"], p)
+            inventory = reg.rows_panel(session, reg.PANELS["sonarr-forensics:episode_inventory"], p)
+            missing_files = reg.rows_panel(session, reg.PANELS["sonarr-forensics:missing_files"], p)
         return {
             "key": "sonarr-forensics",
             "title": "Sonarr Episode Forensics",
@@ -159,14 +159,14 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "monitored_episodes", "title": "Monitored Episodes", "kind": "stat", "value": int(stats_row["monitored_episodes"])},
                 {"id": "has_file_pct", "title": "Has File Coverage %", "kind": "stat", "value": float(stats_row["has_file_pct"] or 0)},
                 {"id": "episode_storage_gib", "title": "Episode Storage (GiB)", "kind": "stat", "value": episode_storage_gib},
-                {"id": "quality_mix", "title": "Quality Distribution", "kind": "distribution", "rows": quality_mix},
-                {"id": "codec_pair_mix", "title": "Top Codec Pairings", "kind": "distribution", "rows": codec_pair_mix},
-                {"id": "audio_language_mix", "title": "Audio Language Mix", "kind": "distribution", "rows": audio_language_mix},
-                {"id": "subtitle_language_mix", "title": "Subtitle Language Mix", "kind": "distribution", "rows": subtitle_language_mix},
-                {"id": "size_band_mix", "title": "Episode File Size Bands", "kind": "distribution", "rows": size_bands},
+                quality_mix,
+                codec_pair_mix,
+                audio_language_mix,
+                subtitle_language_mix,
+                size_bands,
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "episode_inventory", "title": "Episode File Inventory", "kind": "table", "rows": inventory},
-                {"id": "missing_files", "title": "Episodes Missing Files", "kind": "table", "rows": missing_files},
+                inventory,
+                missing_files,
             ],
         }
 
@@ -201,12 +201,12 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            quality_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:quality_mix"], p)
-            codec_pair_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:codec_pair_mix"], p)
-            audio_language_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:audio_language_mix"], p)
-            subtitle_language_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:subtitle_language_mix"], p)
-            size_bands = reg.build_rows(session, reg.PANELS["radarr-forensics:size_band_mix"], p)
-            inventory = reg.build_rows(session, reg.PANELS["radarr-forensics:movie_inventory"], p)
+            quality_mix = reg.rows_panel(session, reg.PANELS["radarr-forensics:quality_mix"], p)
+            codec_pair_mix = reg.rows_panel(session, reg.PANELS["radarr-forensics:codec_pair_mix"], p)
+            audio_language_mix = reg.rows_panel(session, reg.PANELS["radarr-forensics:audio_language_mix"], p)
+            subtitle_language_mix = reg.rows_panel(session, reg.PANELS["radarr-forensics:subtitle_language_mix"], p)
+            size_bands = reg.rows_panel(session, reg.PANELS["radarr-forensics:size_band_mix"], p)
+            inventory = reg.rows_panel(session, reg.PANELS["radarr-forensics:movie_inventory"], p)
         return {
             "key": "radarr-forensics",
             "title": "Radarr Movie Forensics",
@@ -216,13 +216,13 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "total_movies", "title": "Total Movies", "kind": "stat", "value": int(stats_row["total_movies"])},
                 {"id": "monitored_movies", "title": "Monitored Movies", "kind": "stat", "value": int(stats_row["monitored_movies"])},
                 {"id": "movie_storage_gib", "title": "Movie Storage (GiB)", "kind": "stat", "value": movie_storage_gib},
-                {"id": "quality_mix", "title": "Quality Distribution", "kind": "distribution", "rows": quality_mix},
-                {"id": "codec_pair_mix", "title": "Top Codec Pairings", "kind": "distribution", "rows": codec_pair_mix},
-                {"id": "audio_language_mix", "title": "Audio Language Mix", "kind": "distribution", "rows": audio_language_mix},
-                {"id": "subtitle_language_mix", "title": "Subtitle Language Mix", "kind": "distribution", "rows": subtitle_language_mix},
-                {"id": "size_band_mix", "title": "Movie File Size Bands", "kind": "distribution", "rows": size_bands},
+                quality_mix,
+                codec_pair_mix,
+                audio_language_mix,
+                subtitle_language_mix,
+                size_bands,
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "movie_inventory", "title": "Movie File Inventory", "kind": "table", "rows": inventory},
+                inventory,
             ],
         }
 
@@ -232,20 +232,20 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         monitored_mix = _query_monitored_mix(normalized_instance)
         with app_state.session_scope() as session:
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            missing_english = reg.build_rows(session, reg.PANELS["language-audit:missing_english_episodes"], p)
-            no_subtitles = reg.build_rows(session, reg.PANELS["language-audit:episodes_without_subtitles"], p)
-            audio_mix = reg.build_rows(session, reg.PANELS["language-audit:audio_language_mix"], p)
-            subtitle_mix = reg.build_rows(session, reg.PANELS["language-audit:subtitle_language_mix"], p)
+            missing_english = reg.rows_panel(session, reg.PANELS["language-audit:missing_english_episodes"], p)
+            no_subtitles = reg.rows_panel(session, reg.PANELS["language-audit:episodes_without_subtitles"], p)
+            audio_mix = reg.rows_panel(session, reg.PANELS["language-audit:audio_language_mix"], p)
+            subtitle_mix = reg.rows_panel(session, reg.PANELS["language-audit:subtitle_language_mix"], p)
         return {
             "key": "language-audit",
             "title": "Language Audit",
             "description": "Language coverage and subtitle completeness across episodes and movies.",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "panels": [
-                {"id": "missing_english_episodes", "title": "Episodes Missing English Audio", "kind": "table", "rows": missing_english},
-                {"id": "episodes_without_subtitles", "title": "Episodes With No Subtitle Languages", "kind": "table", "rows": no_subtitles},
-                {"id": "audio_language_mix", "title": "Audio Language Mix", "kind": "distribution", "rows": audio_mix},
-                {"id": "subtitle_language_mix", "title": "Subtitle Language Mix", "kind": "distribution", "rows": subtitle_mix},
+                missing_english,
+                no_subtitles,
+                audio_mix,
+                subtitle_mix,
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
             ],
         }
@@ -297,10 +297,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            recent_runs = reg.build_rows(session, reg.PANELS["sync-ops:recent_runs"], p)
-            aggregates_24h = reg.build_rows(session, reg.PANELS["sync-ops:run_aggregates_24h"], p)
-            throughput_48h = reg.build_rows(session, reg.PANELS["sync-ops:throughput_48h"], p)
-            integrity_audits = reg.build_rows(session, reg.PANELS["sync-ops:integrity_audits"], p)
+            recent_runs = reg.rows_panel(session, reg.PANELS["sync-ops:recent_runs"], p)
+            aggregates_24h = reg.rows_panel(session, reg.PANELS["sync-ops:run_aggregates_24h"], p)
+            throughput_48h = reg.rows_panel(session, reg.PANELS["sync-ops:throughput_48h"], p)
+            integrity_audits = reg.rows_panel(session, reg.PANELS["sync-ops:integrity_audits"], p)
         return {
             "key": "sync-ops",
             "title": "Sync Operations",
@@ -311,10 +311,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "success_runs_24h", "title": "Successful Runs (24h)", "kind": "stat", "value": success_24h},
                 {"id": "failed_runs_24h", "title": "Failed Runs (24h)", "kind": "stat", "value": failed_24h},
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "recent_runs", "title": "Recent Sync Runs", "kind": "table", "rows": recent_runs},
-                {"id": "run_aggregates_24h", "title": "Run Aggregates (24h)", "kind": "table", "rows": aggregates_24h},
-                {"id": "throughput_48h", "title": "Throughput By Hour (48h)", "kind": "table", "rows": throughput_48h},
-                {"id": "integrity_audits", "title": "Integrity Audits (Warehouse vs Arr)", "kind": "table", "rows": integrity_audits},
+                recent_runs,
+                aggregates_24h,
+                throughput_48h,
+                integrity_audits,
             ],
         }
 
@@ -728,9 +728,9 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"instance_name": normalized_instance},
             ).mappings().one()
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            series_coverage = reg.build_rows(session, reg.PANELS["english-dub-coverage:series_coverage"], p)
-            movie_coverage = reg.build_rows(session, reg.PANELS["english-dub-coverage:movie_coverage"], p)
-            non_english_episodes = reg.build_rows(session, reg.PANELS["english-dub-coverage:non_english_episodes"], p)
+            series_coverage = reg.rows_panel(session, reg.PANELS["english-dub-coverage:series_coverage"], p)
+            movie_coverage = reg.rows_panel(session, reg.PANELS["english-dub-coverage:movie_coverage"], p)
+            non_english_episodes = reg.rows_panel(session, reg.PANELS["english-dub-coverage:non_english_episodes"], p)
         return {
             "key": "english-dub-coverage",
             "title": "English Dub Coverage",
@@ -761,14 +761,9 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "movies_total", "title": "Anime Movies In Scope", "kind": "stat", "value": int(movie_stats["movies_total"])},
                 {"id": "movies_full", "title": f"Movies {full_label}", "kind": "stat", "value": int(movie_stats["movies_full"])},
                 {"id": "movies_partial", "title": f"Movies {partial_label}", "kind": "stat", "value": int(movie_stats["movies_partial"])},
-                {"id": "series_coverage", "title": "Series Coverage (N non-English of M aired)", "kind": "table", "rows": series_coverage},
-                {"id": "movie_coverage", "title": "Movie Coverage", "kind": "table", "rows": movie_coverage},
-                {
-                    "id": "non_english_episodes",
-                    "title": "Anime Episodes Lacking English Audio (files to replace)",
-                    "kind": "table",
-                    "rows": non_english_episodes,
-                },
+                series_coverage,
+                movie_coverage,
+                non_english_episodes,
             ],
         }
 
@@ -975,14 +970,14 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 or 0
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            queue_status_breakdown = reg.build_rows(session, reg.PANELS["ops-overview:queue_status_breakdown"], p)
-            sync_state_snapshot = reg.build_rows(session, reg.PANELS["ops-overview:sync_state_snapshot"], p)
-            recent_failures = reg.build_rows(session, reg.PANELS["ops-overview:recent_failures"], p)
-            runs_by_hour_7d = reg.build_rows(session, reg.PANELS["ops-overview:runs_by_hour_7d"], p)
-            records_by_hour_7d = reg.build_rows(session, reg.PANELS["ops-overview:records_by_hour_7d"], p)
-            breakdown_7d = reg.build_rows(session, reg.PANELS["ops-overview:breakdown_7d"], p)
-            latest_per_instance = reg.build_rows(session, reg.PANELS["ops-overview:latest_per_instance"], p)
-            recent_log = reg.build_rows(session, reg.PANELS["ops-overview:recent_run_log"], p)
+            queue_status_breakdown = reg.rows_panel(session, reg.PANELS["ops-overview:queue_status_breakdown"], p)
+            sync_state_snapshot = reg.rows_panel(session, reg.PANELS["ops-overview:sync_state_snapshot"], p)
+            recent_failures = reg.rows_panel(session, reg.PANELS["ops-overview:recent_failures"], p)
+            runs_by_hour_7d = reg.rows_panel(session, reg.PANELS["ops-overview:runs_by_hour_7d"], p)
+            records_by_hour_7d = reg.rows_panel(session, reg.PANELS["ops-overview:records_by_hour_7d"], p)
+            breakdown_7d = reg.rows_panel(session, reg.PANELS["ops-overview:breakdown_7d"], p)
+            latest_per_instance = reg.rows_panel(session, reg.PANELS["ops-overview:latest_per_instance"], p)
+            recent_log = reg.rows_panel(session, reg.PANELS["ops-overview:recent_run_log"], p)
         return {
             "key": "ops-overview",
             "title": "Nebularr Overview / Stats",
@@ -1006,14 +1001,14 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "sonarr_history_lag_sec", "title": "Sonarr History Lag (s)", "kind": "stat", "value": sonarr_lag_seconds},
                 {"id": "radarr_history_lag_sec", "title": "Radarr History Lag (s)", "kind": "stat", "value": radarr_lag_seconds},
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "queue_status_breakdown", "title": "Webhook Queue Status Breakdown", "kind": "distribution", "rows": queue_status_breakdown},
-                {"id": "sync_state_snapshot", "title": "Sync State Snapshot", "kind": "table", "rows": sync_state_snapshot},
-                {"id": "runs_by_hour_7d", "title": "Runs By Hour (7d)", "kind": "table", "rows": runs_by_hour_7d},
-                {"id": "records_by_hour_7d", "title": "Records Processed By Hour (7d)", "kind": "table", "rows": records_by_hour_7d},
-                {"id": "breakdown_7d", "title": "Source/Mode/Instance Breakdown (7d)", "kind": "table", "rows": breakdown_7d},
-                {"id": "latest_per_instance", "title": "Latest Run Per Instance", "kind": "table", "rows": latest_per_instance},
-                {"id": "recent_failures", "title": "Recent Failures", "kind": "table", "rows": recent_failures},
-                {"id": "recent_run_log", "title": "Recent Run Log (Detailed)", "kind": "table", "rows": recent_log},
+                queue_status_breakdown,
+                sync_state_snapshot,
+                runs_by_hour_7d,
+                records_by_hour_7d,
+                breakdown_7d,
+                latest_per_instance,
+                recent_failures,
+                recent_log,
             ],
         }
 
@@ -1090,15 +1085,15 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 or 0
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            top_series_storage = reg.build_rows(session, reg.PANELS["media-deep-dive:top_series_storage"], p)
-            largest_movies = reg.build_rows(session, reg.PANELS["media-deep-dive:largest_movie_files"], p)
-            episode_quality_profile = reg.build_rows(session, reg.PANELS["media-deep-dive:episode_quality_profile"], p)
-            movie_quality_profile = reg.build_rows(session, reg.PANELS["media-deep-dive:movie_quality_profile"], p)
-            audio_codec_mix = reg.build_rows(session, reg.PANELS["media-deep-dive:audio_codec_mix"], p)
-            video_codec_mix = reg.build_rows(session, reg.PANELS["media-deep-dive:video_codec_mix"], p)
-            subtitle_coverage = reg.build_rows(session, reg.PANELS["media-deep-dive:subtitle_coverage_pct"], p)
-            detailed_missing_english = reg.build_rows(session, reg.PANELS["media-deep-dive:detailed_missing_english"], p)
-            detailed_large_files = reg.build_rows(session, reg.PANELS["media-deep-dive:detailed_large_files"], p)
+            top_series_storage = reg.rows_panel(session, reg.PANELS["media-deep-dive:top_series_storage"], p)
+            largest_movies = reg.rows_panel(session, reg.PANELS["media-deep-dive:largest_movie_files"], p)
+            episode_quality_profile = reg.rows_panel(session, reg.PANELS["media-deep-dive:episode_quality_profile"], p)
+            movie_quality_profile = reg.rows_panel(session, reg.PANELS["media-deep-dive:movie_quality_profile"], p)
+            audio_codec_mix = reg.rows_panel(session, reg.PANELS["media-deep-dive:audio_codec_mix"], p)
+            video_codec_mix = reg.rows_panel(session, reg.PANELS["media-deep-dive:video_codec_mix"], p)
+            subtitle_coverage = reg.rows_panel(session, reg.PANELS["media-deep-dive:subtitle_coverage_pct"], p)
+            detailed_missing_english = reg.rows_panel(session, reg.PANELS["media-deep-dive:detailed_missing_english"], p)
+            detailed_large_files = reg.rows_panel(session, reg.PANELS["media-deep-dive:detailed_large_files"], p)
         return {
             "key": "media-deep-dive",
             "title": "Media Deep Dive",
@@ -1111,15 +1106,15 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "files_over_3gib", "title": "Files Over 3 GiB", "kind": "stat", "value": over_3gib},
                 {"id": "english_audio_coverage", "title": "English Audio Coverage % (Episodes)", "kind": "stat", "value": english_coverage},
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "top_series_storage", "title": "Top Series By Storage", "kind": "table", "rows": top_series_storage},
-                {"id": "largest_movie_files", "title": "Largest Movie Files", "kind": "table", "rows": largest_movies},
-                {"id": "episode_quality_profile", "title": "Episode Quality Profile", "kind": "distribution", "rows": episode_quality_profile},
-                {"id": "movie_quality_profile", "title": "Movie Quality Profile", "kind": "distribution", "rows": movie_quality_profile},
-                {"id": "audio_codec_mix", "title": "Audio Codec Mix", "kind": "distribution", "rows": audio_codec_mix},
-                {"id": "video_codec_mix", "title": "Video Codec Mix", "kind": "distribution", "rows": video_codec_mix},
-                {"id": "subtitle_coverage_pct", "title": "Subtitle Coverage %", "kind": "distribution", "rows": subtitle_coverage},
-                {"id": "detailed_missing_english", "title": "Detailed: Missing English Audio Episodes", "kind": "table", "rows": detailed_missing_english},
-                {"id": "detailed_large_files", "title": "Detailed: Large Files", "kind": "table", "rows": detailed_large_files},
+                top_series_storage,
+                largest_movies,
+                episode_quality_profile,
+                movie_quality_profile,
+                audio_codec_mix,
+                video_codec_mix,
+                subtitle_coverage,
+                detailed_missing_english,
+                detailed_large_files,
             ],
         }
 
@@ -1177,11 +1172,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
             )
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            unmonitored_non_english_shows = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_non_english_shows"], p)
-            unmonitored_non_english_movies = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_non_english_movies"], p)
-            unmonitored_without_subtitles = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_without_subtitles"], p)
-            unmonitored_non_1080p = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_non_1080p"], p)
-            monitored_missing_files = reg.build_rows(session, reg.PANELS["monitoring-audit:monitored_missing_files"], p)
+            unmonitored_non_english_shows = reg.rows_panel(session, reg.PANELS["monitoring-audit:unmonitored_non_english_shows"], p)
+            unmonitored_non_english_movies = reg.rows_panel(session, reg.PANELS["monitoring-audit:unmonitored_non_english_movies"], p)
+            unmonitored_without_subtitles = reg.rows_panel(session, reg.PANELS["monitoring-audit:unmonitored_without_subtitles"], p)
+            unmonitored_non_1080p = reg.rows_panel(session, reg.PANELS["monitoring-audit:unmonitored_non_1080p"], p)
+            monitored_missing_files = reg.rows_panel(session, reg.PANELS["monitoring-audit:monitored_missing_files"], p)
         return {
             "key": "monitoring-audit",
             "title": "Monitoring Audit",
@@ -1193,11 +1188,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "monitored_movies", "title": "Monitored Movies", "kind": "stat", "value": monitored_movies},
                 {"id": "unmonitored_movies", "title": "Unmonitored Movies", "kind": "stat", "value": unmonitored_movies},
                 {"id": "monitored_mix", "title": "Monitored vs Unmonitored (Series/Movies)", "kind": "distribution", "rows": monitored_mix},
-                {"id": "unmonitored_non_english_shows", "title": "Unmonitored Shows Missing English Audio", "kind": "table", "rows": unmonitored_non_english_shows},
-                {"id": "unmonitored_non_english_movies", "title": "Unmonitored Non-English Movies", "kind": "table", "rows": unmonitored_non_english_movies},
-                {"id": "unmonitored_without_subtitles", "title": "Unmonitored Items Without Subtitles", "kind": "table", "rows": unmonitored_without_subtitles},
-                {"id": "unmonitored_non_1080p", "title": "Unmonitored Non-1080p Items", "kind": "table", "rows": unmonitored_non_1080p},
-                {"id": "monitored_missing_files", "title": "Monitored Shows With Missing Files", "kind": "table", "rows": monitored_missing_files},
+                unmonitored_non_english_shows,
+                unmonitored_non_english_movies,
+                unmonitored_without_subtitles,
+                unmonitored_non_1080p,
+                monitored_missing_files,
             ],
         }
 
@@ -1236,7 +1231,7 @@ def build_reporting_router(app_state: Any) -> APIRouter:
             ]
             # One point per day per source: the day's latest snapshot values.
             p = {"instance_name": normalized_instance, "limit": bounded_limit}
-            growth_rows = reg.build_rows(session, reg.PANELS["storage-growth:storage_over_time"], p)
+            growth_rows = reg.rows_panel(session, reg.PANELS["storage-growth:storage_over_time"], p)
             growth_delta_30d = session.execute(
                 text(
                     """
@@ -1261,9 +1256,9 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ),
                 {"instance_name": normalized_instance},
             ).scalar_one()
-            storage_by_quality = reg.build_rows(session, reg.PANELS["storage-growth:storage_by_quality"], p)
-            top_series = reg.build_rows(session, reg.PANELS["storage-growth:top_series_by_storage"], p)
-            top_movies = reg.build_rows(session, reg.PANELS["storage-growth:top_movies_by_storage"], p)
+            storage_by_quality = reg.rows_panel(session, reg.PANELS["storage-growth:storage_by_quality"], p)
+            top_series = reg.rows_panel(session, reg.PANELS["storage-growth:top_series_by_storage"], p)
+            top_movies = reg.rows_panel(session, reg.PANELS["storage-growth:top_movies_by_storage"], p)
         totals_by_source = {str(row["source"]): row for row in current_totals}
         tv_bytes = int(totals_by_source.get("sonarr", {}).get("file_bytes", 0) or 0)
         movie_bytes = int(totals_by_source.get("radarr", {}).get("file_bytes", 0) or 0)
@@ -1277,10 +1272,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 {"id": "tv_storage", "title": "TV Library Size", "kind": "stat", "value": _fmt_bytes(tv_bytes)},
                 {"id": "movie_storage", "title": "Movie Library Size", "kind": "stat", "value": _fmt_bytes(movie_bytes)},
                 {"id": "growth_30d", "title": "Growth (last 30 days)", "kind": "stat", "value": _fmt_bytes(int(growth_delta_30d or 0))},
-                {"id": "storage_over_time", "title": "Library Size Over Time (bytes)", "kind": "timeseries", "rows": growth_rows},
-                {"id": "storage_by_quality", "title": "Storage Share By Quality (bytes)", "kind": "distribution", "rows": storage_by_quality},
-                {"id": "top_series_by_storage", "title": "Top Series By Disk Usage", "kind": "table", "rows": top_series},
-                {"id": "top_movies_by_storage", "title": "Largest Movie Files", "kind": "table", "rows": top_movies},
+                growth_rows,
+                storage_by_quality,
+                top_series,
+                top_movies,
             ],
         }
 
@@ -1391,9 +1386,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
     ) -> PlainTextResponse:
         effective_limit = clamp_limit(limit, default=REPORTING_MAX_LIMIT, max_limit=REPORTING_MAX_LIMIT)
         spec = reg.PANELS.get(reg.panel_key(dashboard_key, panel_id))
-        if spec is not None and spec.kind != "stat":
-            # Registry panel: execute exactly this one panel's SQL instead of
-            # building the entire dashboard just to throw the other panels away.
+        if spec is not None:
+            # Registry panel (the registry holds only row panels): execute exactly
+            # this one panel's SQL instead of building the entire dashboard just to
+            # throw the other panels away.
             params = {"instance_name": instance_name.strip(), "limit": effective_limit}
             rows = await run_db(app_state, lambda session: reg.build_rows(session, spec, params))
         else:
