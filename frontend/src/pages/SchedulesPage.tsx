@@ -3,8 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate } from "../hooks";
+import { useDraftSync } from "../hooks/useDraftSync";
 import { SCHEDULE_MODE_LABELS, sortScheduleRows } from "../constants/domain";
 import { useActionError } from "../hooks/useActionError";
+import { queryKeys } from "../lib/queryKeys";
 import { CronPreview } from "@/components/nebula/CronPreview";
 import { GlassCard } from "@/components/nebula/GlassCard";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +17,9 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
-import type { RetentionPolicy } from "../types";
+import type { RetentionPolicy, ScheduleRow } from "../types";
+
+const scheduleKeyOf = (row: ScheduleRow): string => row.mode;
 
 const RETENTION_FIELDS: { key: keyof RetentionPolicy; label: string; hint: string }[] = [
   { key: "queue_days", label: "Webhook queue & job summaries", hint: "Processed webhook jobs and per-run summaries" },
@@ -27,11 +31,15 @@ export function SchedulesPage(): JSX.Element {
   usePageTitle("Schedules");
   const queryClient = useQueryClient();
   const { runAction } = useActionError();
-  const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
-  const retention = useQuery({ queryKey: ["retention"], queryFn: api.retention });
-  const [scheduleDrafts, setScheduleDrafts] = useState<
-    Record<string, { cron: string; timezone: string; enabled: boolean }>
-  >({});
+  const schedules = useQuery({ queryKey: queryKeys.schedules, queryFn: api.schedules });
+  const retention = useQuery({ queryKey: queryKeys.retention, queryFn: api.retention });
+  // ScheduleRow already carries every field a row's draft needs (including
+  // `updated_at`, read straight off the server row below), so it doubles as
+  // its own draft shape — no extra mapping required.
+  const { drafts: scheduleDrafts, setDraft: setScheduleDraft, resetDraft: resetScheduleDraft } = useDraftSync(
+    schedules.data,
+    scheduleKeyOf,
+  );
   const [retentionDraft, setRetentionDraft] = useState<RetentionPolicy | null>(null);
   const [cronValidity, setCronValidity] = useState<Record<string, boolean>>({});
 
@@ -43,33 +51,21 @@ export function SchedulesPage(): JSX.Element {
     if (!retentionDraft) return;
     await runAction(async () => {
       await api.saveRetention(retentionDraft);
-      await queryClient.invalidateQueries({ queryKey: ["retention"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.retention });
     }, "save retention policy");
   };
-
-  useEffect(() => {
-    if (!schedules.data) return;
-    const next: Record<string, { cron: string; timezone: string; enabled: boolean }> = {};
-    schedules.data.forEach((row) => {
-      next[row.mode] = {
-        cron: row.cron,
-        timezone: row.timezone,
-        enabled: row.enabled,
-      };
-    });
-    setScheduleDrafts(next);
-  }, [schedules.data]);
 
   const saveSchedule = async (mode: string): Promise<void> => {
     const draft = scheduleDrafts[mode];
     if (!draft) return;
-    await runAction(
+    const ok = await runAction(
       async () => {
-        await api.saveSchedule(mode, draft);
-        await queryClient.invalidateQueries({ queryKey: ["schedules"] });
+        await api.saveSchedule(mode, { cron: draft.cron, timezone: draft.timezone, enabled: draft.enabled });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.schedules });
       },
       `save schedule ${mode}`,
     );
+    if (ok) resetScheduleDraft(mode);
   };
 
   return (
@@ -116,15 +112,7 @@ export function SchedulesPage(): JSX.Element {
                 <Input
                   id={`schedule-cron-${row.mode}`}
                   value={scheduleDrafts[row.mode]?.cron ?? row.cron}
-                  onChange={(event) =>
-                    setScheduleDrafts((prev) => ({
-                      ...prev,
-                      [row.mode]: {
-                        ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
-                        cron: event.target.value,
-                      },
-                    }))
-                  }
+                  onChange={(event) => setScheduleDraft(row.mode, { cron: event.target.value })}
                 />
               </div>
               <div className="grid w-full gap-1.5">
@@ -134,15 +122,7 @@ export function SchedulesPage(): JSX.Element {
                 <Input
                   id={`schedule-tz-${row.mode}`}
                   value={scheduleDrafts[row.mode]?.timezone ?? row.timezone}
-                  onChange={(event) =>
-                    setScheduleDrafts((prev) => ({
-                      ...prev,
-                      [row.mode]: {
-                        ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
-                        timezone: event.target.value,
-                      },
-                    }))
-                  }
+                  onChange={(event) => setScheduleDraft(row.mode, { timezone: event.target.value })}
                 />
               </div>
             </div>
@@ -160,15 +140,7 @@ export function SchedulesPage(): JSX.Element {
                 <Checkbox
                   id={`schedule-enabled-${row.mode}`}
                   checked={scheduleDrafts[row.mode]?.enabled ?? row.enabled}
-                  onCheckedChange={(checked) =>
-                    setScheduleDrafts((prev) => ({
-                      ...prev,
-                      [row.mode]: {
-                        ...(prev[row.mode] ?? { cron: row.cron, timezone: row.timezone, enabled: row.enabled }),
-                        enabled: checked === true,
-                      },
-                    }))
-                  }
+                  onCheckedChange={(checked) => setScheduleDraft(row.mode, { enabled: checked === true })}
                 />
                 <Label htmlFor={`schedule-enabled-${row.mode}`} className="text-sm text-muted-foreground">
                   enabled

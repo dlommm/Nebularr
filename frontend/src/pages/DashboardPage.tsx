@@ -5,11 +5,11 @@ import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
 import { pollInterval, useServerEventsStatus } from "../hooks/useServerEvents";
+import { useSyncActions } from "../hooks/useSyncActions";
+import { queryKeys } from "../lib/queryKeys";
 import { MAL_JOB_TYPE_ORDER } from "../constants/domain";
 import { StatusPill } from "../components/ui";
-import { useActionError } from "../hooks/useActionError";
 import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
-import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
 import { HealthPillsRow } from "../components/nebula/HealthPillsRow";
 import { MetricCard } from "../components/nebula/MetricCard";
 import { EmptyState } from "../components/nebula/EmptyState";
@@ -25,29 +25,16 @@ import { PATHS } from "../routes/paths";
 export function DashboardPage(): JSX.Element {
   usePageTitle("Dashboard");
   const navigate = useNavigate();
-  const { runAction } = useActionError();
-  const { requestConfirm, confirmDialog } = useConfirmDialog();
+  const { runIncrementalSync, runFullSync, confirmDialog } = useSyncActions();
   const { connected: sseConnected } = useServerEventsStatus();
 
-  const runFullSync = (source: "sonarr" | "radarr", actionLabel: string): void => {
-    const name = source === "sonarr" ? "Sonarr" : "Radarr";
-    requestConfirm({
-      title: `Run ${name} full sync?`,
-      description: `This re-fetches the entire ${name} library and can take a long time on large libraries.`,
-      confirmLabel: "Run full sync",
-      onConfirm: () =>
-        void runAction(() => api.runSync(source, "full"), actionLabel, {
-          successMessage: `${name} full sync queued`,
-        }),
-    });
-  };
   const status = useQuery({
-    queryKey: ["status"],
+    queryKey: queryKeys.status,
     queryFn: api.status,
     refetchInterval: pollInterval(sseConnected, 15_000, 60_000),
   });
   const syncActivity = useQuery({
-    queryKey: ["sync-activity"],
+    queryKey: queryKeys.syncActivity,
     queryFn: api.syncActivity,
     refetchInterval: pollInterval(sseConnected, 5_000, 30_000),
   });
@@ -61,16 +48,16 @@ export function DashboardPage(): JSX.Element {
           Live sync telemetry, health, and queue pressure. Data refreshes every few seconds.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => runAction(() => api.runSync("sonarr", "incremental"), "dashboard sonarr", { successMessage: "Sonarr incremental sync queued" })}>
+          <Button size="sm" onClick={() => runIncrementalSync("sonarr")}>
             Sonarr incremental
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => runAction(() => api.runSync("radarr", "incremental"), "dashboard radarr", { successMessage: "Radarr incremental sync queued" })}>
+          <Button size="sm" variant="secondary" onClick={() => runIncrementalSync("radarr")}>
             Radarr incremental
           </Button>
-          <Button size="sm" variant="outline" onClick={() => runFullSync("sonarr", "dashboard sonarr full")}>
+          <Button size="sm" variant="outline" onClick={() => runFullSync("sonarr")}>
             Sonarr full
           </Button>
-          <Button size="sm" variant="outline" onClick={() => runFullSync("radarr", "dashboard radarr full")}>
+          <Button size="sm" variant="outline" onClick={() => runFullSync("radarr")}>
             Radarr full
           </Button>
           <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => navigate(PATHS.sync)}>

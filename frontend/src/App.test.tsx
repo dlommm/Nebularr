@@ -1,8 +1,22 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BrowserRouter, MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { api } from "./api";
+
+const DEFAULT_SETUP_STATUS = {
+  completed: true,
+  has_webhook_secret: false,
+  integrations: {},
+  schedules: [],
+  database: {
+    engine_ready: true,
+    runtime_url_persisted: true,
+    arrapp_role_exists: true,
+  },
+};
 
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
@@ -10,21 +24,22 @@ vi.mock("./api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      setupStatus: () =>
-        Promise.resolve({
-          completed: true,
-          has_webhook_secret: false,
-          integrations: {},
-          schedules: [],
-          database: {
-            engine_ready: true,
-            runtime_url_persisted: true,
-            arrapp_role_exists: true,
-          },
-        } satisfies Awaited<ReturnType<typeof actual.api.setupStatus>>),
+      setupStatus: vi.fn(() =>
+        Promise.resolve(DEFAULT_SETUP_STATUS satisfies Awaited<ReturnType<typeof actual.api.setupStatus>>),
+      ),
     },
   };
 });
+
+// Toggled per-test so RouteErrorBoundary has something to catch; declared via
+// vi.hoisted since vi.mock factories are hoisted above normal module code.
+const dashboardMock = vi.hoisted(() => ({ shouldThrow: false }));
+vi.mock("./pages/DashboardPage", () => ({
+  DashboardPage: () => {
+    if (dashboardMock.shouldThrow) throw new Error("dashboard exploded");
+    return <div>dashboard-ok</div>;
+  },
+}));
 
 function renderApp(): void {
   const queryClient = new QueryClient({
@@ -41,14 +56,81 @@ function renderApp(): void {
   );
 }
 
+function renderAppAt(initialPath: string): void {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 describe("App", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.setupStatus).mockResolvedValue(
+      DEFAULT_SETUP_STATUS satisfies Awaited<ReturnType<typeof api.setupStatus>>,
+    );
+    dashboardMock.shouldThrow = false;
   });
 
   it("renders nebularr shell with home in nav", async () => {
     renderApp();
     expect(await screen.findByText("Nebularr")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /home/i }).length).toBeGreaterThan(0);
+  });
+
+  it("RequireSetup shows QueryErrorNotice with a working retry when setup status fails to load", async () => {
+    const setupStatusMock = vi.mocked(api.setupStatus);
+    setupStatusMock.mockRejectedValueOnce(new Error("setup status unreachable"));
+    renderApp();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/could not load setup status/i);
+    expect(alert).toHaveTextContent(/setup status unreachable/i);
+
+    // Retry re-runs the query; once it resolves, the real app shell renders.
+    const callsBeforeRetry = setupStatusMock.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => expect(setupStatusMock.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
+    // Use the page heading (not the ambiguous "Nebularr" sidebar text, which
+    // also appears here) to confirm the real shell rendered post-retry.
+    expect(await screen.findByRole("heading", { name: "Nebularr" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  describe("RouteErrorBoundary", () => {
+    afterEach(() => {
+      dashboardMock.shouldThrow = false;
+    });
+
+    it("catches a render error on one route and recovers via key-remount after navigating away", async () => {
+      // React (and this file's own componentDidCatch) log the caught render
+      // error to console.error — expected here, so keep it out of test output.
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      dashboardMock.shouldThrow = true;
+
+      renderAppAt("/dashboard");
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(/something went wrong/i);
+
+      // Without `key={location.pathname}` on RouteErrorBoundary, this cached
+      // error state would persist across the navigation below even though
+      // the destination route's component never throws.
+      dashboardMock.shouldThrow = false;
+      await userEvent.click(screen.getAllByRole("link", { name: /^home$/i })[0]);
+
+      expect(await screen.findByRole("heading", { name: "Nebularr" })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      consoleErrorSpy.mockRestore();
+    });
   });
 });

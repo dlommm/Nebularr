@@ -70,4 +70,20 @@ describe("MultiSelectFilter", () => {
       expect(screen.queryByRole("menu", { name: "Filter source" })).not.toBeInTheDocument();
     });
   });
+
+  it("moves focus into the option list on ArrowDown without first tabbing out of the search input", async () => {
+    const user = userEvent.setup();
+    render(<MultiSelectFilter label="source" options={OPTIONS} selected={[]} onChange={() => {}} />);
+    await openMenu(user);
+
+    const search = screen.getByRole("textbox", { name: "Search source values" });
+    expect(search).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
+
+    await waitFor(() => {
+      expect(search).not.toHaveFocus();
+    });
+    expect(screen.getAllByRole("menuitemcheckbox")).toContain(document.activeElement);
+  });
 });

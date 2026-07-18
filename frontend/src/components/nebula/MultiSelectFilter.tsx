@@ -65,10 +65,13 @@ export function MultiSelectFilter({ options, selected, onChange, label, classNam
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             // Stop the menu's typeahead/roving-focus handling from
-            // hijacking normal typing — but let Escape (close) and Enter
-            // bubble so the menu's own keyboard handling still applies.
+            // hijacking normal typing — but let Escape (close), Enter, and
+            // the arrow keys bubble so the menu's own keyboard handling
+            // (close, select, and roving focus into the option list) still
+            // applies without first needing to Tab out of this autofocused
+            // input.
             onKeyDown={(event) => {
-              if (event.key !== "Escape" && event.key !== "Enter") event.stopPropagation();
+              if (!["Escape", "Enter", "ArrowUp", "ArrowDown"].includes(event.key)) event.stopPropagation();
             }}
             placeholder="Search values…"
             aria-label={`Search ${label} values`}
