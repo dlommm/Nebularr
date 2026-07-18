@@ -12,13 +12,18 @@ export function SessionExpiredDialog({ open }: { open: boolean }): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Never cover the login page with its own re-login prompt: a 401 elsewhere
+  // (e.g. a cold-load setup-status check) can both flip this open and route to
+  // /login, and the login form must stay unobstructed.
+  const showDialog = open && location.pathname !== "/login";
+
   const goToLogin = (): void => {
     const next = encodeURIComponent(location.pathname + location.search);
     navigate(`/login?next=${next}`, { replace: true });
   };
 
   return (
-    <Dialog open={open}>
+    <Dialog open={showDialog}>
       <DialogContent showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>Session expired — log in again</DialogTitle>

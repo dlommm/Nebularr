@@ -35,7 +35,6 @@ import { DiagnosticsPanel } from "../components/ui";
 import { SecurityBanner } from "../components/nebula/SecurityBanner";
 import { PageFallback } from "../components/PageFallback";
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
-import { SessionExpiredDialog } from "../components/SessionExpiredDialog";
 import type { HealthDimensions } from "@/types";
 import { DIM_LABELS } from "@/constants/health";
 import { Button } from "@/components/ui/button";
@@ -156,7 +155,6 @@ export function AppLayout(): JSX.Element {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
   const [headerSearch, setHeaderSearch] = useState("");
-  const [sessionExpired, setSessionExpired] = useState(false);
 
   const serverEvents = useServerEvents();
   const status = useQuery({
@@ -177,12 +175,6 @@ export function AppLayout(): JSX.Element {
     queryClient.clear();
     navigate(PATHS.login, { replace: true });
   };
-
-  useEffect(() => {
-    const onSessionExpired = (): void => setSessionExpired(true);
-    window.addEventListener("nebularr:session-expired", onSessionExpired);
-    return () => window.removeEventListener("nebularr:session-expired", onSessionExpired);
-  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -288,7 +280,6 @@ export function AppLayout(): JSX.Element {
         Skip to content
       </a>
       <LegacyViewRedirect />
-      <SessionExpiredDialog open={sessionExpired} />
 
       {/* Desktop sidebar */}
       <aside

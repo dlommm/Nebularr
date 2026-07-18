@@ -7,7 +7,8 @@ export type UseDraftSyncResult<T> = {
   setDraft: (key: string, patch: Partial<T>) => void;
   /** Keys with unsaved local edits — the server-merge effect leaves these alone. */
   dirtyKeys: Set<string>;
-  /** Clear a row's dirty flag and snap its draft back to the latest known server value. */
+  /** Clear a row's dirty flag; if the row still exists server-side, re-sync its
+      draft to the current server value (as of the latest render). */
   resetDraft: (key: string) => void;
 };
 
@@ -32,6 +33,11 @@ export function useDraftSync<T>(serverData: T[] | undefined, keyOf: (item: T) =>
   keyOfRef.current = keyOf;
   const dirtyKeysRef = useRef(dirtyKeys);
   dirtyKeysRef.current = dirtyKeys;
+  // resetDraft reads server data through a ref (like `dirtyKeysRef`) instead of
+  // closing over `serverData` — otherwise a callback reference captured before a
+  // refetch would re-sync to the stale value it was born with.
+  const serverDataRef = useRef(serverData);
+  serverDataRef.current = serverData;
 
   useEffect(() => {
     if (!serverData) return;
@@ -68,21 +74,18 @@ export function useDraftSync<T>(serverData: T[] | undefined, keyOf: (item: T) =>
     setDirtyKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
   }, []);
 
-  const resetDraft = useCallback(
-    (key: string): void => {
-      setDirtyKeys((prev) => {
-        if (!prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      const match = serverData?.find((item) => keyOfRef.current(item) === key);
-      if (match) {
-        setDrafts((prev) => ({ ...prev, [key]: match }));
-      }
-    },
-    [serverData],
-  );
+  const resetDraft = useCallback((key: string): void => {
+    setDirtyKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    const match = serverDataRef.current?.find((item) => keyOfRef.current(item) === key);
+    if (match) {
+      setDrafts((prev) => ({ ...prev, [key]: match }));
+    }
+  }, []);
 
   return { drafts, setDraft, dirtyKeys, resetDraft };
 }

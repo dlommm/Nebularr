@@ -4,6 +4,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from arrsync.log_buffer import RING_EXCLUDE_ATTR
+
 ALLOWED_LOG_LEVELS: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 _LOG_RECORD_STANDARD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys())
@@ -25,7 +27,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         for key, value in record.__dict__.items():
-            if key in _LOG_RECORD_STANDARD_ATTRS or key.startswith("_"):
+            if key in _LOG_RECORD_STANDARD_ATTRS or key.startswith("_") or key == RING_EXCLUDE_ATTR:
                 continue
             payload[key] = value
         if record.exc_info:

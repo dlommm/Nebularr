@@ -10,13 +10,29 @@ from typing import Any
 
 RING_MAX_LINES = 2500
 
+# A record logged with ``extra={RING_EXCLUDE_ATTR: True}`` is still written to
+# stdout by the normal StreamHandler, but is deliberately dropped from this
+# Web-UI ring buffer. GET /api/ui/logs serves the buffer unauthenticated exactly
+# while the setup bootstrap-token gate is active, so the one-time token line must
+# never land here even though it stays visible in container stdout.
+RING_EXCLUDE_ATTR = "ring_exclude"
+
 _lines: deque[str] = deque(maxlen=RING_MAX_LINES)
 _lock = threading.Lock()
 _attached_handler: logging.Handler | None = None
 _ring_target: logging.Logger | None = None
 
 
+class _RingExcludeFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not getattr(record, RING_EXCLUDE_ATTR, False)
+
+
 class RingBufferHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.addFilter(_RingExcludeFilter())
+
     def emit(self, record: logging.LogRecord) -> None:
         try:
             msg = self.format(record)

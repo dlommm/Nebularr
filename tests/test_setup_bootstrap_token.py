@@ -7,11 +7,17 @@ finished the wizard" on a box with no auth configured yet; see main.py's
 
 from __future__ import annotations
 
+import io
+import logging
+
 from fakes import FakeAppState
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from arrsync import main as main_mod
 from arrsync.api import build_router
+from arrsync.log_buffer import RING_MAX_LINES, get_recent_log_lines
+from arrsync.logging import configure_logging
 
 WIZARD_PAYLOAD = {"sonarr": {"skip": True}, "radarr": {"skip": True}}
 
@@ -105,6 +111,50 @@ def test_non_ascii_header_is_rejected_not_500() -> None:
         "/api/setup/wizard", json=WIZARD_PAYLOAD, headers={"x-setup-token": b"\xe9\xe8\xe7-token"}
     )
     assert response.status_code == 403
+
+
+def test_bootstrap_token_reaches_stdout_but_not_the_ring_buffer(monkeypatch) -> None:
+    # The token gates the unauthenticated /api/setup/* window, but /api/ui/logs is
+    # itself unauthenticated exactly while that gate is active — so the token line
+    # must stay visible in container stdout yet never enter the Web UI ring buffer.
+    configure_logging("INFO")
+    stream = io.StringIO()
+    stream_handler = logging.StreamHandler(stream)
+    stream_handler.setLevel(logging.WARNING)
+    root = logging.getLogger()
+    root.addHandler(stream_handler)
+    try:
+        state = FakeAppState()
+        monkeypatch.setattr(main_mod, "app_state", state)
+        main_mod._maybe_issue_bootstrap_token()
+
+        token = state.setup_bootstrap_token
+        assert token, "expected a bootstrap token to be minted"
+
+        # (a) The token is visible via a plain stdout/stream handler.
+        stream_handler.flush()
+        assert token in stream.getvalue()
+
+        # (b) The token is NOT in the ring buffer that /api/ui/logs serves.
+        assert all(token not in line for line in get_recent_log_lines(RING_MAX_LINES))
+    finally:
+        root.removeHandler(stream_handler)
+
+
+def test_ui_logs_endpoint_never_serves_the_bootstrap_token(monkeypatch) -> None:
+    configure_logging("INFO")
+    state = FakeAppState()
+    monkeypatch.setattr(main_mod, "app_state", state)
+    main_mod._maybe_issue_bootstrap_token()
+    token = state.setup_bootstrap_token
+    assert token
+
+    # Gate is active (token set, setup not complete) — the same unauthenticated
+    # window in which the logs endpoint is reachable.
+    client = _client(state)
+    response = client.get("/api/ui/logs")
+    assert response.status_code == 200
+    assert token not in response.text
 
 
 def test_setup_skip_is_gated_by_bootstrap_token() -> None:

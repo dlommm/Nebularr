@@ -1,9 +1,10 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ActionErrorProvider } from "./context/ActionErrorContext";
 import { AppLayout } from "./layout/AppLayout";
 import { PageFallback } from "./components/PageFallback";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
+import { SessionExpiredDialog } from "./components/SessionExpiredDialog";
 import { RequireSetup } from "./routes/RequireSetup";
 import { PATHS } from "./routes/paths";
 
@@ -21,8 +22,20 @@ const NotFoundPage = lazy(() => import("./components/NotFoundPage").then((m) => 
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 
 export function App(): JSX.Element {
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Lives at App level (not inside AppLayout) so it covers every route —
+  // including RequireSetup and login-adjacent states where AppLayout never
+  // mounts. A non-exempt 401 anywhere dispatches this event (see api.ts).
+  useEffect(() => {
+    const onSessionExpired = (): void => setSessionExpired(true);
+    window.addEventListener("nebularr:session-expired", onSessionExpired);
+    return () => window.removeEventListener("nebularr:session-expired", onSessionExpired);
+  }, []);
+
   return (
     <ActionErrorProvider>
+      <SessionExpiredDialog open={sessionExpired} />
       <Routes>
         {/* Setup and Login render outside AppLayout's boundary; wrap them so a
             render error shows a recoverable message instead of a blank page. */}

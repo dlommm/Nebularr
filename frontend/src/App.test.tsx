@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 
 const DEFAULT_SETUP_STATUS = {
   completed: true,
@@ -104,6 +104,17 @@ describe("App", () => {
     // Use the page heading (not the ambiguous "Nebularr" sidebar text, which
     // also appears here) to confirm the real shell rendered post-retry.
     expect(await screen.findByRole("heading", { name: "Nebularr" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("sends a cold-load 401 from setup status to a login affordance, not a dead end", async () => {
+    // On an auth-enabled box, a session-less cold load 401s on /api/setup/status
+    // (not auth-exempt). RequireSetup must route to login rather than stranding
+    // the user on a QueryErrorNotice with a retry that will only 401 again.
+    vi.mocked(api.setupStatus).mockRejectedValueOnce(new ApiError(401, "authentication required"));
+    renderApp();
+
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

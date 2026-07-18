@@ -28,6 +28,7 @@ from arrsync.database_lifecycle import (
 from arrsync.db import session_scope
 from arrsync.deferred_session import DeferredSessionFactory
 from arrsync.events import EventBus
+from arrsync.log_buffer import RING_EXCLUDE_ATTR
 from arrsync.logging import apply_root_log_level, configure_logging
 from arrsync.metrics import Metrics
 from arrsync.services.arr_client import ArrClient
@@ -250,9 +251,12 @@ def _maybe_issue_bootstrap_token() -> None:
         return
     token = secrets.token_urlsafe(24)
     app_state.setup_bootstrap_token = token
+    # ring_exclude keeps the token in container stdout but out of the Web UI ring
+    # buffer, which GET /api/ui/logs serves unauthenticated while this gate is active.
     log.warning(
         "Setup bootstrap token: %s — required for setup API calls until setup completes",
         token,
+        extra={RING_EXCLUDE_ATTR: True},
     )
 
 

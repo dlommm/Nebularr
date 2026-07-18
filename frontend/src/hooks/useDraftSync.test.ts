@@ -82,6 +82,37 @@ describe("useDraftSync", () => {
     expect(result.current.drafts.a.value).toBe("1-saved");
   });
 
+  it("a resetDraft captured before a server refetch still adopts the NEW server value", () => {
+    // Guards against a stale closure: resetDraft must read server data through a
+    // ref, not close over the `serverData` it saw at creation time. Capturing the
+    // callback reference *before* the refetch (as a memoized event handler would)
+    // and calling it *after* must snap to the fresh value, not the one it was born with.
+    const { result, rerender } = renderHook(({ data }: { data: Row[] }) => useDraftSync(data, keyOf), {
+      initialProps: {
+        data: [{ key: "a", value: "server-v1" }],
+      },
+    });
+
+    act(() => {
+      result.current.setDraft("a", { value: "local-edit" });
+    });
+    // Grab the resetDraft reference now, before server data changes underneath it.
+    const capturedReset = result.current.resetDraft;
+
+    // A background refetch (e.g. post-invalidate) brings a newer server value while
+    // the row is still dirty, so the merge effect leaves the draft alone.
+    rerender({ data: [{ key: "a", value: "server-v2" }] });
+    expect(result.current.drafts.a.value).toBe("local-edit");
+
+    act(() => {
+      capturedReset("a");
+    });
+
+    expect(result.current.dirtyKeys.has("a")).toBe(false);
+    // Must be the value from the latest refetch, not the stale "server-v1" closure.
+    expect(result.current.drafts.a.value).toBe("server-v2");
+  });
+
   it("saving one row resets only that row's draft, leaving other dirty rows untouched", () => {
     // Hoisted outside the render callback: an inline array literal there
     // would be a fresh reference every render, so the merge effect's
