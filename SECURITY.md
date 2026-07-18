@@ -21,6 +21,22 @@ their metadata in PostgreSQL, and serves a web UI. It is not designed to be expo
 directly to the internet. If you must reach it remotely, put it behind a VPN or an
 authenticating reverse proxy (with TLS) in addition to the built-in login.
 
+## Advisories
+
+### v2.7.0 — asset path traversal (fixed)
+
+`GET /assets/{path}` in versions prior to 2.7.0 did not sufficiently bound
+`path` to the web asset directory, allowing an unauthenticated caller to read
+arbitrary files readable by the container process. **Upgrade to 2.7.0 or
+later.** If your instance was ever reachable from the internet (not just your
+LAN), treat its secrets as compromised: rotate `APP_ENCRYPTION_KEY` (see
+below — this forces re-entry of encrypted integration API keys, the MAL
+client ID, and alert webhook URLs) and rotate your PostgreSQL credentials.
+2.7.0 also adds a setup-bootstrap token requirement (`X-Setup-Token`) on
+mutating `/api/setup/*` endpoints while auth is unconfigured, and gates
+`/metrics` behind the bearer API token when auth is enabled — see the
+2.7.0 CHANGELOG entry for the full list.
+
 ## Security features (2.0+)
 
 - **Authentication** — session-cookie login for the web UI plus an optional bearer API

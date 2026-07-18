@@ -46,6 +46,11 @@ flowchart LR
 - `v2-rel-004` (`proposed`): Add adaptive retry policy with jitter and circuit-breaker behavior per integration.
 - `v2-rel-005` (`proposed`): Add queue partitioning by source and priority so webhook spikes do not starve scheduled work.
 - `v2-rel-006` (`proposed`): Add configurable archive policy for deleted media entities (retain for N days before hard delete).
+- `v2-rel-007` (`proposed`): Relax the `mal_job_run.status` CHECK constraint (currently blocked by migration 0004) to allow a `partial` tri-state.
+- `v2-rel-008` (`proposed`): `EpisodeFileDelete` webhook should tombstone `warehouse.episode_file` by `episodeFile.id` directly instead of the episode row (current behavior self-heals on the next sync).
+- `v2-rel-009` (`proposed`): `SeriesDelete` webhook should tombstone episode rows too, instead of relying on the join to hide them until the next full sync sweeps them.
+- `v2-rel-010` (`proposed`): Consolidate the `_run_db`/`_mal_run_status` helpers across services; await pending background client closes in `aclose()`.
+- `v2-rel-011` (`proposed`): Close the residual TOCTOU window between the 202 response and background lock re-acquisition in `trigger_sync(wait=false)`.
 
 ### Performance And Scale
 
@@ -55,6 +60,7 @@ flowchart LR
 - `v2-perf-004` (`proposed`): Add query budget instrumentation for expensive API and DB operations.
 - `v2-perf-005` (`done`, v2.2.0): Reporting tables memoized with a 500-row render cap ("All" page size) and CSV escape hatch; library tables already server-paged. True windowed virtualization deferred.
 - `v2-perf-006` (`proposed`): Add benchmark suite with reproducible synthetic datasets and tracked baseline results.
+- `v2-perf-007` (`proposed`): Ops-overview scalar merge deferred from Step 4a (the new index already carries the perf win); wider adoption of the shared episode-inventory CTE; extend the panel-registry pattern to MAL dashboards.
 
 ### Security And Access
 
@@ -74,6 +80,9 @@ flowchart LR
 - `v2-ui-005` (`in_progress`, v2.3.0): Retention policy editing shipped (Schedules → Data retention: run history, storage snapshots, processed queue rows; 0 = keep forever) plus webhook dead-letter requeue/filter controls; queue policy tuning (batch sizes, retry caps) still open.
 - `v2-ui-006` (`proposed`): Add guided setup wizard for first-time deployment.
 - `v2-ui-007` (`done`, v2.3.0): Dedicated `/mal` page with pipeline runners, overview stats, job history from `app.mal_job_run`, and an unmatched dubbed anime table (new `GET /api/mal/job-runs` and `GET /api/mal/overview`).
+- `v2-ui-008` (`proposed`): `useSyncActions`: inject a confirm dependency and either wire up or trim the unused `runReconcileSync`; collapse the dual dialog trees.
+- `v2-ui-009` (`proposed`): Setup wizard: make the bootstrap-token input reachable from the final step's footer, not just the initial step; cache the `/metrics` settings read.
+- `v2-ui-010` (`proposed`): Ignore the session-expired event when already on `/login` (rare self-healing edge).
 
 ### Integrations And Automation
 

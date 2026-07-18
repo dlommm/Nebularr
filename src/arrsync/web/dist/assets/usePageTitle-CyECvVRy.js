@@ -1,0 +1,1 @@
+import{r as o}from"./index-ghn56vKL.js";const r="Nebularr Control Plane";function a(t){o.useEffect(()=>{const e=t?`Nebularr — ${t}`:r;return document.title=e,()=>{document.title=r}},[t])}export{a as u};

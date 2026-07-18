@@ -4,6 +4,144 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.7.0] - 2026-07-18
+
+Security-and-correctness release from a third full-application audit: two
+critical fixes (unauthenticated asset path traversal, a setup-bootstrap gap),
+a round of sync/webhook-queue correctness fixes, reporting-accuracy
+corrections, and a webui overhaul. One additive DB migration (0011) runs
+automatically.
+
+### Security
+- **Asset path traversal fixed.** `/assets/{path}` allowed unauthenticated
+  arbitrary file reads from the host filesystem. If an instance was ever
+  reachable from the internet, upgrade immediately and rotate
+  `APP_ENCRYPTION_KEY` and your database credentials — treat any secrets that
+  instance held as compromised.
+- **Setup bootstrap token.** While setup is incomplete and auth is
+  unconfigured, all mutating `/api/setup/*` endpoints (including
+  `/api/setup/skip`) now require an `X-Setup-Token` header. The token is
+  printed at `WARNING` in the container log at startup, and the setup wizard
+  prompts for it. The token is excluded from the in-app log buffer
+  (`/api/ui/logs`) — it only ever appears on container stdout.
+- **`/metrics` now requires the bearer API token when auth is enabled**
+  (previously open to anyone who could reach the port). An escape hatch,
+  `app.metrics_public=true`, restores the old unauthenticated behavior for
+  scrapers that can't send a token; the setting survives `reset-data`. Open
+  as before when auth is disabled entirely.
+- **`APP_ENCRYPTION_KEY` present-but-invalid now fails startup loudly**
+  (previously: silent fallback to plaintext storage, with an empty string
+  where the decrypted value should be).
+- Key files are written atomically (0600, `O_EXCL`) — no more world-readable
+  window during creation.
+- Login with a non-ASCII password and `AUTH_RECOVERY_PASSWORD` set no longer
+  500s and now counts toward lockout as intended; the rate-limiter's map
+  eviction no longer wipes every existing lockout when the map fills up.
+
+### Fixed
+- **Postgres setup bootstrap** (`initialize-postgres`/`bootstrap-database`)
+  was broken under psycopg3 — `CREATE`/`ALTER ROLE` don't accept bound
+  parameters. It now composes a safely quoted literal instead.
+- **Webhook queue claims carry a 120s visibility timeout.** Overlapping
+  drains could previously double-process an in-flight job, inflate its
+  attempt count, or dead-letter it prematurely.
+- **Per-source advisory locks serialize full-sync tombstoning against
+  webhook/incremental writers** on Postgres (SQLite was already
+  single-writer, so it needed no change).
+- **A misconfigured Arr base URL that returns HTML or another non-list 200
+  now fails the sync loudly** (`ArrResponseError`) instead of "succeeding"
+  with zero rows and tombstoning the whole library. Separately, an empty
+  fetch against a non-empty warehouse now refuses to tombstone and fails the
+  run rather than wiping it.
+- **Sonarr `SeriesDelete` webhooks no longer dead-letter** (episode refetch
+  was happening before delete handling, so the referenced series was already
+  gone); episode/file delete handlers now read the real `episodes[]` array
+  payload shape instead of assuming a different structure.
+- **History paged fallback no longer skips events that share the exact
+  watermark timestamp**; transient errors no longer permanently disable
+  `history/since` (only a real 404/405 does that now).
+- **Webhook jobs for a missing or disabled integration fail visibly**
+  instead of silently syncing from the default env client under that
+  instance's name.
+- **Sync-run summaries update by row id**, so overlapping runs of the same
+  (source, mode, instance) can no longer finish each other's summary rows.
+- **Health lag is computed per (source, instance) with max-per-source** — a
+  single stalled instance can no longer be masked by healthy ones; instances
+  that have never synced report unknown lag, not zero.
+- **Dead-letter replay and single-job requeue now trigger an immediate
+  drain** (previously they sat queued until unrelated activity nudged the
+  worker).
+- **`reset-data` also truncates `warehouse.library_stat_snapshot` and
+  `app.integrity_audit_run`**, so stale dashboards can no longer resurface
+  after a reset; the confirm dialog's keep-list is accurate and now also
+  covers queue/alert/retention/auth/webhook-secret/metrics settings.
+- **MAL tag/coverage runs that fail on every instance are now marked
+  failed** (previously reported success).
+- `mal.dub_list_fetch` raw payloads are now pruned by the retention sweep
+  (kept newest 5 per source; previously unbounded growth).
+- **Reporting correctness:** "Episodes With No Subtitle Languages" and both
+  unmonitored-audit panels no longer count episodes with no file at all;
+  the missing-English-audio stat and its table now agree (view rebuilt in
+  migration 0011); the large-files panel joins by source id instead of
+  title (duplicate titles no longer multiply rows); lag panels honor the
+  instance filter; webhook cards are labeled "(all instances)".
+- **Reporting CSV panel export executes exactly that one panel's query**
+  (previously it ran the whole dashboard).
+- **Unsuffixed `/hooks/{source}` with multiple enabled integrations now
+  returns 409** instead of attributing the event to a phantom "default"
+  instance; single-integration deployments are unaffected.
+- **Event-loop hygiene:** roughly 40 handlers, scrypt password hashing,
+  egress DNS checks, and MAL ingest DB writes moved off the event loop — the
+  UI/SSE no longer stall during logins, config saves, or MAL ingests.
+- **Cold-loading the app with an already-expired session now reaches the
+  login page again** (the session-expiry dialog is mounted app-wide, not
+  just on authenticated routes).
+
+### Fixed (web UI)
+- Session expiry shows a re-login dialog instead of hard-redirecting and
+  destroying unsaved form edits; the session-expired latch resets on
+  `/login` so the dialog can't reopen right after you sign back in.
+- Saving one integration/schedule row no longer wipes unsaved edits in
+  other rows; queue-policy drafts survive failed saves; MAL settings save no
+  longer overwrites toggles while config is still loading.
+- Library: switching shows resets the stale season filter; episode CSV
+  export uses the on-screen sort; the instance filter is hidden where it did
+  nothing (drilldown); row keys are instance-qualified; there's an empty
+  state on all-episodes.
+- Reporting: query failures render an error with retry (previously a blank
+  page); changing one panel's filter no longer resets every other panel's
+  pagination; back/forward navigation no longer resurrects stale filters.
+- MAL: pipeline buttons show a busy state and can't double-fire; the
+  WorkStatusPanel is embedded for live progress.
+- Setup wizard: labeled inputs, an editable port field (no more snap-to-5432),
+  Skip reachable from step 1, and a bootstrap-token prompt.
+- SSE: reconnects immediately when the tab becomes visible; invalidations
+  are debounced (no refetch storms during queue drains); finished syncs
+  refresh library views; drilldown views refresh on webhook processing.
+- Error boundary recovers via navigation ("Go home" works); setup-status
+  failures show retry instead of an infinite spinner; the command palette is
+  keyboard-accessible (focus trap, arrow keys, filter); the nav sidebar no
+  longer remounts on every keystroke; the `/` shortcut no longer steals
+  focus from other inputs; saved views survive rapid save/delete
+  (optimistic update plus a live-cache base); tables keep their previous
+  data while paging instead of flashing blank.
+- v2.6.0 leftover: the reset-data confirm dialog now enumerates the
+  truncate/keep lists accurately.
+
+### Changed
+- `clamp_limit(0)`-class inputs return the per-endpoint default instead of a
+  50k-row maximum; CSV exports keep full-dataset semantics (the cap is
+  unchanged at 100k).
+- Library pagination tiebreaks on `(instance_name, source_id)` for stable
+  ordering with multiple instances.
+- New indexes: `sync_run(started_at desc)`, `webhook_queue(received_at desc,
+  id desc)` (migration 0011).
+- `GET /api/setup/initial-sync-status` now returns per-source `results`
+  (plus an optional `error`); a failed source no longer aborts the remaining
+  sources.
+- `?wait=false` sync-trigger 409 detail text is simplified; the `reset-data`
+  response message text is updated to match its accurate keep-list.
+
 ## [2.6.0] - 2026-07-15
 
 Bug-fix and operator-experience release from a second full-application audit:
