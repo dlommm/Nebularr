@@ -321,3 +321,24 @@ def test_ops_overview_lag_honors_instance_and_webhook_labeled(app_state, client)
     for pid in ("queued_webhooks", "retrying_webhooks", "dead_letter_webhooks", "webhook_oldest_pending_min"):
         title = _panel(body, pid)["title"]
         assert title.endswith("(all instances)"), f"{pid} title should be labeled all-instances, got {title!r}"
+
+
+# --- single-panel CSV export executes exactly the registry panel ------------------
+
+def test_single_panel_csv_export_returns_registry_panel(app_state, client) -> None:  # type: ignore[no-untyped-def]
+    inst = "rc_csv"
+    with app_state.session_scope() as s:
+        _add_series(s, sid=7, inst=inst, title="CSV Show", monitored=True)
+        _add_episode(s, sid=71, inst=inst, series_sid=7, num=1, has_file=True)
+        _add_episode_file(s, sid=71, inst=inst, episode_sid=71, size=9_000_000_000, path="/csv/a.mkv")
+
+    resp = client.get(
+        "/api/reporting/dashboards/media-deep-dive/panels/detailed_large_files/export.csv",
+        params={"instance_name": inst},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    lines = [ln for ln in resp.text.splitlines() if ln.strip()]
+    assert lines, "expected a header row"
+    assert "series_title" in lines[0] and "size_gib" in lines[0]
+    assert any("CSV Show" in ln for ln in lines[1:])

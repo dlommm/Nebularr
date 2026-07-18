@@ -11,10 +11,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import text
 
+from arrsync.routers import reporting_registry as reg
 from arrsync.routers.shared import (
     REPORTING_MAX_LIMIT,
     clamp_limit,
     csv_response,
+    run_db,
 )
 
 log = logging.getLogger(__name__)
@@ -26,30 +28,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
     def _query_monitored_mix(instance_name: str) -> list[dict[str, Any]]:
         normalized_instance = instance_name.strip()
         with app_state.session_scope() as session:
-            rows = session.execute(
-                text(
-                    """
-                    select label, sum(value)::bigint as value
-                    from (
-                      select concat('series:', case when monitored then 'monitored' else 'unmonitored' end) as label, count(*)::bigint as value
-                      from warehouse.series
-                      where not deleted
-                        and (:instance_name = '' or instance_name = :instance_name)
-                      group by 1
-                      union all
-                      select concat('movies:', case when monitored then 'monitored' else 'unmonitored' end) as label, count(*)::bigint as value
-                      from warehouse.movie
-                      where not deleted
-                        and (:instance_name = '' or instance_name = :instance_name)
-                      group by 1
-                    ) x
-                    group by label
-                    order by value desc
-                    """
-                ),
+            return reg.build_rows(
+                session,
+                reg.PANELS["overview:monitored_mix"],
                 {"instance_name": normalized_instance},
-            ).mappings()
-            return [dict(r) for r in rows]
+            )
 
     def _query_reporting_overview(instance_name: str, limit: int) -> dict[str, Any]:
         normalized_instance = instance_name.strip()
@@ -104,80 +87,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     {"instance_name": normalized_instance},
                 ).scalar_one()
             )
-            episode_quality = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, count(*)::bigint as value
-                        from warehouse.v_episode_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            movie_quality = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, count(*)::bigint as value
-                        from warehouse.v_movie_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            largest_episodes = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            instance_name,
-                            series_title,
-                            season_number,
-                            episode_number,
-                            quality,
-                            round(size_bytes::numeric / 1024 / 1024, 2) as size_mib,
-                            path
-                        from warehouse.v_episode_files
-                        where size_bytes is not null
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        order by size_bytes desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            largest_movies = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            instance_name,
-                            movie_title,
-                            quality,
-                            round(size_bytes::numeric / 1024 / 1024, 2) as size_mib,
-                            path
-                        from warehouse.v_movie_files
-                        where size_bytes is not null
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        order by size_bytes desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            episode_quality = reg.build_rows(session, reg.PANELS["overview:episode_quality_mix"], p)
+            movie_quality = reg.build_rows(session, reg.PANELS["overview:movie_quality_mix"], p)
+            largest_episodes = reg.build_rows(session, reg.PANELS["overview:largest_episode_files"], p)
+            largest_movies = reg.build_rows(session, reg.PANELS["overview:largest_movie_files"], p)
         return {
             "key": "overview",
             "title": "Overview",
@@ -227,171 +141,14 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     {"instance_name": normalized_instance},
                 ).scalar_one()
             )
-            quality_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, count(*)::bigint as value
-                        from warehouse.v_episode_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            codec_pair_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select concat(coalesce(audio_codec, 'unknown'), ' / ', coalesce(video_codec, 'unknown')) as label, count(*)::bigint as value
-                        from warehouse.v_episode_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            audio_language_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(nullif(trim(lang), ''), 'unknown') as label, count(*)::bigint as value
-                        from (
-                            select unnest(coalesce(audio_languages, array['unknown'])) as lang
-                            from warehouse.v_episode_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            subtitle_language_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(nullif(trim(lang), ''), 'unknown') as label, count(*)::bigint as value
-                        from (
-                            select unnest(coalesce(subtitle_languages, array['unknown'])) as lang
-                            from warehouse.v_episode_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            size_bands = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select size_band as label, count(*)::bigint as value
-                        from (
-                            select
-                                case
-                                    when size_bytes < 262144000::bigint then '<250MB'
-                                    when size_bytes < 524288000::bigint then '250-500MB'
-                                    when size_bytes < 1073741824::bigint then '500MB-1GB'
-                                    when size_bytes < 2147483648::bigint then '1-2GB'
-                                    else '2GB+'
-                                end as size_band
-                            from warehouse.v_episode_files
-                            where size_bytes is not null
-                              and (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            inventory = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            e.instance_name,
-                            s.title as series_title,
-                            e.season_number,
-                            e.episode_number,
-                            e.title as episode_title,
-                            e.air_date,
-                            e.runtime_minutes,
-                            e.monitored,
-                            s.monitored as series_monitored,
-                            coalesce((e.payload ->> 'hasFile')::boolean, false) as has_file,
-                            coalesce(ef.payload ->> 'relativePath', '') as relative_path,
-                            ef.path as file_path,
-                            ef.quality,
-                            round(ef.size_bytes::numeric / 1024 / 1024, 2) as size_mib,
-                            coalesce(ef.payload -> 'mediaInfo' ->> 'audioCodec', ef.audio_codec) as audio_codec,
-                            coalesce(ef.payload -> 'mediaInfo' ->> 'videoCodec', ef.video_codec) as video_codec,
-                            ef.audio_languages,
-                            ef.subtitle_languages,
-                            coalesce(ef.payload ->> 'releaseGroup', '') as release_group
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        left join warehouse.episode_file ef
-                          on ef.episode_source_id = e.source_id
-                         and ef.instance_name = e.instance_name
-                         and not ef.deleted
-                        where not e.deleted
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        order by s.title, e.season_number, e.episode_number
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            missing_files = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            e.instance_name,
-                            s.title as series_title,
-                            e.season_number,
-                            e.episode_number,
-                            e.title as episode_title,
-                            e.air_date,
-                            e.monitored,
-                            s.monitored as series_monitored,
-                            coalesce((e.payload ->> 'episodeType'), '') as episode_type
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        where not e.deleted
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is not true
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        order by s.title, e.season_number, e.episode_number
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            quality_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:quality_mix"], p)
+            codec_pair_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:codec_pair_mix"], p)
+            audio_language_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:audio_language_mix"], p)
+            subtitle_language_mix = reg.build_rows(session, reg.PANELS["sonarr-forensics:subtitle_language_mix"], p)
+            size_bands = reg.build_rows(session, reg.PANELS["sonarr-forensics:size_band_mix"], p)
+            inventory = reg.build_rows(session, reg.PANELS["sonarr-forensics:episode_inventory"], p)
+            missing_files = reg.build_rows(session, reg.PANELS["sonarr-forensics:missing_files"], p)
         return {
             "key": "sonarr-forensics",
             "title": "Sonarr Episode Forensics",
@@ -443,133 +200,13 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     {"instance_name": normalized_instance},
                 ).scalar_one()
             )
-            quality_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, count(*)::bigint as value
-                        from warehouse.v_movie_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            codec_pair_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select concat(coalesce(audio_codec, 'unknown'), ' / ', coalesce(video_codec, 'unknown')) as label, count(*)::bigint as value
-                        from warehouse.v_movie_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            audio_language_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(nullif(trim(lang), ''), 'unknown') as label, count(*)::bigint as value
-                        from (
-                            select unnest(coalesce(audio_languages, array['unknown'])) as lang
-                            from warehouse.v_movie_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            subtitle_language_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(nullif(trim(lang), ''), 'unknown') as label, count(*)::bigint as value
-                        from (
-                            select unnest(coalesce(subtitle_languages, array['unknown'])) as lang
-                            from warehouse.v_movie_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            size_bands = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select size_band as label, count(*)::bigint as value
-                        from (
-                            select
-                                case
-                                    when size_bytes < 1073741824::bigint then '<1GB'
-                                    when size_bytes < 2147483648::bigint then '1-2GB'
-                                    when size_bytes < 4294967296::bigint then '2-4GB'
-                                    when size_bytes < 8589934592::bigint then '4-8GB'
-                                    else '8GB+'
-                                end as size_band
-                            from warehouse.v_movie_files
-                            where size_bytes is not null
-                              and (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            inventory = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            m.instance_name,
-                            m.title as movie_title,
-                            m.year,
-                            m.monitored,
-                            m.status,
-                            m.path as movie_path,
-                            mf.path as file_path,
-                            coalesce(mf.payload ->> 'relativePath', '') as relative_path,
-                            mf.quality,
-                            round(mf.size_bytes::numeric / 1024 / 1024, 2) as size_mib,
-                            coalesce(mf.payload -> 'mediaInfo' ->> 'audioCodec', mf.audio_codec) as audio_codec,
-                            coalesce(mf.payload -> 'mediaInfo' ->> 'videoCodec', mf.video_codec) as video_codec,
-                            mf.audio_languages,
-                            mf.subtitle_languages,
-                            coalesce(mf.payload ->> 'releaseGroup', '') as release_group
-                        from warehouse.movie m
-                        left join warehouse.movie_file mf
-                          on mf.movie_source_id = m.source_id
-                         and mf.instance_name = m.instance_name
-                         and not mf.deleted
-                        where not m.deleted
-                          and (:instance_name = '' or m.instance_name = :instance_name)
-                        order by m.title asc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            quality_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:quality_mix"], p)
+            codec_pair_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:codec_pair_mix"], p)
+            audio_language_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:audio_language_mix"], p)
+            subtitle_language_mix = reg.build_rows(session, reg.PANELS["radarr-forensics:subtitle_language_mix"], p)
+            size_bands = reg.build_rows(session, reg.PANELS["radarr-forensics:size_band_mix"], p)
+            inventory = reg.build_rows(session, reg.PANELS["radarr-forensics:movie_inventory"], p)
         return {
             "key": "radarr-forensics",
             "title": "Radarr Movie Forensics",
@@ -594,105 +231,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         bounded_limit = clamp_limit(limit, default=200, max_limit=REPORTING_MAX_LIMIT)
         monitored_mix = _query_monitored_mix(normalized_instance)
         with app_state.session_scope() as session:
-            missing_english = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select e.instance_name, s.title as series_title, e.season_number, e.episode_number, e.title as episode_title,
-                               e.monitored as episode_monitored, s.monitored as series_monitored,
-                               ef.quality, ef.audio_languages, ef.subtitle_languages, ef.path
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        left join warehouse.episode_file ef
-                          on ef.episode_source_id = e.source_id
-                         and ef.instance_name = e.instance_name
-                         and not ef.deleted
-                        where not e.deleted
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
-                          and not ('english' = any(coalesce(ef.audio_languages, array[]::text[])) or 'eng' = any(coalesce(ef.audio_languages, array[]::text[])))
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        order by s.title, e.season_number, e.episode_number
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            no_subtitles = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select e.instance_name, s.title as series_title, e.season_number, e.episode_number, e.title as episode_title,
-                               e.monitored as episode_monitored, s.monitored as series_monitored, ef.quality, ef.path
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        left join warehouse.episode_file ef
-                          on ef.episode_source_id = e.source_id
-                         and ef.instance_name = e.instance_name
-                         and not ef.deleted
-                        where not e.deleted
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
-                          and (ef.subtitle_languages is null or cardinality(ef.subtitle_languages) = 0)
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        order by s.title, e.season_number, e.episode_number
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            audio_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select lang as label, count(*)::bigint as value
-                        from (
-                            select unnest(audio_languages) as lang
-                            from warehouse.v_episode_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                            union all
-                            select unnest(audio_languages) as lang
-                            from warehouse.v_movie_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            subtitle_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select lang as label, count(*)::bigint as value
-                        from (
-                            select unnest(subtitle_languages) as lang
-                            from warehouse.v_episode_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                            union all
-                            select unnest(subtitle_languages) as lang
-                            from warehouse.v_movie_files
-                            where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            missing_english = reg.build_rows(session, reg.PANELS["language-audit:missing_english_episodes"], p)
+            no_subtitles = reg.build_rows(session, reg.PANELS["language-audit:episodes_without_subtitles"], p)
+            audio_mix = reg.build_rows(session, reg.PANELS["language-audit:audio_language_mix"], p)
+            subtitle_mix = reg.build_rows(session, reg.PANELS["language-audit:subtitle_language_mix"], p)
         return {
             "key": "language-audit",
             "title": "Language Audit",
@@ -753,79 +296,11 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     {"instance_name": normalized_instance},
                 ).scalar_one()
             )
-            recent_runs = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select started_at, finished_at, source, mode, instance_name, status, records_processed, coalesce(error_message, '') as error_message
-                        from warehouse.sync_run
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        order by started_at desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            aggregates_24h = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select source, mode, instance_name, status, count(*)::bigint as run_count, coalesce(sum(records_processed), 0)::bigint as total_records
-                        from warehouse.sync_run
-                        where started_at >= now() - interval '24 hours'
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        group by source, mode, instance_name, status
-                        order by run_count desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            throughput_48h = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select date_trunc('hour', started_at) as hour_bucket, source, mode, count(*)::bigint as runs, coalesce(sum(records_processed), 0)::bigint as records_processed
-                        from warehouse.sync_run
-                        where started_at >= now() - interval '48 hours'
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        group by hour_bucket, source, mode
-                        order by hour_bucket desc, source, mode
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            integrity_audits = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            started_at,
-                            source,
-                            instance_name,
-                            status,
-                            drift_detected,
-                            arr_counts->>'item_count' as arr_items,
-                            warehouse_counts->>'item_count' as warehouse_items,
-                            arr_counts->>'file_count' as arr_files,
-                            warehouse_counts->>'file_count' as warehouse_files,
-                            coalesce(error_message, '') as error_message
-                        from app.integrity_audit_run
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        order by started_at desc
-                        limit 20
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            recent_runs = reg.build_rows(session, reg.PANELS["sync-ops:recent_runs"], p)
+            aggregates_24h = reg.build_rows(session, reg.PANELS["sync-ops:run_aggregates_24h"], p)
+            throughput_48h = reg.build_rows(session, reg.PANELS["sync-ops:throughput_48h"], p)
+            integrity_audits = reg.build_rows(session, reg.PANELS["sync-ops:integrity_audits"], p)
         return {
             "key": "sync-ops",
             "title": "Sync Operations",
@@ -1252,108 +727,10 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ),
                 {"instance_name": normalized_instance},
             ).mappings().one()
-            series_coverage = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            c.instance_name,
-                            c.title,
-                            c.aired_monitored_episodes,
-                            c.downloaded_episodes,
-                            c.english_episodes,
-                            c.non_english_episodes,
-                            c.coverage_status,
-                            coalesce(d.dub_list_status, 'not-listed') as dub_list_status,
-                            coalesce(d.dub_sources, 0) as dub_sources
-                        from warehouse.v_anime_series_english_coverage c
-                        left join lateral (
-                            select
-                                case max(case a.dub_status when 'dubbed' then 2 when 'partial' then 1 else 0 end)
-                                    when 2 then 'dubbed'
-                                    when 1 then 'partial'
-                                end as dub_list_status,
-                                max(a.dub_source_count) as dub_sources
-                            from mal.warehouse_link l
-                            join mal.anime a on a.mal_id = l.mal_id
-                            where l.arr_entity = 'sonarr_series'
-                              and l.instance_name = c.instance_name
-                              and l.warehouse_source_id = c.source_id
-                        ) d on true
-                        where (:instance_name = '' or c.instance_name = :instance_name)
-                        order by (c.coverage_status = 'partial') desc, c.non_english_episodes desc, c.title
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            movie_coverage = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            c.instance_name,
-                            c.title,
-                            c.has_file,
-                            c.coverage_status,
-                            coalesce(d.dub_list_status, 'not-listed') as dub_list_status,
-                            coalesce(d.dub_sources, 0) as dub_sources
-                        from warehouse.v_anime_movie_english_coverage c
-                        left join lateral (
-                            select
-                                case max(case a.dub_status when 'dubbed' then 2 when 'partial' then 1 else 0 end)
-                                    when 2 then 'dubbed'
-                                    when 1 then 'partial'
-                                end as dub_list_status,
-                                max(a.dub_source_count) as dub_sources
-                            from mal.warehouse_link l
-                            join mal.anime a on a.mal_id = l.mal_id
-                            where l.arr_entity = 'radarr_movie'
-                              and l.instance_name = c.instance_name
-                              and l.warehouse_source_id = c.source_id
-                        ) d on true
-                        where (:instance_name = '' or c.instance_name = :instance_name)
-                        order by (c.coverage_status = 'partial') desc, c.title
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            non_english_episodes = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select e.instance_name, s.title as series_title, e.season_number, e.episode_number,
-                               e.title as episode_title, e.monitored as episode_monitored,
-                               ef.quality, ef.audio_languages, ef.path
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        left join warehouse.episode_file ef
-                          on ef.episode_source_id = e.source_id
-                         and ef.instance_name = e.instance_name
-                         and not ef.deleted
-                        where not e.deleted
-                          and e.monitored
-                          and lower(coalesce(s.payload->>'seriesType', '')) = 'anime'
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
-                          and not ('english' = any(coalesce(ef.audio_languages, array[]::text[]))
-                                or 'eng' = any(coalesce(ef.audio_languages, array[]::text[])))
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        order by s.title, e.season_number, e.episode_number
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            series_coverage = reg.build_rows(session, reg.PANELS["english-dub-coverage:series_coverage"], p)
+            movie_coverage = reg.build_rows(session, reg.PANELS["english-dub-coverage:movie_coverage"], p)
+            non_english_episodes = reg.build_rows(session, reg.PANELS["english-dub-coverage:non_english_episodes"], p)
         return {
             "key": "english-dub-coverage",
             "title": "English Dub Coverage",
@@ -1597,147 +974,15 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
                 or 0
             )
-            queue_status_breakdown = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select status as label, count(*)::bigint as value
-                        from app.webhook_queue
-                        group by status
-                        order by value desc
-                        """
-                    )
-                ).mappings()
-            ]
-            sync_state_snapshot = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select source, last_history_time, last_history_id, last_successful_full_sync, last_successful_incremental,
-                               round(extract(epoch from (now() - coalesce(last_history_time, now()))) / 60.0, 2) as history_lag_min
-                        from app.sync_state
-                        order by source
-                        """
-                    )
-                ).mappings()
-            ]
-            recent_failures = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select started_at, source, mode, instance_name, status, records_processed, coalesce(error_message, '') as error_message
-                        from warehouse.sync_run
-                        where status = 'failed'
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        order by started_at desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            runs_by_hour_7d = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select date_trunc('hour', started_at) as hour_bucket,
-                               count(*) filter (where status = 'success')::bigint as success_runs,
-                               count(*) filter (where status = 'failed')::bigint as failed_runs,
-                               count(*)::bigint as total_runs
-                        from warehouse.sync_run
-                        where started_at >= now() - interval '7 days'
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by 1
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            records_by_hour_7d = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select date_trunc('hour', started_at) as hour_bucket,
-                               coalesce(sum(records_processed) filter (where source = 'sonarr'), 0)::bigint as sonarr_records,
-                               coalesce(sum(records_processed) filter (where source = 'radarr'), 0)::bigint as radarr_records,
-                               coalesce(sum(records_processed), 0)::bigint as total_records
-                        from warehouse.sync_run
-                        where started_at >= now() - interval '7 days'
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        group by 1
-                        order by 1
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            breakdown_7d = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select source, mode, instance_name,
-                               count(*)::bigint as runs,
-                               count(*) filter (where status = 'failed')::bigint as failed,
-                               round(100.0 * avg(case when status = 'success' then 1 else 0 end), 2) as success_rate_pct,
-                               coalesce(sum(records_processed), 0)::bigint as records_processed
-                        from warehouse.sync_run
-                        where started_at >= now() - interval '7 days'
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        group by source, mode, instance_name
-                        order by source, mode, instance_name
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            latest_per_instance = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        with latest as (
-                          select distinct on (source, instance_name)
-                            source, instance_name, mode, status, started_at, finished_at, records_processed, error_message
-                          from warehouse.sync_run
-                          where (:instance_name = '' or instance_name = :instance_name)
-                          order by source, instance_name, started_at desc
-                        )
-                        select source, instance_name, mode as latest_mode, status as latest_status, started_at as latest_started_at, finished_at as latest_finished_at,
-                               round(extract(epoch from (now() - started_at)) / 60.0, 2) as minutes_since_last_run,
-                               records_processed, coalesce(error_message, '') as error_message
-                        from latest
-                        order by source, instance_name
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            recent_log = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select started_at, source, mode, instance_name, status, records_processed,
-                               round(extract(epoch from (finished_at - started_at)) / 60.0, 2) as duration_min,
-                               coalesce(error_message, '') as error_message
-                        from warehouse.sync_run
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        order by started_at desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            queue_status_breakdown = reg.build_rows(session, reg.PANELS["ops-overview:queue_status_breakdown"], p)
+            sync_state_snapshot = reg.build_rows(session, reg.PANELS["ops-overview:sync_state_snapshot"], p)
+            recent_failures = reg.build_rows(session, reg.PANELS["ops-overview:recent_failures"], p)
+            runs_by_hour_7d = reg.build_rows(session, reg.PANELS["ops-overview:runs_by_hour_7d"], p)
+            records_by_hour_7d = reg.build_rows(session, reg.PANELS["ops-overview:records_by_hour_7d"], p)
+            breakdown_7d = reg.build_rows(session, reg.PANELS["ops-overview:breakdown_7d"], p)
+            latest_per_instance = reg.build_rows(session, reg.PANELS["ops-overview:latest_per_instance"], p)
+            recent_log = reg.build_rows(session, reg.PANELS["ops-overview:recent_run_log"], p)
         return {
             "key": "ops-overview",
             "title": "Nebularr Overview / Stats",
@@ -1844,192 +1089,16 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).scalar_one()
                 or 0
             )
-            top_series_storage = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select s.instance_name, s.title as series_title, s.monitored as series_monitored,
-                               round(sum(ef.size_bytes)::numeric / 1024 / 1024 / 1024, 2) as total_gib, count(*)::bigint as file_count
-                        from warehouse.episode_file ef
-                        join warehouse.episode e
-                          on e.source_id = ef.episode_source_id
-                         and e.instance_name = ef.instance_name
-                         and not e.deleted
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        where size_bytes is not null
-                          and not ef.deleted
-                          and (:instance_name = '' or s.instance_name = :instance_name)
-                        group by s.instance_name, s.title, s.monitored
-                        order by total_gib desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            largest_movies = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select m.instance_name, m.title as movie_title, m.year, m.monitored as movie_monitored,
-                               round(mf.size_bytes::numeric / 1024 / 1024 / 1024, 2) as size_gib, mf.quality, mf.audio_languages, mf.subtitle_languages
-                        from warehouse.movie_file mf
-                        join warehouse.movie m
-                          on m.source_id = mf.movie_source_id
-                         and m.instance_name = mf.instance_name
-                         and not m.deleted
-                        where size_bytes is not null
-                          and not mf.deleted
-                          and (:instance_name = '' or m.instance_name = :instance_name)
-                        order by mf.size_bytes desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            episode_quality_profile = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, count(*)::bigint as value, round(avg(size_bytes)::numeric / 1024 / 1024, 2) as avg_size_mib
-                        from warehouse.v_episode_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by quality
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            movie_quality_profile = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, count(*)::bigint as value, round(avg(size_bytes)::numeric / 1024 / 1024, 2) as avg_size_mib
-                        from warehouse.v_movie_files
-                        where (:instance_name = '' or instance_name = :instance_name)
-                        group by quality
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            audio_codec_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(audio_codec, 'unknown') as label, count(*)::bigint as value
-                        from (
-                          select audio_codec from warehouse.v_episode_files where (:instance_name = '' or instance_name = :instance_name)
-                          union all
-                          select audio_codec from warehouse.v_movie_files where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            video_codec_mix = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(video_codec, 'unknown') as label, count(*)::bigint as value
-                        from (
-                          select video_codec from warehouse.v_episode_files where (:instance_name = '' or instance_name = :instance_name)
-                          union all
-                          select video_codec from warehouse.v_movie_files where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            subtitle_coverage = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select source_type as label, round(100.0 * avg(has_subtitles), 2) as value
-                        from (
-                          select 'episodes' as source_type, case when subtitle_languages is not null and cardinality(subtitle_languages) > 0 then 1 else 0 end::numeric as has_subtitles
-                          from warehouse.v_episode_files
-                          where (:instance_name = '' or instance_name = :instance_name)
-                          union all
-                          select 'movies' as source_type, case when subtitle_languages is not null and cardinality(subtitle_languages) > 0 then 1 else 0 end::numeric as has_subtitles
-                          from warehouse.v_movie_files
-                          where (:instance_name = '' or instance_name = :instance_name)
-                        ) x
-                        group by source_type
-                        order by source_type
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            detailed_missing_english = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select e.instance_name, s.title as series_title, s.monitored as series_monitored, e.monitored as episode_monitored,
-                               e.season_number, e.episode_number, e.title as episode_title, ef.quality,
-                               round(ef.size_bytes::numeric / 1024 / 1024, 1) as size_mib, ef.audio_languages, ef.subtitle_languages, ef.path
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        left join warehouse.episode_file ef
-                          on ef.episode_source_id = e.source_id
-                         and ef.instance_name = e.instance_name
-                         and not ef.deleted
-                        where not e.deleted
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
-                          and not ('english' = any(coalesce(ef.audio_languages, array[]::text[])) or 'eng' = any(coalesce(ef.audio_languages, array[]::text[])))
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        order by s.title, e.season_number, e.episode_number
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            detailed_large_files = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select v.instance_name, v.series_title, s.monitored as series_monitored,
-                               v.season_number, v.episode_number, v.episode_title, v.quality,
-                               round(v.size_bytes::numeric / 1024 / 1024 / 1024, 2) as size_gib, v.audio_codec, v.video_codec, v.path
-                        from warehouse.v_large_files v
-                        left join warehouse.series s
-                          on s.source_id = v.series_source_id
-                         and s.instance_name = v.instance_name
-                         and not s.deleted
-                        where (:instance_name = '' or v.instance_name = :instance_name)
-                        order by size_gib desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            top_series_storage = reg.build_rows(session, reg.PANELS["media-deep-dive:top_series_storage"], p)
+            largest_movies = reg.build_rows(session, reg.PANELS["media-deep-dive:largest_movie_files"], p)
+            episode_quality_profile = reg.build_rows(session, reg.PANELS["media-deep-dive:episode_quality_profile"], p)
+            movie_quality_profile = reg.build_rows(session, reg.PANELS["media-deep-dive:movie_quality_profile"], p)
+            audio_codec_mix = reg.build_rows(session, reg.PANELS["media-deep-dive:audio_codec_mix"], p)
+            video_codec_mix = reg.build_rows(session, reg.PANELS["media-deep-dive:video_codec_mix"], p)
+            subtitle_coverage = reg.build_rows(session, reg.PANELS["media-deep-dive:subtitle_coverage_pct"], p)
+            detailed_missing_english = reg.build_rows(session, reg.PANELS["media-deep-dive:detailed_missing_english"], p)
+            detailed_large_files = reg.build_rows(session, reg.PANELS["media-deep-dive:detailed_large_files"], p)
         return {
             "key": "media-deep-dive",
             "title": "Media Deep Dive",
@@ -2107,215 +1176,12 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                     {"instance_name": normalized_instance},
                 ).scalar_one()
             )
-            unmonitored_non_english_shows = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            s.instance_name,
-                            s.title as series_title,
-                            s.monitored as series_monitored,
-                            count(*)::bigint as episodes_missing_english_audio
-                        from warehouse.series s
-                        join warehouse.episode e
-                          on e.series_source_id = s.source_id
-                         and e.instance_name = s.instance_name
-                         and not e.deleted
-                        left join warehouse.episode_file ef
-                          on ef.episode_source_id = e.source_id
-                         and ef.instance_name = e.instance_name
-                         and not ef.deleted
-                        where not s.deleted
-                          and not s.monitored
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is true
-                          and not ('english' = any(coalesce(ef.audio_languages, array[]::text[])) or 'eng' = any(coalesce(ef.audio_languages, array[]::text[])))
-                          and (:instance_name = '' or s.instance_name = :instance_name)
-                        group by s.instance_name, s.title, s.monitored
-                        order by episodes_missing_english_audio desc, s.title
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            unmonitored_non_english_movies = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            m.instance_name,
-                            m.title as movie_title,
-                            m.year,
-                            m.monitored as movie_monitored,
-                            mf.quality,
-                            mf.audio_languages,
-                            mf.path
-                        from warehouse.movie m
-                        left join warehouse.movie_file mf
-                          on mf.movie_source_id = m.source_id
-                         and mf.instance_name = m.instance_name
-                         and not mf.deleted
-                        where not m.deleted
-                          and not m.monitored
-                          and mf.source_id is not null
-                          and not ('english' = any(coalesce(mf.audio_languages, array[]::text[])) or 'eng' = any(coalesce(mf.audio_languages, array[]::text[])))
-                          and (:instance_name = '' or m.instance_name = :instance_name)
-                        order by m.title
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            unmonitored_without_subtitles = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select *
-                        from (
-                            select
-                                e.instance_name,
-                                'episode'::text as item_type,
-                                s.title as parent_title,
-                                e.title as item_title,
-                                s.monitored as parent_monitored,
-                                e.monitored as item_monitored,
-                                ef.quality,
-                                ef.subtitle_languages,
-                                ef.path
-                            from warehouse.episode e
-                            join warehouse.series s
-                              on s.source_id = e.series_source_id
-                             and s.instance_name = e.instance_name
-                             and not s.deleted
-                            left join warehouse.episode_file ef
-                              on ef.episode_source_id = e.source_id
-                             and ef.instance_name = e.instance_name
-                             and not ef.deleted
-                            where not e.deleted
-                              and not s.monitored
-                              and ef.source_id is not null
-                              and (ef.subtitle_languages is null or cardinality(ef.subtitle_languages) = 0)
-                              and (:instance_name = '' or e.instance_name = :instance_name)
-                            union all
-                            select
-                                m.instance_name,
-                                'movie'::text as item_type,
-                                m.title as parent_title,
-                                m.title as item_title,
-                                m.monitored as parent_monitored,
-                                m.monitored as item_monitored,
-                                mf.quality,
-                                mf.subtitle_languages,
-                                mf.path
-                            from warehouse.movie m
-                            left join warehouse.movie_file mf
-                              on mf.movie_source_id = m.source_id
-                             and mf.instance_name = m.instance_name
-                             and not mf.deleted
-                            where not m.deleted
-                              and not m.monitored
-                              and mf.source_id is not null
-                              and (mf.subtitle_languages is null or cardinality(mf.subtitle_languages) = 0)
-                              and (:instance_name = '' or m.instance_name = :instance_name)
-                        ) x
-                        order by parent_title, item_title
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            unmonitored_non_1080p = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select *
-                        from (
-                            select
-                                e.instance_name,
-                                'episode'::text as item_type,
-                                s.title as parent_title,
-                                e.title as item_title,
-                                s.monitored as parent_monitored,
-                                e.monitored as item_monitored,
-                                ef.quality,
-                                round(ef.size_bytes::numeric / 1024 / 1024, 1) as size_mib,
-                                ef.path
-                            from warehouse.episode e
-                            join warehouse.series s
-                              on s.source_id = e.series_source_id
-                             and s.instance_name = e.instance_name
-                             and not s.deleted
-                            left join warehouse.episode_file ef
-                              on ef.episode_source_id = e.source_id
-                             and ef.instance_name = e.instance_name
-                             and not ef.deleted
-                            where not e.deleted
-                              and not s.monitored
-                              and ef.source_id is not null
-                              and coalesce(ef.quality, '') not ilike '%1080p%'
-                              and (:instance_name = '' or e.instance_name = :instance_name)
-                            union all
-                            select
-                                m.instance_name,
-                                'movie'::text as item_type,
-                                m.title as parent_title,
-                                m.title as item_title,
-                                m.monitored as parent_monitored,
-                                m.monitored as item_monitored,
-                                mf.quality,
-                                round(mf.size_bytes::numeric / 1024 / 1024, 1) as size_mib,
-                                mf.path
-                            from warehouse.movie m
-                            left join warehouse.movie_file mf
-                              on mf.movie_source_id = m.source_id
-                             and mf.instance_name = m.instance_name
-                             and not mf.deleted
-                            where not m.deleted
-                              and not m.monitored
-                              and mf.source_id is not null
-                              and coalesce(mf.quality, '') not ilike '%1080p%'
-                              and (:instance_name = '' or m.instance_name = :instance_name)
-                        ) x
-                        order by parent_title, item_type
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            monitored_missing_files = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select
-                            e.instance_name,
-                            s.title as series_title,
-                            s.monitored as series_monitored,
-                            count(*)::bigint as monitored_episodes_without_files
-                        from warehouse.episode e
-                        join warehouse.series s
-                          on s.source_id = e.series_source_id
-                         and s.instance_name = e.instance_name
-                         and not s.deleted
-                        where not e.deleted
-                          and s.monitored
-                          and coalesce((e.payload ->> 'hasFile')::boolean, false) is not true
-                          and (:instance_name = '' or e.instance_name = :instance_name)
-                        group by e.instance_name, s.title, s.monitored
-                        order by monitored_episodes_without_files desc, s.title
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            unmonitored_non_english_shows = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_non_english_shows"], p)
+            unmonitored_non_english_movies = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_non_english_movies"], p)
+            unmonitored_without_subtitles = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_without_subtitles"], p)
+            unmonitored_non_1080p = reg.build_rows(session, reg.PANELS["monitoring-audit:unmonitored_non_1080p"], p)
+            monitored_missing_files = reg.build_rows(session, reg.PANELS["monitoring-audit:monitored_missing_files"], p)
         return {
             "key": "monitoring-audit",
             "title": "Monitoring Audit",
@@ -2369,31 +1235,8 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ).mappings()
             ]
             # One point per day per source: the day's latest snapshot values.
-            growth_rows = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select to_char(day, 'YYYY-MM-DD') as ts,
-                               source as label,
-                               sum(file_bytes)::bigint as value
-                        from (
-                          select distinct on (date_trunc('day', captured_at), instance_name, source)
-                                 date_trunc('day', captured_at) as day,
-                                 instance_name,
-                                 source,
-                                 file_bytes
-                          from warehouse.library_stat_snapshot
-                          where (:instance_name = '' or instance_name = :instance_name)
-                          order by date_trunc('day', captured_at), instance_name, source, captured_at desc
-                        ) daily
-                        group by day, source
-                        order by day asc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
+            p = {"instance_name": normalized_instance, "limit": bounded_limit}
+            growth_rows = reg.build_rows(session, reg.PANELS["storage-growth:storage_over_time"], p)
             growth_delta_30d = session.execute(
                 text(
                     """
@@ -2418,66 +1261,9 @@ def build_reporting_router(app_state: Any) -> APIRouter:
                 ),
                 {"instance_name": normalized_instance},
             ).scalar_one()
-            storage_by_quality = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select coalesce(quality, 'unknown') as label, sum(size_bytes)::bigint as value
-                        from (
-                          select quality, size_bytes from warehouse.v_episode_files
-                          where size_bytes is not null
-                            and (:instance_name = '' or instance_name = :instance_name)
-                          union all
-                          select quality, size_bytes from warehouse.v_movie_files
-                          where size_bytes is not null
-                            and (:instance_name = '' or instance_name = :instance_name)
-                        ) files
-                        group by 1
-                        order by value desc
-                        """
-                    ),
-                    {"instance_name": normalized_instance},
-                ).mappings()
-            ]
-            top_series = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select series_title, instance_name,
-                               count(*) as episode_files,
-                               sum(size_bytes)::bigint as total_bytes,
-                               round(sum(size_bytes) / 1073741824.0, 2) as total_gib
-                        from warehouse.v_episode_files
-                        where size_bytes is not null
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        group by series_title, instance_name
-                        order by total_bytes desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
-            top_movies = [
-                dict(r)
-                for r in session.execute(
-                    text(
-                        """
-                        select movie_title, year, instance_name, quality,
-                               size_bytes,
-                               round(size_bytes / 1073741824.0, 2) as size_gib
-                        from warehouse.v_movie_files
-                        where size_bytes is not null
-                          and (:instance_name = '' or instance_name = :instance_name)
-                        order by size_bytes desc
-                        limit :limit
-                        """
-                    ),
-                    {"instance_name": normalized_instance, "limit": bounded_limit},
-                ).mappings()
-            ]
+            storage_by_quality = reg.build_rows(session, reg.PANELS["storage-growth:storage_by_quality"], p)
+            top_series = reg.build_rows(session, reg.PANELS["storage-growth:top_series_by_storage"], p)
+            top_movies = reg.build_rows(session, reg.PANELS["storage-growth:top_movies_by_storage"], p)
         totals_by_source = {str(row["source"]): row for row in current_totals}
         tv_bytes = int(totals_by_source.get("sonarr", {}).get("file_bytes", 0) or 0)
         movie_bytes = int(totals_by_source.get("radarr", {}).get("file_bytes", 0) or 0)
@@ -2604,16 +1390,23 @@ def build_reporting_router(app_state: Any) -> APIRouter:
         limit: int = 5000,
     ) -> PlainTextResponse:
         effective_limit = clamp_limit(limit, default=REPORTING_MAX_LIMIT, max_limit=REPORTING_MAX_LIMIT)
-        handler = report_handlers.get(dashboard_key)
-        if not handler:
-            raise HTTPException(status_code=404, detail="unknown dashboard")
-        dashboard = await asyncio.to_thread(handler, instance_name=instance_name, limit=effective_limit)
-        panel = next((entry for entry in dashboard.get("panels", []) if entry.get("id") == panel_id), None)
-        if not panel:
-            raise HTTPException(status_code=404, detail="unknown panel")
-        rows = panel.get("rows", [])
-        if not isinstance(rows, list):
-            raise HTTPException(status_code=400, detail="panel has no tabular rows")
+        spec = reg.PANELS.get(reg.panel_key(dashboard_key, panel_id))
+        if spec is not None and spec.kind != "stat":
+            # Registry panel: execute exactly this one panel's SQL instead of
+            # building the entire dashboard just to throw the other panels away.
+            params = {"instance_name": instance_name.strip(), "limit": effective_limit}
+            rows = await run_db(app_state, lambda session: reg.build_rows(session, spec, params))
+        else:
+            handler = report_handlers.get(dashboard_key)
+            if not handler:
+                raise HTTPException(status_code=404, detail="unknown dashboard")
+            dashboard = await asyncio.to_thread(handler, instance_name=instance_name, limit=effective_limit)
+            panel = next((entry for entry in dashboard.get("panels", []) if entry.get("id") == panel_id), None)
+            if not panel:
+                raise HTTPException(status_code=404, detail="unknown panel")
+            rows = panel.get("rows", [])
+            if not isinstance(rows, list):
+                raise HTTPException(status_code=400, detail="panel has no tabular rows")
         safe_dashboard = dashboard_key.replace("/", "_")
         safe_panel = panel_id.replace("/", "_")
         return csv_response(f"{safe_dashboard}_{safe_panel}.csv", rows)
