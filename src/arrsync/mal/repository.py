@@ -174,6 +174,38 @@ def finish_mal_job_run(
     )
 
 
+def prune_dub_list_fetches(session: Session, keep_per_source: int = 5) -> int:
+    """Keep only the newest ``keep_per_source`` mal.dub_list_fetch rows per source.
+
+    The raw dub-list payloads accumulate one row per source per changed fetch and
+    are only ever read as "the latest sha per source", so older rows are dead
+    weight. FK cascade removes their snapshot items; anime_dub_source.last_fetch_id
+    is ON DELETE SET NULL, so live membership is unaffected.
+    """
+    keep = max(1, int(keep_per_source))
+    result = session.execute(
+        text(
+            """
+            delete from mal.dub_list_fetch
+            where id in (
+                select id from (
+                    select id,
+                           row_number() over (
+                               partition by source_name order by id desc
+                           ) as rn
+                    from mal.dub_list_fetch
+                ) ranked
+                where ranked.rn > :keep
+            )
+            """
+        ),
+        {"keep": keep},
+    )
+    # getattr guard: retention-policy unit tests drive this through a recording
+    # fake whose execute() returns no CursorResult.
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 def latest_dub_list_sha(session: Session, source_name: str = "mal_dubs") -> str | None:
     row = session.execute(
         text(

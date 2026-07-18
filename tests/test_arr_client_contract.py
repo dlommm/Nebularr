@@ -62,14 +62,19 @@ async def test_list_history_since_falls_back_to_paged_walk_stopping_at_watermark
     page_one = [
         {"id": 30, "date": "2026-04-03T00:00:00Z"},
         {"id": 29, "date": "2026-04-02T00:00:00Z"},
-        {"id": 28, "date": "2026-04-01T00:00:00Z"},  # == watermark: stop here
-        {"id": 27, "date": "2026-03-31T00:00:00Z"},
+        {"id": 28, "date": "2026-04-01T00:00:00Z"},  # == watermark: re-included (idempotent)
+        {"id": 27, "date": "2026-03-31T00:00:00Z"},  # < watermark: stop here
     ]
+    since_endpoint_request = httpx.Request("GET", "http://radarr.local/api/v3/history/since")
+    since_endpoint_404 = httpx.Response(404, request=since_endpoint_request)
 
     async def fake_request(method: str, path: str, params: dict | None = None):  # type: ignore[no-untyped-def]
         calls.append((path, params))
         if path == "/api/v3/history/since":
-            raise RuntimeError("HTTP 404 unknown endpoint")
+            # _request wraps httpx errors as RuntimeError(...) from HTTPStatusError.
+            raise RuntimeError("radarr request failed") from httpx.HTTPStatusError(
+                "not found", request=since_endpoint_request, response=since_endpoint_404
+            )
         assert path == "/api/v3/history"
         assert params and params["sortKey"] == "date" and params["sortDirection"] == "descending"
         return {"records": page_one if params["page"] == 1 else []}
@@ -77,11 +82,34 @@ async def test_list_history_since_falls_back_to_paged_walk_stopping_at_watermark
     client._request = fake_request  # type: ignore[assignment]
     records = await client.list_history_since("2026-04-01T00:00:00Z")
 
-    assert [r["id"] for r in records] == [30, 29]
+    # Strict watermark: the == record (28) is re-fetched; only < (27) stops the walk.
+    assert [r["id"] for r in records] == [30, 29, 28]
     assert client.capabilities.supports_history_since is False
     # A later call must not retry the unsupported endpoint.
     await client.list_history_since("2026-04-01T00:00:00Z")
     assert not any(path == "/api/v3/history/since" for path, _ in calls[1:])
+
+
+@pytest.mark.asyncio
+async def test_list_history_since_reraises_transient_error_without_disabling_fast_path() -> None:
+    client = ArrClient(_settings(), "radarr")
+    client.capabilities.supports_history = True
+    client.capabilities.supports_history_since = True
+
+    request = httpx.Request("GET", "http://radarr.local/api/v3/history/since")
+    response = httpx.Response(503, request=request)
+
+    async def fake_request(method: str, path: str, params: dict | None = None):  # type: ignore[no-untyped-def]
+        assert path == "/api/v3/history/since"
+        raise RuntimeError("radarr request failed") from httpx.HTTPStatusError(
+            "unavailable", request=request, response=response
+        )
+
+    client._request = fake_request  # type: ignore[assignment]
+    with pytest.raises(RuntimeError):
+        await client.list_history_since("2026-04-01T00:00:00Z")
+    # A blip must not permanently downgrade to the slow paged walk.
+    assert client.capabilities.supports_history_since is True
 
 
 @pytest.mark.asyncio

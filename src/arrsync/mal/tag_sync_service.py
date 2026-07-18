@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -15,10 +16,27 @@ from arrsync.services import repository as repo
 log = logging.getLogger(__name__)
 
 
+def _mal_run_status(details: dict[str, Any], instances_processed: int) -> str:
+    """Fail only when every instance errored; a mixed run stays 'success' because
+    app.mal_job_run.status is CHECK-constrained (no 'partial' value exists)."""
+    if (details.get("errors") or []) and instances_processed == 0:
+        return "failed"
+    return "success"
+
+
 class MalTagSyncService:
     def __init__(self, settings: Settings, session_factory: Any) -> None:
         self.settings = settings
         self.session_factory = session_factory
+
+    async def _run_db(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Run synchronous DB work in a worker thread so it never blocks the loop."""
+
+        def _call() -> Any:
+            with session_scope(self.session_factory) as session:
+                return fn(session, *args, **kwargs)
+
+        return await asyncio.to_thread(_call)
 
     @staticmethod
     def _link_targets(session: Session) -> tuple[dict[str, set[int]], dict[str, set[int]]]:
@@ -75,14 +93,22 @@ class MalTagSyncService:
             "radarr_untagged": 0,
             "errors": [],
         }
-        with session_scope(self.session_factory) as session:
-            run_id = mal_repo.insert_mal_job_run(session, "tag_sync")
+        run_id = await self._run_db(mal_repo.insert_mal_job_run, "tag_sync")
         try:
-            with session_scope(self.session_factory) as session:
-                sonarr_targets, radarr_targets = self._link_targets(session)
-                sonarr_integrations = repo.list_enabled_integrations(session, "sonarr")
-                radarr_integrations = repo.list_enabled_integrations(session, "radarr")
+            def _load(session: Session) -> tuple[Any, Any, Any, Any]:
+                sonarr_t, radarr_t = self._link_targets(session)
+                return (
+                    sonarr_t,
+                    radarr_t,
+                    repo.list_enabled_integrations(session, "sonarr"),
+                    repo.list_enabled_integrations(session, "radarr"),
+                )
 
+            sonarr_targets, radarr_targets, sonarr_integrations, radarr_integrations = (
+                await self._run_db(_load)
+            )
+
+            instances_processed = 0
             for source, integrations, targets in (
                 ("sonarr", sonarr_integrations, sonarr_targets),
                 ("radarr", radarr_integrations, radarr_targets),
@@ -128,6 +154,8 @@ class MalTagSyncService:
                             )
                             log.warning("%s list failed instance=%s: %s", source, instance_name, exc)
                             continue
+                        # Past both skip points: this instance did real work.
+                        instances_processed += 1
                         want = targets.get(instance_name, set())
                         to_add, to_remove = self._tag_diff(live_rows, want, tag_id)
                         for ids, apply_tags, counter in (
@@ -162,11 +190,10 @@ class MalTagSyncService:
                     finally:
                         await client.aclose()
 
-            with session_scope(self.session_factory) as session:
-                mal_repo.finish_mal_job_run(session, run_id, "success", details, None)
+            status = _mal_run_status(details, instances_processed)
+            await self._run_db(mal_repo.finish_mal_job_run, run_id, status, details, None)
         except Exception as exc:
             log.exception("mal tag sync failed")
-            with session_scope(self.session_factory) as session:
-                mal_repo.finish_mal_job_run(session, run_id, "failed", details, str(exc))
+            await self._run_db(mal_repo.finish_mal_job_run, run_id, "failed", details, str(exc))
             raise
         return details

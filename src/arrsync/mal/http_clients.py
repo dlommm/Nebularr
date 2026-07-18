@@ -10,19 +10,26 @@ import httpx
 
 from arrsync.config import Settings
 from arrsync.mal.constants import DEFAULT_DUB_INFO_URL, JIKAN_API_BASE, MAL_ANIME_DETAIL_FIELDS, MAL_API_BASE
+from arrsync.services.url_guard import EgressGuardedTransport
 
 log = logging.getLogger(__name__)
 
 
 class DubListClient:
     def __init__(self, settings: Settings, *, url: str | None = None) -> None:
+        self.settings = settings
         self.url = url or settings.mal_dub_info_url or DEFAULT_DUB_INFO_URL
         self.timeout = settings.http_timeout_seconds
         self.retry = settings.http_retry_attempts
 
     async def fetch(self) -> tuple[dict[str, Any], str, int]:
         last_err: Exception | None = None
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        # Dub-list URLs are operator-configurable, so route them through the same
+        # egress guard as Arr traffic to block SSRF to internal addresses.
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            transport=EgressGuardedTransport(policy=self.settings.egress_policy),
+        ) as client:
             for attempt in range(1, self.retry + 1):
                 try:
                     resp = await client.get(self.url)
@@ -56,6 +63,18 @@ class MalApiClient:
         self.interval = settings.mal_min_request_interval_seconds
         self._lock = asyncio.Lock()
         self._last_at = 0.0
+        self._client: httpx.AsyncClient | None = None
+
+    def _http_client(self) -> httpx.AsyncClient:
+        """One pooled client reused across an ingest run's get_anime calls, instead
+        of a fresh handshake per MAL id."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def _throttle(self) -> None:
         async with self._lock:
@@ -87,63 +106,63 @@ class MalApiClient:
             None,
         ]
         last_err: Exception | None = None
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            for fields in field_variants:
-                for attempt in range(1, self.retry + 1):
+        client = self._http_client()
+        for fields in field_variants:
+            for attempt in range(1, self.retry + 1):
+                try:
+                    await self._throttle()
+                    params = {"fields": fields} if fields else {}
+                    resp = await client.get(url, headers=headers, params=params)
+                    code = resp.status_code
+                    if code == 404:
+                        return None, code, "not_found"
+                    if code in {429, 500, 502, 503, 504} and attempt < self.retry:
+                        await asyncio.sleep(0.5 * attempt)
+                        continue
                     try:
-                        await self._throttle()
-                        params = {"fields": fields} if fields else {}
-                        resp = await client.get(url, headers=headers, params=params)
-                        code = resp.status_code
-                        if code == 404:
-                            return None, code, "not_found"
-                        if code in {429, 500, 502, 503, 504} and attempt < self.retry:
-                            await asyncio.sleep(0.5 * attempt)
-                            continue
-                        try:
-                            resp.raise_for_status()
-                        except httpx.HTTPStatusError as exc:
-                            last_err = exc
-                            if exc.response.status_code == 404:
-                                return None, 404, "not_found"
-                            if exc.response.status_code in {400, 401, 403, 422}:
-                                text_snippet = re.sub(r"\s+", " ", (exc.response.text or ""))[:240]
-                                log.warning(
-                                    "mal api request rejected",
-                                    extra={
-                                        "mal_id": mal_id,
-                                        "status_code": exc.response.status_code,
-                                        "response_text": text_snippet,
-                                        "fields": fields or "",
-                                    },
-                                )
-                            if attempt >= self.retry:
-                                break
-                            await asyncio.sleep(0.5 * attempt)
-                            continue
-                        data: Any = resp.json()
-                        if self._mal_response_is_api_error(resp, data):
-                            log.debug(
-                                "mal api fields rejected, trying next variant",
-                                extra={"mal_id": mal_id, "fields": fields or "(none)"},
-                            )
-                            break
-                        if not isinstance(data, dict):
-                            last_err = ValueError("mal response is not an object")
-                            break
-                        return data, code, None
+                        resp.raise_for_status()
                     except httpx.HTTPStatusError as exc:
                         last_err = exc
                         if exc.response.status_code == 404:
                             return None, 404, "not_found"
+                        if exc.response.status_code in {400, 401, 403, 422}:
+                            text_snippet = re.sub(r"\s+", " ", (exc.response.text or ""))[:240]
+                            log.warning(
+                                "mal api request rejected",
+                                extra={
+                                    "mal_id": mal_id,
+                                    "status_code": exc.response.status_code,
+                                    "response_text": text_snippet,
+                                    "fields": fields or "",
+                                },
+                            )
                         if attempt >= self.retry:
                             break
                         await asyncio.sleep(0.5 * attempt)
-                    except Exception as exc:
-                        last_err = exc
-                        if attempt >= self.retry:
-                            break
-                        await asyncio.sleep(0.5 * attempt)
+                        continue
+                    data: Any = resp.json()
+                    if self._mal_response_is_api_error(resp, data):
+                        log.debug(
+                            "mal api fields rejected, trying next variant",
+                            extra={"mal_id": mal_id, "fields": fields or "(none)"},
+                        )
+                        break
+                    if not isinstance(data, dict):
+                        last_err = ValueError("mal response is not an object")
+                        break
+                    return data, code, None
+                except httpx.HTTPStatusError as exc:
+                    last_err = exc
+                    if exc.response.status_code == 404:
+                        return None, 404, "not_found"
+                    if attempt >= self.retry:
+                        break
+                    await asyncio.sleep(0.5 * attempt)
+                except Exception as exc:
+                    last_err = exc
+                    if attempt >= self.retry:
+                        break
+                    await asyncio.sleep(0.5 * attempt)
         return None, 0, str(last_err) if last_err else "error"
 
 

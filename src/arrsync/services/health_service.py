@@ -36,13 +36,23 @@ def _eval_webhooks(
     return "ok", []
 
 
-def _eval_sync(settings: Settings, max_lag: float, drift_sources: list[str]) -> tuple[str, list[str]]:
+def _eval_sync(
+    settings: Settings,
+    max_lag: float,
+    drift_sources: list[str],
+    unknown_sources: list[str],
+) -> tuple[str, list[str]]:
     if max_lag >= settings.alert_sync_lag_critical_seconds:
         state, reasons = "critical", ["sync_lag_critical"]
     elif max_lag >= settings.alert_sync_lag_warning_seconds:
         state, reasons = "warning", ["sync_lag_warning"]
     else:
         state, reasons = "ok", []
+    if unknown_sources:
+        # A never-synced instance has no lag to report; surfacing it as 0
+        # (healthy) hides a broken integration, so flag it as a warning instead.
+        state = _worse(state, "warning")
+        reasons.append("sync_never_run:" + ",".join(unknown_sources))
     if drift_sources:
         state = _worse(state, "warning")
         reasons.append("integrity_drift:" + ",".join(drift_sources))
@@ -103,16 +113,14 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
             """
             select
                 source,
+                instance_name,
                 extract(
                     epoch
                     from (
-                        now() - coalesce(
-                            greatest(
-                                last_history_time,
-                                last_successful_incremental,
-                                last_successful_full_sync
-                            ),
-                            now()
+                        now() - greatest(
+                            last_history_time,
+                            last_successful_incremental,
+                            last_successful_full_sync
                         )
                     )
                 ) as lag_seconds
@@ -120,7 +128,19 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
             """
         )
     ).mappings()
-    lag = {str(r["source"]): float(r["lag_seconds"]) for r in lag_rows}
+    # Lag is per (source, instance); report the worst (max) instance per source.
+    # A row with all sync timestamps NULL yields NULL lag — it never synced, so
+    # it must read as "unknown", not 0 (which would falsely look healthy).
+    lag: dict[str, float] = {}
+    unknown_sources: list[str] = []
+    for lag_row in lag_rows:
+        lag_source = str(lag_row["source"])
+        lag_seconds = lag_row["lag_seconds"]
+        if lag_seconds is None:
+            if lag_source not in unknown_sources:
+                unknown_sources.append(lag_source)
+            continue
+        lag[lag_source] = max(lag.get(lag_source, 0.0), float(lag_seconds))
     arr_versions: dict[str, str] = {"sonarr": "unknown", "radarr": "unknown"}
     for row in version_rows:
         key = str(row["key"])
@@ -138,7 +158,7 @@ def compute_health_status(session: Session, settings: Settings, metrics: Metrics
     drift_sources = repo.latest_integrity_drift_sources(session)
 
     webhooks_state, webhooks_r = _eval_webhooks(settings, int(queue_backlog), int(dead_letter_count))
-    sync_state, sync_r = _eval_sync(settings, max_lag, drift_sources)
+    sync_state, sync_r = _eval_sync(settings, max_lag, drift_sources, sorted(unknown_sources))
     integrations_state, integrations_r = _eval_integrations(arr_versions)
     mal_sync = get_mal_sync_ui_snapshot(session)
     mal_flags = read_mal_feature_flags(session, settings)

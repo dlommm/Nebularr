@@ -42,7 +42,7 @@ def build_sqlalchemy_url(
 
 def wait_for_postgres(database_url: str, timeout_seconds: float = 120.0, interval_seconds: float = 2.0) -> None:
     deadline = time.monotonic() + timeout_seconds
-    last: BaseException | None = None
+    last: Exception | None = None
     while time.monotonic() < deadline:
         try:
             eng = create_engine(database_url, pool_pre_ping=True, future=True)
@@ -50,7 +50,9 @@ def wait_for_postgres(database_url: str, timeout_seconds: float = 120.0, interva
                 conn.execute(text("select 1"))
             eng.dispose()
             return
-        except BaseException as exc:
+        except Exception as exc:
+            # Catch Exception, not BaseException: a KeyboardInterrupt/SystemExit
+            # during boot must abort the wait, not get swallowed into a retry.
             last = exc
             time.sleep(interval_seconds)
     raise TimeoutError(f"Postgres not reachable within {timeout_seconds}s") from last

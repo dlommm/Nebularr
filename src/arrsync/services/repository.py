@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,9 +11,39 @@ from sqlalchemy.orm import Session
 from arrsync.models import CapabilitySet
 from arrsync.security import decrypt_secret, encrypt_secret
 
+# A claimed webhook job is hidden from further claims for this long (its
+# next_attempt_at is pushed this far into the future). Long enough that a
+# processing pass finishes and acks (or fails, resetting the delay) first;
+# short enough that a crashed worker's job is redelivered promptly.
+WEBHOOK_CLAIM_VISIBILITY_SECONDS = 120
+
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _dialect_name(session: Session) -> str | None:
+    """Backend name ('postgresql'/'sqlite') for a bound session, else None.
+
+    Test fakes have no ``bind``; treating them as dialect-less keeps dialect-only
+    behaviour (advisory locks, SKIP LOCKED) off while unit tests still exercise
+    the default SQL path.
+    """
+    return getattr(getattr(getattr(session, "bind", None), "dialect", None), "name", None)
+
+
+def acquire_source_write_lock(session: Session, source: str, instance_name: str) -> None:
+    """Serialise warehouse writers for one (source, instance) within a transaction.
+
+    On Postgres a transaction-scoped advisory lock makes a full/reconcile
+    tombstone pass and any concurrent webhook-batch write for the same instance
+    mutually exclusive, so an in-flight tombstone can't race a webhook upsert.
+    On SQLite the single-writer DB already serialises writes, so this is a
+    correct no-op.
+    """
+    if _dialect_name(session) == "postgresql":
+        key = zlib.crc32(f"{source}:{instance_name}".encode()) & 0x7FFFFFFF
+        session.execute(text("select pg_advisory_xact_lock(:k)"), {"k": key})
 
 
 def record_capabilities(session: Session, caps: CapabilitySet, instance_name: str = "default") -> None:
@@ -47,7 +78,13 @@ def create_sync_run(
     mode: str,
     instance_name: str = "default",
     trigger: str = "manual",
-) -> int:
+) -> tuple[int, int]:
+    """Open a sync run. Returns (warehouse.sync_run id, app.job_run_summary id).
+
+    The summary id is returned so progress/finish updates target this exact row
+    rather than "latest by (source, mode, instance)", which mis-attributes when
+    two runs for the same instance overlap.
+    """
     result = session.execute(
         text(
             """
@@ -71,16 +108,18 @@ def create_sync_run(
         {"source": source, "mode": mode, "instance_name": instance_name, "trigger": trigger},
     )
     run_id = int(result.scalar_one())
-    session.execute(
+    summary_result = session.execute(
         text(
             """
             insert into app.job_run_summary (source, mode, instance_name, status, started_at)
             values (:source, :mode, :instance_name, 'running', now())
+            returning id
             """
         ),
         {"source": source, "mode": mode, "instance_name": instance_name},
     )
-    return run_id
+    summary_id = int(summary_result.scalar_one())
+    return run_id, summary_id
 
 
 def finish_sync_run(
@@ -93,6 +132,7 @@ def finish_sync_run(
     details: dict[str, Any] | None = None,
     error_message: str | None = None,
     instance_name: str = "default",
+    summary_id: int | None = None,
 ) -> None:
     session.execute(
         text(
@@ -123,11 +163,14 @@ def finish_sync_run(
                 rows_written = :records_processed,
                 details = cast(:details as jsonb),
                 error_message = :error_message
-            where id = (
-                select id from app.job_run_summary
-                where source = :source and mode = :mode and instance_name = :instance_name
-                order by started_at desc
-                limit 1
+            where id = coalesce(
+                :summary_id,
+                (
+                    select id from app.job_run_summary
+                    where source = :source and mode = :mode and instance_name = :instance_name
+                    order by started_at desc
+                    limit 1
+                )
             )
             """
         ),
@@ -139,6 +182,7 @@ def finish_sync_run(
             "source": source,
             "mode": mode,
             "instance_name": instance_name,
+            "summary_id": summary_id,
         },
     )
     if status == "success":
@@ -186,6 +230,7 @@ def update_sync_run_progress(
     instance_name: str,
     records_processed: int,
     details: dict[str, Any],
+    summary_id: int | None = None,
 ) -> None:
     session.execute(
         text(
@@ -208,11 +253,14 @@ def update_sync_run_progress(
             update app.job_run_summary
             set rows_written = :records_processed,
                 details = coalesce(details, '{}'::jsonb) || cast(:details as jsonb)
-            where id = (
-                select id from app.job_run_summary
-                where source = :source and mode = :mode and instance_name = :instance_name
-                order by started_at desc
-                limit 1
+            where id = coalesce(
+                :summary_id,
+                (
+                    select id from app.job_run_summary
+                    where source = :source and mode = :mode and instance_name = :instance_name
+                    order by started_at desc
+                    limit 1
+                )
             )
             """
         ),
@@ -222,6 +270,7 @@ def update_sync_run_progress(
             "source": source,
             "mode": mode,
             "instance_name": instance_name,
+            "summary_id": summary_id,
         },
     )
 
@@ -468,6 +517,15 @@ def upsert_movie_file(
     )
 
 
+def count_non_deleted_rows(session: Session, table: str, instance_name: str) -> int:
+    """Live (non-tombstoned) row count for one instance; feeds the mass-tombstone guard."""
+    row = session.execute(
+        text(f"select count(*) from {table} where instance_name = :instance_name and not deleted"),  # noqa: S608
+        {"instance_name": instance_name},
+    ).scalar_one()
+    return int(row)
+
+
 def mark_tombstones(session: Session, table: str, instance_name: str, seen_ids: set[int]) -> None:
     if not seen_ids:
         session.execute(
@@ -563,11 +621,33 @@ def enqueue_webhook(
 
 
 def claim_webhook_jobs(session: Session, source: str, batch_size: int = 80) -> list[dict[str, Any]]:
-    result = session.execute(
-        text(
+    # Claiming also pushes next_attempt_at a visibility window into the future so
+    # an overlapping drain pass can't grab the same row before this one acks. On
+    # Postgres FOR UPDATE SKIP LOCKED additionally lets parallel workers claim
+    # disjoint batches; SQLite serialises writers itself and lacks SKIP LOCKED.
+    if _dialect_name(session) == "sqlite":
+        stmt = text(
             """
             update app.webhook_queue
-            set status = 'retrying', attempts = attempts + 1
+            set status = 'retrying', attempts = attempts + 1,
+                next_attempt_at = datetime('now', '+' || :visibility || ' seconds')
+            where id in (
+                select id
+                from app.webhook_queue
+                where source = :source
+                  and status in ('queued', 'retrying') and next_attempt_at <= datetime('now')
+                order by received_at
+                limit :batch_size
+            )
+            returning id, source, event_type, payload, attempts
+            """
+        )
+    else:
+        stmt = text(
+            """
+            update app.webhook_queue
+            set status = 'retrying', attempts = attempts + 1,
+                next_attempt_at = now() + make_interval(secs => :visibility)
             where id in (
                 select id
                 from app.webhook_queue
@@ -579,8 +659,10 @@ def claim_webhook_jobs(session: Session, source: str, batch_size: int = 80) -> l
             )
             returning id, source, event_type, payload, attempts
             """
-        ),
-        {"source": source, "batch_size": batch_size},
+        )
+    result = session.execute(
+        stmt,
+        {"source": source, "batch_size": batch_size, "visibility": WEBHOOK_CLAIM_VISIBILITY_SECONDS},
     )
     rows = []
     for row in result.mappings():
@@ -727,6 +809,12 @@ def prune_old_rows(
             ),
             {"keep_days": stat_snapshot_days},
         )
+    # Raw dub-list fetch payloads are only read as "latest sha per source"; keep a
+    # small tail per source for debugging and drop the rest regardless of age.
+    # Imported here (not at module top) to avoid a services<->mal import cycle.
+    from arrsync.mal import repository as mal_repo
+
+    mal_repo.prune_dub_list_fetches(session, keep_per_source=5)
 
 
 def _to_json(value: Any) -> str:

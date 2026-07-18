@@ -38,6 +38,33 @@ def test_decrypt_with_wrong_key_returns_empty(monkeypatch: pytest.MonkeyPatch) -
     assert security.decrypt_secret(stored) == ""
 
 
+def test_present_but_invalid_key_raises_at_first_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A misconfigured key must fail loudly, not silently store secrets in plaintext.
+    monkeypatch.setenv("APP_ENCRYPTION_KEY", "this-is-not-a-valid-fernet-key")
+    with pytest.raises(RuntimeError, match="APP_ENCRYPTION_KEY is set but invalid"):
+        security.encrypt_secret("some-secret")
+    with pytest.raises(RuntimeError, match="APP_ENCRYPTION_KEY is set but invalid"):
+        security.decrypt_secret(security.ENC_PREFIX + "whatever-token")
+
+
+def test_get_or_create_secret_is_idempotent_and_0600(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import stat
+
+    from arrsync import runtime_secrets
+
+    monkeypatch.setattr(runtime_secrets, "runtime_dir", lambda: tmp_path)
+    first = runtime_secrets.get_or_create_secret(".test_key")
+    assert first is not None
+    path = tmp_path / ".test_key"  # type: ignore[operator]
+    assert path.is_file()
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    # A second call re-reads the existing file (no regeneration / clobber).
+    assert runtime_secrets.get_or_create_secret(".test_key") == first
+
+
 def test_hash_secret_known_vector_unchanged() -> None:
     # Regression pin: deployed databases store hashes with exactly this scheme
     # (unsalted SHA-256, urlsafe base64). Changing it breaks stored webhook secrets.

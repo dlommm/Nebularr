@@ -122,7 +122,8 @@ async def test_ensure_tag_failure_skips_instance() -> None:
     client = FakeArrClient.instances[0]
     assert client.tag_editor_calls == []
     assert client.closed
-    assert session.finished_runs == [("success", None)]
+    # The only instance failed ensure_tag (zero processed): the run is failed.
+    assert session.finished_runs == [("failed", None)]
 
 
 @pytest.mark.asyncio

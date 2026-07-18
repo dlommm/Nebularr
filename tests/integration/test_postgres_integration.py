@@ -134,7 +134,9 @@ def test_repository_roundtrip_series_and_watermark(app_state) -> None:  # type: 
         "statistics": {"sizeOnDisk": 123456},
     }
     with app_state.session_scope() as session:
-        run_id = repo.create_sync_run(session, "sonarr", "full", instance_name="itest", trigger="test")
+        run_id, summary_id = repo.create_sync_run(
+            session, "sonarr", "full", instance_name="itest", trigger="test"
+        )
         repo.upsert_series(session, "itest", series_payload, run_id, "full")
         repo.update_watermark_for_instance(session, "sonarr", "itest", None, 42)
         repo.finish_sync_run(
@@ -146,6 +148,7 @@ def test_repository_roundtrip_series_and_watermark(app_state) -> None:  # type: 
             records_processed=1,
             details={},
             instance_name="itest",
+            summary_id=summary_id,
         )
     with app_state.session_scope() as session:
         _, history_id = repo.get_watermark_for_instance(session, "sonarr", "itest")

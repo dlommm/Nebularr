@@ -32,11 +32,15 @@ def _get_or_create_fernet() -> Fernet:
     if existing:
         return existing
     key = Fernet.generate_key()
-    _KEY_FILE.write_bytes(key)
+    # O_EXCL: create-or-fail so a concurrent boot can't clobber the key file and
+    # strand the URL it already encrypted. On a lost race, adopt the winner's key.
     try:
-        os.chmod(_KEY_FILE, 0o600)
-    except OSError:
-        pass
+        fd = os.open(str(_KEY_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raw = _KEY_FILE.read_bytes().strip()
+        return Fernet(raw)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(key)
     return Fernet(key)
 
 

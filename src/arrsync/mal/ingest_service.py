@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 from typing import Any
+from uuid import uuid4
 
 from arrsync.config import Settings
 from arrsync.db import session_scope
@@ -48,6 +49,16 @@ class MalIngestService:
         self.dub_client_class = dub_client_class
         self.jikan_client = JikanClient(settings)
 
+    async def _run_db(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Run a synchronous repository call in a worker thread with its own
+        short session, so DB work never blocks the ingest event loop."""
+
+        def _call() -> Any:
+            with session_scope(self.session_factory) as session:
+                return fn(session, *args, **kwargs)
+
+        return await asyncio.to_thread(_call)
+
     async def _heartbeat_lock_loop(self, lock_name: str, owner_id: str) -> None:
         def _beat() -> None:
             with session_scope(self.session_factory) as session:
@@ -80,14 +91,21 @@ class MalIngestService:
         batch_size = _ingest_batch_limit(self.settings, max_ids_per_run)
         details["max_ids_per_run"] = batch_size
         lock_name = "mal:ingest"
-        owner_id = f"mal_ingest:{id(self)}"
-        with session_scope(self.session_factory) as session:
+        # uuid4 (not id(self)): a restarted process can reuse the same object id,
+        # which would let a stale row's owner collide with a fresh run's owner.
+        owner_id = f"mal_ingest:{uuid4()}"
+
+        def _acquire_and_open(session: Any) -> tuple[int, str, dict[str, Any], str]:
             if not repo.try_job_lock(session, lock_name=lock_name, owner_id=owner_id, lease_seconds=3600):
                 raise MalIngestAlreadyRunningError("MAL ingest is already running")
-            run_id = mal_repo.insert_mal_job_run(session, "ingest")
-            resolved_mal_client_id = read_mal_client_id(session, self.settings)
-            flags = read_mal_feature_flags(session, self.settings)
-            tier = read_mydublist_tier(session, self.settings)
+            return (
+                mal_repo.insert_mal_job_run(session, "ingest"),
+                read_mal_client_id(session, self.settings),
+                read_mal_feature_flags(session, self.settings),
+                read_mydublist_tier(session, self.settings),
+            )
+
+        run_id, resolved_mal_client_id, flags, tier = await self._run_db(_acquire_and_open)
         specs = enabled_dub_sources(self.settings, flags, tier)
         mal_client = MalApiClient(self.settings, client_id=resolved_mal_client_id)
         heartbeat_task = asyncio.create_task(self._heartbeat_lock_loop(lock_name, owner_id))
@@ -114,20 +132,10 @@ class MalIngestService:
                         "http_status": http_status,
                     },
                 )
-                with session_scope(self.session_factory) as session:
-                    prev_sha = mal_repo.latest_dub_list_sha(session, spec.name)
-                    if prev_sha == sha:
-                        details["sources"][spec.name] = {
-                            "unchanged": True,
-                            "dubbed": len(dubbed_ids),
-                            "partial": len(partial_ids),
-                        }
-                        log.info(
-                            "mal ingest: %s list unchanged (sha256), skipping list sync", spec.name
-                        )
-                        continue
-                    all_unchanged = False
-                    fetch_id = mal_repo.insert_dub_list_fetch(
+                def _persist_source(session: Any) -> tuple[int, dict[str, int]] | None:
+                    if mal_repo.latest_dub_list_sha(session, spec.name) == sha:
+                        return None
+                    new_fetch_id = mal_repo.insert_dub_list_fetch(
                         session,
                         source_url=spec.url,
                         content_sha256=sha,
@@ -137,79 +145,99 @@ class MalIngestService:
                         error_message=None,
                         source_name=spec.name,
                     )
-                    counts = mal_repo.upsert_dub_source_snapshot(
+                    snapshot_counts = mal_repo.upsert_dub_source_snapshot(
                         session,
-                        fetch_id=fetch_id,
+                        fetch_id=new_fetch_id,
                         source_name=spec.name,
                         dubbed_ids=dubbed_ids,
                         partial_ids=partial_ids,
                     )
-                    details["sources"][spec.name] = {"fetch_id": fetch_id, **counts}
+                    return new_fetch_id, snapshot_counts
+
+                persisted = await self._run_db(_persist_source)
+                if persisted is None:
+                    details["sources"][spec.name] = {
+                        "unchanged": True,
+                        "dubbed": len(dubbed_ids),
+                        "partial": len(partial_ids),
+                    }
+                    log.info("mal ingest: %s list unchanged (sha256), skipping list sync", spec.name)
+                    continue
+                all_unchanged = False
+                fetch_id, counts = persisted
+                details["sources"][spec.name] = {"fetch_id": fetch_id, **counts}
             if source_errors:
                 details["source_errors"] = source_errors
             if specs and len(source_errors) == len(specs):
                 raise RuntimeError("all dub list sources failed: " + "; ".join(source_errors))
             details["dub_list_unchanged"] = all_unchanged
 
-            pending: list[int] = []
-            with session_scope(self.session_factory) as session:
-                union = mal_repo.recompute_dub_union(session, [s.name for s in specs])
-                details["dub_union_changed"] = union["changed"]
-                pending = mal_repo.list_anime_needing_mal_fetch(session, batch_size)
-                details["mal_fetch_pending_batch"] = len(pending)
+            def _union_and_pending(session: Any) -> tuple[dict[str, int], list[int]]:
+                return (
+                    mal_repo.recompute_dub_union(session, [s.name for s in specs]),
+                    mal_repo.list_anime_needing_mal_fetch(session, batch_size),
+                )
+
+            union, pending = await self._run_db(_union_and_pending)
+            details["dub_union_changed"] = union["changed"]
+            details["mal_fetch_pending_batch"] = len(pending)
 
             if pending and not (mal_client.client_id or "").strip():
                 err_msg = (
                     "MAL client ID is not configured. Set it under Integrations (MyAnimeList) "
                     "or set MAL_CLIENT_ID in the environment."
                 )
-                with session_scope(self.session_factory) as session:
-                    mal_repo.finish_mal_job_run(session, run_id, "failed", details, err_msg)
+                await self._run_db(mal_repo.finish_mal_job_run, run_id, "failed", details, err_msg)
                 raise ValueError(err_msg)
 
             for idx, mal_id in enumerate(pending):
                 data, code, err = await mal_client.get_anime(mal_id)
                 details["mal_api_calls"] += 1
                 if idx % 5 == 0 or idx == len(pending) - 1:
-                    with session_scope(self.session_factory) as session:
-                        mal_repo.merge_mal_job_run_details(
-                            session,
-                            run_id,
-                            {
-                                "ingest_progress": {
-                                    "batch_index": idx + 1,
-                                    "batch_total": len(pending),
-                                    "current_mal_id": mal_id,
-                                }
-                            },
-                        )
-                with session_scope(self.session_factory) as session:
+                    await self._run_db(
+                        mal_repo.merge_mal_job_run_details,
+                        run_id,
+                        {
+                            "ingest_progress": {
+                                "batch_index": idx + 1,
+                                "batch_total": len(pending),
+                                "current_mal_id": mal_id,
+                            }
+                        },
+                    )
+
+                def _persist_anime(session: Any) -> None:
                     if err == "not_found" or code == 404:
                         mal_repo.upsert_anime_from_mal_api(
                             session, mal_id, {}, status="not_found", error="not_found"
                         )
-                        continue
-                    if data is None:
+                    elif data is None:
                         mal_repo.upsert_anime_from_mal_api(
                             session, mal_id, {}, status="error", error=err or "mal_http_error"
                         )
-                        continue
-                    mal_repo.upsert_anime_from_mal_api(session, mal_id, data, status="success", error=None)
+                    else:
+                        mal_repo.upsert_anime_from_mal_api(session, mal_id, data, status="success", error=None)
+
+                await self._run_db(_persist_anime)
+                # data is None for not_found/error, so this gate also skips the
+                # Jikan enrichment in exactly the cases the old `continue`s did.
                 if self.settings.mal_jikan_enabled and data is not None:
                     j_body, j_err = await self.jikan_client.get_anime_full(mal_id)
                     details["jikan_calls"] += 1
                     if j_body and isinstance(j_body.get("data"), dict):
-                        with session_scope(self.session_factory) as session:
-                            mal_repo.set_jikan_response(session, mal_id, j_body)
-                            mal_repo.merge_jikan_title_variants(session, mal_id, j_body["data"])
-                            ext_pairs = externals_from_jikan_data(j_body["data"])
-                            for site, ext_id in ext_pairs:
+                        jikan_body = j_body
+
+                        def _persist_jikan(session: Any) -> None:
+                            mal_repo.set_jikan_response(session, mal_id, jikan_body)
+                            mal_repo.merge_jikan_title_variants(session, mal_id, jikan_body["data"])
+                            for site, ext_id in externals_from_jikan_data(jikan_body["data"]):
                                 mal_repo.upsert_external_id(session, mal_id, site, ext_id, "jikan")
+
+                        await self._run_db(_persist_jikan)
                     elif j_err:
                         log.debug("jikan fetch issue for mal_id=%s: %s", mal_id, j_err)
 
-            with session_scope(self.session_factory) as session:
-                mal_repo.finish_mal_job_run(session, run_id, "success", details, None)
+            await self._run_db(mal_repo.finish_mal_job_run, run_id, "success", details, None)
         except BaseException as exc:
             # BaseException so shutdown cancellation still finalizes the job row
             # instead of leaving it 'running'.
@@ -224,6 +252,9 @@ class MalIngestService:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
+            # Close the reused MAL client's connection pool for this run.
+            with contextlib.suppress(Exception):
+                await mal_client.aclose()
             with session_scope(self.session_factory) as session:
                 repo.release_job_lock(session, lock_name=lock_name, owner_id=owner_id)
         return details

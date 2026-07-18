@@ -95,8 +95,8 @@ async def test_ensure_tag_failure_skips_instance_and_records_error(
     client = FakeArrClient.instances[0]
     assert client.tag_editor_calls == []
     assert client.closed
-    # A single unreachable instance is an error entry, not a failed run.
-    assert session.finished_runs == [("success", None)]
+    # Every processed instance failed (zero made progress): the run is failed.
+    assert session.finished_runs == [("failed", None)]
 
 
 @pytest.mark.asyncio

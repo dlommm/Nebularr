@@ -15,6 +15,15 @@ from arrsync.services.url_guard import EgressGuardedTransport
 log = logging.getLogger(__name__)
 
 
+class ArrResponseError(RuntimeError):
+    """A 2xx response whose body is not the JSON shape the endpoint promised.
+
+    Raised for non-JSON bodies (e.g. an auth/login HTML page fronting the API)
+    and for list endpoints that returned a non-list. Callers treat it as a failed
+    run so an empty/garbage fetch never drives a mass tombstone.
+    """
+
+
 def _summarize_arr_http_error(exc: BaseException) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         body = (exc.response.text or "").strip()
@@ -33,6 +42,17 @@ def _parse_history_date(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _http_status_of(exc: BaseException) -> int | None:
+    """HTTP status behind an arr request failure, whether raised directly or
+    wrapped by _request as ``RuntimeError(...) from HTTPStatusError``."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, httpx.HTTPStatusError):
+        return cause.response.status_code
+    return None
 
 
 class ArrClient:
@@ -117,10 +137,25 @@ class ArrClient:
                 resp.raise_for_status()
                 if not resp.content:
                     return {}
+                content_type = resp.headers.get("content-type", "")
+                if "json" not in content_type.lower():
+                    # A 200 with an HTML/text body means we're talking to a login
+                    # page or misconfigured proxy, not the API. Coercing to {}
+                    # once caused an empty fetch to mass-tombstone the warehouse.
+                    raise ArrResponseError(
+                        f"{self.source} {method} {path}: expected JSON, got content-type "
+                        f"{content_type!r} (body starts {resp.text[:80]!r})"
+                    )
                 try:
                     return resp.json()
-                except ValueError:
-                    return {}
+                except ValueError as exc:
+                    raise ArrResponseError(
+                        f"{self.source} {method} {path}: response body is not valid JSON"
+                    ) from exc
+            except ArrResponseError:
+                # A bad body is deterministic; retrying can't fix it and it must
+                # propagate uncoerced so the caller fails the run.
+                raise
             except httpx.HTTPStatusError as exc:
                 # Non-429 4xx responses are deterministic; retrying just delays the failure.
                 last_err = exc
@@ -190,7 +225,11 @@ class ArrClient:
         if self.source != "sonarr":
             return []
         payload = await self._request("GET", "/api/v3/series")
-        return payload if isinstance(payload, list) else []
+        if not isinstance(payload, list):
+            raise ArrResponseError(
+                f"{self.source} GET /api/v3/series: expected a list, got {type(payload).__name__}"
+            )
+        return payload
 
     async def list_episodes(self, series_id: int) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"seriesId": series_id}
@@ -206,7 +245,11 @@ class ArrClient:
         if self.source != "radarr":
             return []
         payload = await self._request("GET", "/api/v3/movie")
-        return payload if isinstance(payload, list) else []
+        if not isinstance(payload, list):
+            raise ArrResponseError(
+                f"{self.source} GET /api/v3/movie: expected a list, got {type(payload).__name__}"
+            )
+        return payload
 
     async def _get_optional(self, path: str) -> dict[str, Any] | None:
         """GET returning None on 404 (entity deleted server-side)."""
@@ -237,14 +280,24 @@ class ArrClient:
         if since and self.capabilities.supports_history_since:
             try:
                 payload = await self._request("GET", "/api/v3/history/since", params={"date": since})
+            except Exception as exc:
+                status = _http_status_of(exc)
+                if status in (404, 405):
+                    # Endpoint genuinely absent on this app version: disable the
+                    # fast path permanently and fall back to the paged walk.
+                    log.warning(
+                        "history/since unsupported (HTTP %s); falling back to paged history walk",
+                        status,
+                        extra={"arr_source": self.source, "instance_name": self.instance_name},
+                    )
+                    self.capabilities.supports_history_since = False
+                else:
+                    # Transient (timeout, 5xx, network): re-raise instead of
+                    # permanently downgrading to the slow path on a blip.
+                    raise
+            else:
                 if isinstance(payload, list):
                     return payload
-            except Exception:
-                log.warning(
-                    "history/since unavailable; falling back to paged history walk",
-                    extra={"arr_source": self.source, "instance_name": self.instance_name},
-                )
-                self.capabilities.supports_history_since = False
         return await self._list_history_paged(since)
 
     async def _list_history_paged(self, since: str | None) -> list[dict[str, Any]]:
@@ -267,7 +320,10 @@ class ArrClient:
                 break
             for record in records:
                 record_dt = _parse_history_date(record.get("date")) if isinstance(record, dict) else None
-                if since_dt is not None and record_dt is not None and record_dt <= since_dt:
+                # Strict: stop only past the watermark. Records exactly at the
+                # watermark are re-included; the warehouse upserts are idempotent,
+                # so the overlap is harmless and avoids dropping same-timestamp events.
+                if since_dt is not None and record_dt is not None and record_dt < since_dt:
                     return events
                 events.append(record)
             if since_dt is None:

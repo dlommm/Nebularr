@@ -237,6 +237,156 @@ async def test_incremental_radarr_refetches_movies_and_tombstones_missing_files(
     assert any(params["parent_ids"] == [5] for params in file_sweeps)
 
 
+class WebhookDrainSession:
+    """Feeds one claimed webhook job to process_webhook_queue and records SQL.
+
+    Answers the integration lookup (so _integration_by_name resolves) and hands
+    out run ids, so the delete-handling path can be exercised end to end.
+    """
+
+    def __init__(self, job: dict[str, Any]) -> None:
+        self.job = job
+        self.statements: list[tuple[str, dict[str, Any] | None]] = []
+        self._claimed = False
+
+    def execute(self, query: Any, params: dict[str, Any] | None = None) -> Any:
+        sql = " ".join(str(query).lower().split())
+        self.statements.append((sql, params))
+        outer = self
+
+        class _Result:
+            def mappings(self_inner) -> list[Any]:
+                if "update app.webhook_queue" in sql and "returning id" in sql:
+                    if outer._claimed:
+                        return []
+                    outer._claimed = True
+                    return [outer.job]
+                if "from app.integration_instance" in sql:
+                    return [
+                        {
+                            "source": "sonarr",
+                            "name": "default",
+                            "base_url": "http://sonarr.local",
+                            "api_key": "",
+                            "enabled": True,
+                            "webhook_enabled": True,
+                        }
+                    ]
+                return []
+
+            def first(self_inner) -> None:
+                return None
+
+            def scalar_one(self_inner) -> int:
+                return 1
+
+            def scalar_one_or_none(self_inner) -> None:
+                return None
+
+            def scalar(self_inner) -> None:
+                return None
+
+        return _Result()
+
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+class DeleteWebhookStubClient:
+    def __init__(self) -> None:
+        self.list_episodes_calls: list[int] = []
+        self.settings = None
+        self.base_url = "http://sonarr.local"
+        self.api_key = "k"
+
+    async def list_episodes(self, series_id: int) -> list[dict[str, Any]]:
+        self.list_episodes_calls.append(series_id)
+        return []
+
+
+def _webhook_service(session: WebhookDrainSession, client: DeleteWebhookStubClient) -> SyncService:
+    service = SyncService(
+        session_factory=lambda: session,
+        sonarr=client,  # type: ignore[arg-type]
+        radarr=client,  # type: ignore[arg-type]
+        stop_event=asyncio.Event(),
+    )
+    service._client_for_integration = lambda source, integration: client  # type: ignore[method-assign]
+    return service
+
+
+@pytest.mark.asyncio
+async def test_webhook_series_delete_tombstones_series_and_files_without_refetch() -> None:
+    job = {
+        "id": 1,
+        "source": "sonarr",
+        "event_type": "SeriesDelete",
+        "payload": {"eventType": "SeriesDelete", "instance_name": "default", "series": {"id": 314}},
+        "attempts": 1,
+    }
+    session = WebhookDrainSession(job)
+    client = DeleteWebhookStubClient()
+    service = _webhook_service(session, client)
+
+    summary = await service.process_webhook_queue("sonarr")
+
+    assert summary == {"processed": 1, "failed": 0}
+    # A delete must never refetch — the series is gone server-side.
+    assert client.list_episodes_calls == []
+    # Series tombstoned from the payload id.
+    series_tombstones = [
+        params
+        for sql, params in session.statements
+        if "update warehouse.series set deleted = true" in sql and params and params.get("ids") == [314]
+    ]
+    assert series_tombstones, "SeriesDelete must tombstone the series"
+    # Its episode files tombstoned via the series subselect.
+    file_sweeps = [
+        params
+        for sql, params in session.statements
+        if "update warehouse.episode_file" in sql and "series_source_id = any" in sql
+    ]
+    assert file_sweeps and file_sweeps[0]["series_ids"] == [314]
+    assert any("set status = 'done'" in sql for sql, _ in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_webhook_episode_file_delete_iterates_episodes_array() -> None:
+    # Sonarr sends the affected episodes as an array; the old singular
+    # payload["episode"] branch never fired.
+    job = {
+        "id": 2,
+        "source": "sonarr",
+        "event_type": "EpisodeFileDelete",
+        "payload": {
+            "eventType": "EpisodeFileDelete",
+            "instance_name": "default",
+            "episodes": [{"id": 900}, {"id": 901}],
+        },
+        "attempts": 1,
+    }
+    session = WebhookDrainSession(job)
+    client = DeleteWebhookStubClient()
+    service = _webhook_service(session, client)
+
+    summary = await service.process_webhook_queue("sonarr")
+
+    assert summary == {"processed": 1, "failed": 0}
+    assert client.list_episodes_calls == []
+    episode_tombstones = [
+        params
+        for sql, params in session.statements
+        if "update warehouse.episode set deleted = true" in sql and params and params.get("ids")
+    ]
+    assert episode_tombstones and episode_tombstones[0]["ids"] == [900, 901]
+
+
 @pytest.mark.asyncio
 async def test_incremental_deleted_series_tombstones_its_episode_files() -> None:
     # Regression: deleting a series in Sonarr must also tombstone its

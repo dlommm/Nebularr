@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -13,6 +14,15 @@ from arrsync.services import repository as repo
 from arrsync.services.arr_client import ArrClient
 
 log = logging.getLogger(__name__)
+
+
+def _mal_run_status(details: dict[str, Any], instances_processed: int) -> str:
+    """Overall run status. Fail only when every instance errored (nothing got
+    through); a mixed run stays 'success' because app.mal_job_run.status is
+    CHECK-constrained to ('running','success','failed') — there is no 'partial'."""
+    if (details.get("errors") or []) and instances_processed == 0:
+        return "failed"
+    return "success"
 
 
 class CoverageTagSyncService:
@@ -34,6 +44,15 @@ class CoverageTagSyncService:
         self.settings = settings
         self.session_factory = session_factory
         self.arr_client_class = arr_client_class
+
+    async def _run_db(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Run synchronous DB work in a worker thread so it never blocks the loop."""
+
+        def _call() -> Any:
+            with session_scope(self.session_factory) as session:
+                return fn(session, *args, **kwargs)
+
+        return await asyncio.to_thread(_call)
 
     @staticmethod
     def _targets_from_view(session: Session, view_name: str) -> dict[str, dict[int, str]]:
@@ -74,34 +93,38 @@ class CoverageTagSyncService:
             "radarr_cleared": 0,
             "errors": [],
         }
-        with session_scope(self.session_factory) as session:
-            run_id = mal_repo.insert_mal_job_run(session, "coverage_tag_sync")
+        run_id = await self._run_db(mal_repo.insert_mal_job_run, "coverage_tag_sync")
         try:
-            with session_scope(self.session_factory) as session:
-                series_targets = self._series_targets(session)
-                movie_targets = self._movie_targets(session)
-                sonarr_integrations = repo.list_enabled_integrations(session, "sonarr")
-                radarr_integrations = repo.list_enabled_integrations(session, "radarr")
+            def _load(session: Session) -> tuple[Any, Any, Any, Any]:
+                return (
+                    self._series_targets(session),
+                    self._movie_targets(session),
+                    repo.list_enabled_integrations(session, "sonarr"),
+                    repo.list_enabled_integrations(session, "radarr"),
+                )
 
-            await self._reconcile_source(
+            series_targets, movie_targets, sonarr_integrations, radarr_integrations = (
+                await self._run_db(_load)
+            )
+
+            processed = await self._reconcile_source(
                 source="sonarr",
                 integrations=sonarr_integrations,
                 targets=series_targets,
                 details=details,
             )
-            await self._reconcile_source(
+            processed += await self._reconcile_source(
                 source="radarr",
                 integrations=radarr_integrations,
                 targets=movie_targets,
                 details=details,
             )
 
-            with session_scope(self.session_factory) as session:
-                mal_repo.finish_mal_job_run(session, run_id, "success", details, None)
+            status = _mal_run_status(details, processed)
+            await self._run_db(mal_repo.finish_mal_job_run, run_id, status, details, None)
         except Exception as exc:
             log.exception("coverage tag sync failed")
-            with session_scope(self.session_factory) as session:
-                mal_repo.finish_mal_job_run(session, run_id, "failed", details, str(exc))
+            await self._run_db(mal_repo.finish_mal_job_run, run_id, "failed", details, str(exc))
             raise
         return details
 
@@ -112,9 +135,12 @@ class CoverageTagSyncService:
         integrations: Any,
         targets: dict[str, dict[int, str]],
         details: dict[str, Any],
-    ) -> None:
+    ) -> int:
+        """Reconcile one source; returns the number of instances that reached the
+        apply phase (used to distinguish an all-failed run from a partial one)."""
         full_label = self.settings.arr_coverage_full_tag_label
         partial_label = self.settings.arr_coverage_partial_tag_label
+        instances_processed = 0
         for inst_row in integrations:
             instance_name = str(inst_row["name"])
             client = self.arr_client_class(
@@ -154,6 +180,8 @@ class CoverageTagSyncService:
                     )
                     log.warning("%s coverage list failed instance=%s: %s", source, instance_name, exc)
                     continue
+                # Past both skip points: this instance did real reconcile work.
+                instances_processed += 1
                 want = targets.get(instance_name, {})
                 add_ids: dict[int, list[int]] = {full_id: [], partial_id: []}
                 remove_ids: dict[int, list[int]] = {full_id: [], partial_id: []}
@@ -214,3 +242,4 @@ class CoverageTagSyncService:
                 details[f"{source}_cleared"] += len(cleared_ids - updated_ids)
             finally:
                 await client.aclose()
+        return instances_processed

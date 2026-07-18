@@ -157,7 +157,12 @@ class LoginRateLimiter:
         if count >= self._max_failures and now >= last_failure + self._lockout_seconds:
             count = 0
         if len(self._failures) > 10_000:
-            self._failures.clear()
+            # Evict the oldest fifth by last-failure time. Clearing the whole map
+            # would drop every active lockout, letting an attacker reset their
+            # own bucket by flooding the map with throwaway keys.
+            evict = max(1, len(self._failures) // 5)
+            for stale_key in sorted(self._failures, key=lambda k: self._failures[k][1])[:evict]:
+                del self._failures[stale_key]
         self._failures[key] = (count + 1, now)
 
     def reset(self, key: str) -> None:

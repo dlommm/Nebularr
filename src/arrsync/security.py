@@ -16,8 +16,13 @@ def _build_fernet() -> Fernet | None:
         return None
     try:
         return Fernet(raw_key.encode("utf-8"))
-    except Exception:
-        return None
+    except Exception as exc:
+        # A configured-but-malformed key must fail loudly: silently returning
+        # None would fall back to storing integration secrets in plaintext.
+        raise RuntimeError(
+            "APP_ENCRYPTION_KEY is set but invalid; it must be a urlsafe base64-encoded "
+            "32-byte Fernet key (e.g. from cryptography.fernet.Fernet.generate_key())."
+        ) from exc
 
 
 def encrypt_secret(value: str) -> str:

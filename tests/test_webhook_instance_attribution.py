@@ -87,6 +87,19 @@ class WebhookQueueSession:
                     out = list(jobs)
                     jobs.clear()
                     return out
+                if "from app.integration_instance" in sql:
+                    # _integration_by_name now requires the integration to exist
+                    # and be enabled; supply the default so the job can process.
+                    return [
+                        {
+                            "source": "sonarr",
+                            "name": "default",
+                            "base_url": "http://sonarr.local",
+                            "api_key": "",
+                            "enabled": True,
+                            "webhook_enabled": True,
+                        }
+                    ]
                 return []
 
             def first(self_inner) -> None:
@@ -151,8 +164,11 @@ async def test_webhook_job_with_null_series_does_not_crash() -> None:
     assert summary["failed"] == 0
     assert stub.list_episodes_calls == []
     assert any("set status = 'done'" in sql for sql, _ in session.statements)
+    # mark_webhook_failed uses make_interval(secs => :delay_seconds); the claim
+    # itself now also sets next_attempt_at (visibility window), so match the
+    # failure-specific parameter to avoid a false positive.
     assert not any(
-        "update app.webhook_queue" in sql and "next_attempt_at = now() + make_interval" in sql
+        "update app.webhook_queue" in sql and ":delay_seconds" in sql
         for sql, _ in session.statements
     ), "job must not be marked failed"
 

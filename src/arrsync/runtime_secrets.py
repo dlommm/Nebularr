@@ -44,13 +44,18 @@ def get_or_create_secret(filename: str) -> bytes | None:
     key = Fernet.generate_key()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(key)
+        # O_EXCL: create-or-fail so two workers racing to first-boot can't each
+        # generate a different key. The loser reads the winner's file below.
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return _read_key_file(path)
     except OSError:
         return None
     try:
-        os.chmod(path, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(key)
     except OSError:
-        pass
+        return None
     return key
 
 
