@@ -37,6 +37,11 @@ class SyncScheduler:
         self._mal_matcher_coro = mal_matcher_coro
         self._mal_tag_sync_coro = mal_tag_sync_coro
         self._coverage_tag_sync_coro = coverage_tag_sync_coro
+        # Loop the AsyncIOScheduler binds to on its first (main-loop) start. reload()
+        # is also called from sync endpoints (setup wizard, config) that FastAPI runs
+        # in a threadpool worker where asyncio.get_running_loop() is unavailable, so it
+        # must reuse this captured loop instead of trying to acquire one.
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.scheduler = AsyncIOScheduler(timezone=settings.scheduler_timezone)
 
     # Retry safety net: retrying webhook jobs wait for next_attempt_at, and the
@@ -143,6 +148,9 @@ class SyncScheduler:
             replace_existing=True,
         )
         self.scheduler.start()
+        # Remember the loop the scheduler just bound to (main-loop first start) so a
+        # later reload() from a threadpool worker can rebind a fresh AsyncIOScheduler.
+        self._loop = getattr(self.scheduler, "_eventloop", None) or self._loop
         log.info(
             "scheduler started",
             extra={
@@ -165,7 +173,15 @@ class SyncScheduler:
 
     def reload(self) -> None:
         self.shutdown()
-        self.scheduler = AsyncIOScheduler(timezone=self.settings.scheduler_timezone)
+        # Bind the fresh scheduler to the loop captured at first start. reload() also
+        # runs from sync setup/config endpoints (threadpool workers), where a new
+        # AsyncIOScheduler could not otherwise acquire a running loop and start() would
+        # raise "RuntimeError: no running event loop". Passing event_loop=None (before
+        # any start) is equivalent to the prior behavior.
+        self.scheduler = AsyncIOScheduler(
+            timezone=self.settings.scheduler_timezone,
+            event_loop=self._loop,
+        )
         self.start()
 
     def _seed_schedule_defaults(self) -> None:

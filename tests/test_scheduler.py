@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -244,5 +245,25 @@ async def test_coverage_tag_sync_skipped_when_flag_disabled() -> None:
     try:
         job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
         assert "coverage_tag_sync" not in job_ids
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reload_from_threadpool_worker_rebinds_captured_loop() -> None:
+    # Regression: the sync setup-wizard and config endpoints run in a FastAPI
+    # threadpool worker and call reload(). The fresh AsyncIOScheduler must reuse the
+    # loop captured at first start; before the fix it called asyncio.get_running_loop()
+    # in the worker and raised "RuntimeError: no running event loop", 500-ing setup.
+    session = ScheduleFakeSession(
+        schedule_rows=[{"mode": "incremental", "cron": "*/15 * * * *"}]
+    )
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()  # first start binds to the running loop
+    try:
+        await asyncio.to_thread(scheduler.reload)  # must not raise off the loop thread
+        assert scheduler.scheduler.running
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert "incremental" in job_ids
     finally:
         scheduler.shutdown()
