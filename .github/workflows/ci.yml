@@ -57,7 +57,7 @@ jobs:
         run: npm run build
       - name: Committed web dist is fresh
         run: git diff --exit-code -- src/arrsync/web/dist
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - name: Install
