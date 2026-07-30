@@ -90,9 +90,16 @@ export function AutomationEditor({
               id="automation-media"
               className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
               value={scope.media ?? "both"}
-              onChange={(e) =>
-                patchParams({ scope: { ...scope, media: e.target.value as "movies" | "series" | "both" } })
-              }
+              onChange={(e) => {
+                const media = e.target.value as "movies" | "series" | "both";
+                // The "conforming" set_monitored action is movie-only (backend
+                // rejects it otherwise); drop any stale one in the same patch so
+                // switching away from movies can never leave a hidden, invalid
+                // action behind.
+                const nextActions =
+                  media === "movies" ? actions : actions.filter((action) => action.when !== "conforming");
+                patchParams({ scope: { ...scope, media }, actions: nextActions });
+              }}
             >
               <option value="both">Movies + Series</option>
               <option value="movies">Movies only</option>
