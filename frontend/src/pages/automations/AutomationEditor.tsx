@@ -260,7 +260,13 @@ export function AutomationEditor({
           <div className="flex items-center gap-2">
             <Checkbox id="automation-new-dub" checked={options.new_dub_only ?? false}
               onCheckedChange={(value) =>
-                patchParams({ options: { ...options, new_dub_only: value === true, mal_dub_gate: true } })
+                patchParams({
+                  options: {
+                    ...options,
+                    new_dub_only: value === true,
+                    ...(value === true ? { mal_dub_gate: true } : {}),
+                  },
+                })
               } />
             <Label htmlFor="automation-new-dub" className="text-sm">
               Only act when a dub newly appears (new-dub watcher)

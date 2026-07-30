@@ -36,7 +36,7 @@ missing-hunter, codec-preference (tag-only by default), language-audit
 whitelist-only SQL compiler — user input is bind values, never SQL text.
 
 **Note:** Tag actions with `when=conforming` are rejected by validation in v1
-(not supported for live-state reconciles; use `when=nonconforming` instead).
+(not supported for live-state reconciles; use `when=non_conforming` instead).
 
 ## Operations
 

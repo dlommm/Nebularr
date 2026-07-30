@@ -38,6 +38,15 @@ function RunDetail({ runId }: { runId: number }): JSX.Element {
                 would {item.actions.join(" + ")}: {item.title || `#${item.source_id}`}
               </p>
             ))}
+            {Object.entries(info)
+              .filter(([key]) =>
+                ["would_tag:", "would_monitor:", "tag:", "monitored:"].some((prefix) => key.startsWith(prefix)),
+              )
+              .map(([key, value]) => (
+                <p key={key} className="text-muted-foreground">
+                  {key}: {JSON.stringify(value)}
+                </p>
+              ))}
           </div>
         )),
       )}

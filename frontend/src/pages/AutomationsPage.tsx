@@ -26,9 +26,11 @@ export function AutomationsPage(): JSX.Element {
     await queryClient.invalidateQueries({ queryKey: queryKeys.automations });
   };
 
-  const useTemplate = (template: AutomationTemplate): void =>
+  const useTemplate = (template: AutomationTemplate): void => {
+    const existingNames = new Set((automations.data?.automations ?? []).map((row) => row.name));
+    const seededName = template.key === "custom" || existingNames.has(template.title) ? "" : template.title;
     setDraft({
-      name: template.key === "custom" ? "" : template.title,
+      name: seededName,
       template_key: template.key,
       params: template.default_params,
       cron: template.default_cron,
@@ -38,6 +40,7 @@ export function AutomationsPage(): JSX.Element {
       budget_per_run: 10,
       cooldown_days: 7,
     });
+  };
 
   const editRow = (row: AutomationRow): void =>
     setDraft({
