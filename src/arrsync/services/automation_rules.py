@@ -3,7 +3,16 @@
 Whitelist-only: user params contribute bind VALUES, never SQL text — the same
 invariant as reporting_registry ("no ad-hoc SQL from the browser"). Every
 fragment below is a hardcoded string; pydantic validation rejects anything
-outside the whitelisted fields/operators before compilation.
+outside the whitelisted fields/operators before compilation. All models use
+extra="forbid" so a typoed or unknown param key fails validation loudly
+instead of being silently ignored.
+
+The runtime bind ``:cooldown_days`` is only referenced in the generated SQL
+for rules that have at least one search_missing/search_upgrade action —
+tag-only and set_monitored-only rules never join the action ledger, so they
+have nothing to cool down. The executor may still pass ``:cooldown_days`` for
+every rule unconditionally; sqlalchemy's ``text()`` tolerates unused bind
+parameters, so passing it for a non-search rule is harmless.
 """
 
 from __future__ import annotations
@@ -11,10 +20,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RuleScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     media: Literal["movies", "series", "both"] = "both"
     instances: list[str] = Field(default_factory=list)  # empty = all enabled
     # series: seriesType == 'anime'; movies: MAL-linked OR genre 'anime'
@@ -27,6 +38,8 @@ class RuleScope(BaseModel):
 
 
 class RuleRequire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     audio_language_any: list[str] = Field(default_factory=list, max_length=10)
     resolution_min: int | None = Field(default=None, ge=240, le=4320)
     video_codec_any: list[str] = Field(default_factory=list, max_length=10)
@@ -42,6 +55,8 @@ class RuleRequire(BaseModel):
 
 
 class RuleAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["search_missing", "search_upgrade", "tag", "set_monitored"]
     label: str | None = None  # tag only
     value: bool | None = None  # set_monitored only
@@ -59,11 +74,15 @@ class RuleAction(BaseModel):
 
 
 class RuleOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mal_dub_gate: bool = False
     new_dub_only: bool = False
 
 
 class RuleParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     scope: RuleScope = Field(default_factory=RuleScope)
     require: RuleRequire = Field(default_factory=RuleRequire)
     actions: list[RuleAction] = Field(default_factory=list, max_length=8)
@@ -256,6 +275,8 @@ def compile_candidates(
 ) -> CompiledQuery:
     if entity not in ("movie", "episode"):
         raise ValueError(f"unknown entity {entity!r}")
+    if sense not in ("non_conforming", "conforming"):
+        raise ValueError(f"unknown sense {sense!r}")
     scope, require, options = params.scope, params.require, params.options
     wants_missing = any(a.type == "search_missing" for a in params.actions)
     wants_upgrade = any(a.type == "search_upgrade" for a in params.actions)
@@ -291,16 +312,27 @@ def compile_candidates(
                 " where tg ~ '^[0-9]+$' and tg::int = any(:tag_ids))"
             )
         if options.mal_dub_gate:
+            # mal.warehouse_link is unique on (mal_id, instance_name, arr_entity),
+            # NOT on warehouse_source_id — MAL can split one series/movie across
+            # multiple mal_ids (e.g. season splits), so a plain inner join here
+            # would fan out and duplicate candidate rows. The lateral subquery
+            # picks exactly one linked mal_id (preferring 'dubbed' over
+            # 'partial') so this join can never multiply the outer row.
             joins.append(
-                "join mal.warehouse_link wl on wl.arr_entity = 'radarr_movie'"
+                "join lateral ("
+                "select wl.mal_id, ma.dub_status"
+                " from mal.warehouse_link wl"
+                " join mal.anime ma on ma.mal_id = wl.mal_id"
+                " where wl.arr_entity = 'radarr_movie'"
                 " and wl.instance_name = m.instance_name"
                 " and wl.warehouse_source_id = m.source_id"
+                " and ma.dub_status in ('partial', 'dubbed')"
+                " order by case ma.dub_status when 'dubbed' then 2 else 1 end desc, wl.mal_id"
+                " limit 1"
+                ") dub on true"
             )
-            joins.append("join mal.anime ma on ma.mal_id = wl.mal_id")
-            where.append("ma.dub_status in ('partial', 'dubbed')")
-            select_cols += ", ma.dub_status, wl.mal_id"
+            select_cols += ", dub.dub_status, dub.mal_id"
         has_file = "coalesce((m.payload->>'hasFile')::boolean, false)"
-        order = "order by lg.last_fired_at asc nulls first, m.source_id"
     else:
         item, file_alias = "e", "ef"
         select_cols = (
@@ -340,23 +372,36 @@ def compile_candidates(
                 " where tg ~ '^[0-9]+$' and tg::int = any(:tag_ids))"
             )
         if options.mal_dub_gate:
+            # Same fan-out hazard as the movie branch above — one series can
+            # be linked from multiple mal_ids — so gate via a lateral join
+            # that returns at most one row, correlated on the series (s.).
             joins.append(
-                "join mal.warehouse_link wl on wl.arr_entity = 'sonarr_series'"
+                "join lateral ("
+                "select wl.mal_id, ma.dub_status"
+                " from mal.warehouse_link wl"
+                " join mal.anime ma on ma.mal_id = wl.mal_id"
+                " where wl.arr_entity = 'sonarr_series'"
                 " and wl.instance_name = s.instance_name"
                 " and wl.warehouse_source_id = s.source_id"
+                " and ma.dub_status in ('partial', 'dubbed')"
+                " order by case ma.dub_status when 'dubbed' then 2 else 1 end desc, wl.mal_id"
+                " limit 1"
+                ") dub on true"
             )
-            joins.append("join mal.anime ma on ma.mal_id = wl.mal_id")
-            where.append("ma.dub_status in ('partial', 'dubbed')")
-            select_cols += ", ma.dub_status, wl.mal_id"
+            select_cols += ", dub.dub_status, dub.mal_id"
         has_file = "coalesce((e.payload->>'hasFile')::boolean, false)"
-        order = "order by lg.last_fired_at asc nulls first, e.source_id"
 
-    ledger_join = (
-        f"left join app.automation_action_ledger lg on lg.instance_name = {item}.instance_name"
-        f" and lg.entity_type = '{entity}' and lg.source_id = {item}.source_id"
-        " and lg.action_type = 'search'"
-    )
-    joins.append(ledger_join)
+    wants_search = wants_missing or wants_upgrade
+    if wants_search:
+        order = f"order by lg.last_fired_at asc nulls first, {item}.source_id"
+        ledger_join = (
+            f"left join app.automation_action_ledger lg on lg.instance_name = {item}.instance_name"
+            f" and lg.entity_type = '{entity}' and lg.source_id = {item}.source_id"
+            " and lg.action_type = 'search'"
+        )
+        joins.append(ledger_join)
+    else:
+        order = f"order by {item}.source_id"
 
     conforming = f"({has_file} and {file_alias}.source_id is not null and {req_expr})"
     if sense == "conforming":
@@ -372,8 +417,12 @@ def compile_candidates(
             branches.append(f"not {conforming}")
         where.append("(" + " or ".join(branches) + ")")
         cooldown_clause = (
-            "(lg.last_fired_at is null or lg.last_fired_at <"
-            " now() - make_interval(days => :cooldown_days))"
+            (
+                "(lg.last_fired_at is null or lg.last_fired_at <"
+                " now() - make_interval(days => :cooldown_days))"
+            )
+            if wants_search
+            else None
         )
 
     base = " ".join(joins) + " where " + " and ".join(where)

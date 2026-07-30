@@ -95,6 +95,13 @@ def test_dub_gate_joins_mal() -> None:
     sql = compile_candidates(params, "movie").select_sql
     assert "mal.warehouse_link" in sql
     assert "ma.dub_status in ('partial', 'dubbed')" in sql
+    # Gated via a single-row lateral join (not a plain inner join) so a
+    # movie/series linked from multiple mal_ids can never fan out the
+    # candidate row set — see test_dub_gate_lateral_join_prevents_fanout in
+    # the integration suite for the real-Postgres proof.
+    assert "join lateral (" in sql
+    assert ") dub on true" in sql
+    assert "join mal.warehouse_link wl on wl.arr_entity" not in sql
 
 
 def test_episode_sql_scopes_series_and_airdate() -> None:
@@ -129,3 +136,28 @@ def test_tags_scope_requires_runtime_tag_ids_bind() -> None:
     compiled = compile_candidates(params, "movie")
     assert ":tag_ids" in compiled.select_sql
     assert "tag_ids" not in compiled.binds  # resolved live per instance by the executor
+
+
+def test_tag_only_rule_has_no_cooldown_or_ledger() -> None:
+    params = validate_params(
+        "custom",
+        _minimal(actions=[{"type": "tag", "label": "x264-candidate"}]),
+    )
+    compiled = compile_candidates(params, "movie")
+    assert "automation_action_ledger" not in compiled.select_sql
+    assert ":cooldown_days" not in compiled.select_sql
+    assert "order by m.source_id" in compiled.select_sql
+    assert compiled.count_sql == compiled.count_all_sql
+
+
+def test_compile_candidates_rejects_unknown_sense() -> None:
+    params = validate_params("custom", _minimal())
+    with pytest.raises(ValueError, match="unknown sense"):
+        compile_candidates(params, "movie", sense="bogus")
+
+
+def test_validate_rejects_unknown_param_keys() -> None:
+    bad = _minimal()
+    bad["require"] = {"audio_langauge_any": ["english"]}  # typo: langauge
+    with pytest.raises(ValueError):
+        validate_params("custom", bad)
