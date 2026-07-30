@@ -184,6 +184,7 @@ class FakeAppState:
         self.scheduler = SimpleNamespace(reload=lambda: None, settings=self.settings)
         self.manual_sync_tasks: set = set()
         self.setup_bootstrap_token: str | None = None
+        self.automation_service = None
 
     @contextmanager
     def session_scope(self) -> Iterator[FakeSession]:
