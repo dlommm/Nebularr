@@ -114,6 +114,8 @@ class Settings(BaseSettings):
     coverage_tag_sync_cron: str = "30 4 * * *"
     arr_coverage_full_tag_label: str = "fully-english"
     arr_coverage_partial_tag_label: str = "partial-english"
+    automation_command_min_interval_seconds: float = 2.0
+    automation_max_searches_per_day: int = 100
 
 @lru_cache
 def get_settings() -> Settings:
