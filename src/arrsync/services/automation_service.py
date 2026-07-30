@@ -58,11 +58,13 @@ class AutomationService:
         *,
         arr_client_class: type[ArrClient] = ArrClient,
         event_bus: Any | None = None,
+        alert_notifier: Any | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
         self.arr_client_class = arr_client_class
         self.event_bus = event_bus
+        self.alert_notifier = alert_notifier
 
     async def _run_db(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
         def _call() -> Any:
@@ -178,6 +180,23 @@ class AutomationService:
                     "automation_run",
                     {"automation_id": automation_id, "run_id": run_id, "status": status},
                 )
+            if status == "failed" and self.alert_notifier is not None:
+                # Best-effort: a broken/unconfigured alert channel must never turn a
+                # completed (if failed) automation run into an unhandled exception.
+                try:
+                    await self.alert_notifier.send_event(
+                        "automation_failure",
+                        {
+                            "automation_id": automation_id,
+                            "automation_name": automation.get("name"),
+                            "run_id": run_id,
+                            "error": error_message,
+                        },
+                    )
+                except Exception:
+                    log.exception(
+                        "failed to send automation failure alert", extra={"automation_id": automation_id}
+                    )
         return {"status": status, "run_id": run_id, **counters}
 
     async def _run_instance(
@@ -259,13 +278,19 @@ class AutomationService:
             # (where most candidates are pruned as not-fresh, not budget-starved)
             # report "partial" every time instead of "success".
             pre_prune_count = len(candidates)
+            # Buffered locally, per instance — NOT written into the shared
+            # dub_observations dict yet. If this instance's search phase later fails
+            # (see below), the buffer is simply discarded: a none->dubbed transition
+            # must not be watermarked as "seen" unless it was actually searched, or
+            # it would never be retried on a future run.
+            local_dub_observations: dict[str, str] = {}
             if params.options.new_dub_only:
                 seen = (automation.get("state") or {}).get("dub_status_seen", {})
                 fresh = []
                 for row in candidates:
                     mal_id = str(row.get("mal_id"))
                     now_status = str(row.get("dub_status") or "")
-                    dub_observations[mal_id] = now_status
+                    local_dub_observations[mal_id] = now_status
                     if seen.get(mal_id) in (None, "none") and now_status in ("partial", "dubbed"):
                         fresh.append(row)
                 details["new_dub_transitions"] = details.get("new_dub_transitions", 0) + len(fresh)
@@ -348,6 +373,16 @@ class AutomationService:
                 counters["actions"] += len(item_ids)
                 inst_details["searched"] = len(item_ids)
                 budget_state["remaining"] = max(0, budget_state["remaining"] - len(item_ids))
+
+            # The instance's search phase (search command + ledger write, if any) has
+            # completed without raising — safe to merge this instance's buffered
+            # dub-status observations into the run-level map now. Had the search
+            # command or ledger write above raised, control would never reach this
+            # line (the except clause below returns 0 first), so the buffer is
+            # discarded wholesale and the none->dubbed transition re-qualifies for
+            # search on the next run instead of being silently watermarked "seen"
+            # against a search that never actually fired.
+            dub_observations.update(local_dub_observations)
 
             await self._apply_tag_actions(
                 client=client, params=params, entity=entity, action_rows=action_rows,

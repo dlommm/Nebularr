@@ -36,7 +36,8 @@ CANDIDATES = [
 
 class ServiceFakeSession(FakeSession):
     def __init__(self, automation_row: dict | None = AUTOMATION_ROW, candidates: list | None = None,
-                 recent_searches: int = 0, alt_rows: list | None = None) -> None:
+                 recent_searches: int = 0, alt_rows: list | None = None,
+                 candidates_by_instance: dict[str, list] | None = None) -> None:
         super().__init__()
         self.automation_row = automation_row
         self.candidates = candidates if candidates is not None else list(CANDIDATES)
@@ -49,10 +50,21 @@ class ServiceFakeSession(FakeSession):
         # before this existed), since the two are semantically identical for a rule
         # with no search action.
         self.alt_rows = alt_rows
+        # When set, gives each instance its own row-set (keyed by instance_name,
+        # which every warehouse query binds as ``instance_name``) instead of every
+        # instance sharing the single `candidates` list — needed for tests that must
+        # tell two instances' candidates apart (e.g. F1's per-instance dub
+        # observation buffering).
+        self.candidates_by_instance = candidates_by_instance
         self.recent_searches = recent_searches
         self.finish_params: dict | None = None
         self.ledger_writes: list[dict] = []
         self.state_writes: list[dict] = []
+
+    def _candidates_for(self, params: dict[str, Any] | None) -> list[dict]:
+        if self.candidates_by_instance is not None:
+            return self.candidates_by_instance.get((params or {}).get("instance_name"), [])
+        return self.candidates
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
         sql = " ".join(str(query).lower().split())
@@ -73,14 +85,14 @@ class ServiceFakeSession(FakeSession):
             return FakeResult(scalar_value=self.recent_searches)
         if sql.startswith("select count(*)"):
             # candidate count variants: cooldown-filtered then unfiltered
-            return FakeResult(scalar_value=len(self.candidates))
+            return FakeResult(scalar_value=len(self._candidates_for(params)))
         if "from warehouse.movie m" in sql or "from warehouse.episode e" in sql:
             self.statements.append((sql, params))
             limit = (params or {}).get("limit")
             source_rows = (
                 self.alt_rows
                 if self.alt_rows is not None and limit == AutomationService.SEARCHLESS_LIMIT
-                else self.candidates
+                else self._candidates_for(params)
             )
             # Real SQL applies LIMIT; mirror that here so budget-depletion tests
             # (a later instance's select seeing a smaller :limit) actually observe
@@ -497,6 +509,146 @@ async def test_dry_run_tag_rule_previews_without_mutating(integrations: None) ->
     assert tag_preview["removed"] == 1
     assert tag_preview["added_sample"] == [1]
     assert tag_preview["removed_sample"] == [5]
+
+
+@pytest.mark.asyncio
+async def test_new_dub_only_discards_buffered_observations_on_search_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F1 regression: a none->dubbed transition an instance observed but whose
+    search then raised must NOT be watermarked into automation.state. Otherwise the
+    transition would look "already seen" on the next run and never get searched,
+    even though nothing was ever actually searched for it."""
+    monkeypatch.setattr(
+        svc_module.repo,
+        "list_enabled_integrations",
+        lambda session, source: [
+            {"source": source, "name": "inst-a", "base_url": "http://a", "api_key": "k"},
+            {"source": source, "name": "inst-b", "base_url": "http://b", "api_key": "k"},
+        ],
+    )
+    row = {
+        **AUTOMATION_ROW,
+        "params": {
+            "scope": {"media": "movies", "monitored_only": True},
+            "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+            "actions": [{"type": "search_missing"}],
+            "options": {"mal_dub_gate": True, "new_dub_only": True},
+        },
+        "state": {},
+    }
+    session = ServiceFakeSession(
+        automation_row=row,
+        candidates_by_instance={
+            "inst-a": [{"source_id": 1, "title": "a", "has_file": False, "mal_id": 111, "dub_status": "dubbed"}],
+            "inst-b": [{"source_id": 2, "title": "b", "has_file": False, "mal_id": 222, "dub_status": "dubbed"}],
+        },
+    )
+
+    made: list[FakeArrClient] = []
+
+    class FailingSecondInstanceClient(FakeArrClient):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+        async def search_movies(self, movie_ids: list[int]) -> None:
+            if self.instance_name == "inst-b":
+                raise RuntimeError("arr instance unreachable")
+            await super().search_movies(movie_ids)
+
+    service = AutomationService(
+        FakeSettings(), lambda: session, arr_client_class=FailingSecondInstanceClient  # type: ignore[arg-type]
+    )
+    result = await service.run(3)
+
+    assert result["status"] == "partial"
+    assert made[0].instance_name == "inst-a"
+    assert made[0].searched == [[1]]
+    assert made[1].instance_name == "inst-b"
+    assert made[1].searched == []  # search raised before it could record anything
+    assert session.state_writes, "expected automation.state to be persisted"
+    persisted = json.loads(session.state_writes[-1]["state"])
+    # Only inst-a's mal_id made it into the merged state. inst-b's search raised,
+    # so its buffered observation for mal_id 222 must be discarded rather than
+    # merged — pre-fix, the observation was recorded unconditionally during the
+    # prune (before the search ever fired), so this would have incorrectly
+    # included "222" too.
+    assert persisted["dub_status_seen"] == {"111": "dubbed"}
+
+
+@pytest.mark.asyncio
+async def test_alerts_on_failed_run(integrations: None) -> None:
+    """F3: a run that ends 'failed' notifies the configured alert channel with the
+    automation/run identifiers and the error message; a non-failed run must not."""
+
+    class RecordingNotifier:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        async def send_event(self, event_type: str, payload: dict) -> bool:
+            self.events.append((event_type, payload))
+            return True
+
+    class RaisingClient(FakeArrClient):
+        async def search_movies(self, movie_ids: list[int]) -> None:
+            raise RuntimeError("boom")
+
+    session = ServiceFakeSession()
+    notifier = RecordingNotifier()
+    service = AutomationService(
+        FakeSettings(), lambda: session, arr_client_class=RaisingClient, alert_notifier=notifier  # type: ignore[arg-type]
+    )
+    result = await service.run(3)
+
+    assert result["status"] == "failed"
+    assert len(notifier.events) == 1
+    event_type, payload = notifier.events[0]
+    assert event_type == "automation_failure"
+    assert payload["automation_id"] == 3
+    assert payload["run_id"] == result["run_id"]
+    assert "boom" in (payload["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_no_alert_on_successful_run(integrations: None) -> None:
+    class RecordingNotifier:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        async def send_event(self, event_type: str, payload: dict) -> bool:
+            self.events.append((event_type, payload))
+            return True
+
+    session = ServiceFakeSession()
+    notifier = RecordingNotifier()
+    service, _clients = _service(session)
+    service.alert_notifier = notifier
+    result = await service.run(3)
+
+    assert result["status"] == "success"
+    assert notifier.events == []
+
+
+@pytest.mark.asyncio
+async def test_alert_failure_is_best_effort(integrations: None) -> None:
+    """A broken/misconfigured notifier must never turn a failed run into an
+    unhandled exception out of AutomationService.run()."""
+
+    class BrokenNotifier:
+        async def send_event(self, event_type: str, payload: dict) -> bool:
+            raise RuntimeError("webhook host unreachable")
+
+    class RaisingClient(FakeArrClient):
+        async def search_movies(self, movie_ids: list[int]) -> None:
+            raise RuntimeError("boom")
+
+    session = ServiceFakeSession()
+    service = AutomationService(
+        FakeSettings(), lambda: session, arr_client_class=RaisingClient, alert_notifier=BrokenNotifier()  # type: ignore[arg-type]
+    )
+    result = await service.run(3)
+    assert result["status"] == "failed"
 
 
 @pytest.mark.asyncio

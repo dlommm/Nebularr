@@ -99,7 +99,10 @@ mal_ingest_service = MalIngestService(settings, session_factory_holder)
 mal_matcher_service = MalMatcherService(settings, session_factory_holder)
 mal_tag_sync_service = MalTagSyncService(settings, session_factory_holder)
 coverage_tag_service = CoverageTagSyncService(settings, session_factory_holder)
-automation_service = AutomationService(settings, session_factory_holder, event_bus=event_bus)
+alert_notifier = AlertNotifier(settings)
+automation_service = AutomationService(
+    settings, session_factory_holder, event_bus=event_bus, alert_notifier=alert_notifier
+)
 
 
 async def _cron_mal_ingest() -> None:
@@ -132,7 +135,6 @@ scheduler = SyncScheduler(
     coverage_tag_sync_coro=_cron_coverage_tag_sync,
     automation_run_coro=_cron_automation,
 )
-alert_notifier = AlertNotifier(settings)
 
 app_state = AppState(
     settings=settings,
