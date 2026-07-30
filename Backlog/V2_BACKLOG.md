@@ -86,8 +86,8 @@ flowchart LR
 
 ### Integrations And Automation
 
-- `v2-int-001` (`proposed`): Add outbound automation hooks for actions like tagging media when quality/language rules match.
-- `v2-int-002` (`proposed`): Add pluggable rules engine for policy-based recommendations (example: oversized files with same quality alternatives).
+- `v2-int-001` (`done`, v2.7.0): Add outbound automation hooks for actions like tagging media when quality/language rules match. (Shipped with automations engine: rule compiler, store, executor, scheduler, REST surface `/api/automations*`, WebUI page; see `.superpowers/sdd/2026-07-30-automations-implementation/`.)
+- `v2-int-002` (`done`, v2.7.0): Add pluggable rules engine for policy-based recommendations (example: oversized files with same quality alternatives). (Shipped with automations engine templates: anime-dub-enforcer, new-dub-watcher, resolution-floor, missing-hunter, codec-preference, language-audit, custom; see `.superpowers/sdd/2026-07-30-automations-implementation/`.)
 - `v2-int-003` (`done`, v2.2.0/v2.3.0): Discord/Slack-formatted alert webhooks with per-event toggles (health, sync failure, dead-letter) and a test route; email (SMTP) and ntfy channels added in v2.3.0.
 - `v2-int-004` (`proposed`): Add optional metadata enrichment from external providers for richer analytics dimensions.
 - `v2-int-005` (`proposed`): Add import/export for configuration bundles across environments.
