@@ -16,6 +16,7 @@ class AutomationApiFakeSession(FakeSession):
     def __init__(self) -> None:
         super().__init__()
         self.automations: list[dict[str, Any]] = []
+        self.raise_unique_violation_on_update = False
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
         sql = " ".join(str(query).lower().split())
@@ -31,6 +32,10 @@ class AutomationApiFakeSession(FakeSession):
                 return FakeResult(rows=self.automations[:1])
             if "from app.automation_run" in sql:
                 return FakeResult(rows=[])
+            if sql.startswith("update app.automation set") and self.raise_unique_violation_on_update:
+                raise RuntimeError(
+                    'duplicate key value violates unique constraint "automation_name_key"'
+                )
             return FakeResult(rows=[(1,)])
         return super().execute(query, params)
 
@@ -82,6 +87,15 @@ def test_create_valid_automation_reloads_scheduler(client: TestClient) -> None:
     assert resp.status_code == 200, resp.text
     assert resp.json()["id"] == 42
     assert client.app_state.reloads["count"] == 1  # type: ignore[attr-defined]
+
+
+def test_update_rejects_rename_collision(client: TestClient) -> None:
+    session = client.app_state.session  # type: ignore[attr-defined]
+    session.raise_unique_violation_on_update = True
+    resp = client.put("/api/automations/7", json=VALID_BODY)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "an automation with that name exists"
+    assert client.app_state.reloads["count"] == 0  # type: ignore[attr-defined]
 
 
 def test_create_rejects_bad_cron(client: TestClient) -> None:

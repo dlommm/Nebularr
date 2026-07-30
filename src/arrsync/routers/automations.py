@@ -173,8 +173,13 @@ def build_automations_router(app_state: Any) -> APIRouter:
     @router.put("/api/automations/{automation_id}")
     def update_automation(automation_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         fields = _common_fields(payload, app_state.settings)
-        with app_state.session_scope() as session:
-            ok = automation_store.update_automation(session, automation_id, fields)
+        try:
+            with app_state.session_scope() as session:
+                ok = automation_store.update_automation(session, automation_id, fields)
+        except Exception as exc:
+            if "unique" in str(exc).lower():
+                raise HTTPException(status_code=409, detail="an automation with that name exists") from exc
+            raise
         if not ok:
             raise HTTPException(status_code=404, detail="automation not found")
         app_state.scheduler.reload()
