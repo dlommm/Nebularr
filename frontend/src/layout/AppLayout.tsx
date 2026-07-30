@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Search,
   Sun,
+  Wand2,
   Zap,
 } from "lucide-react";
 import { api } from "../api";
@@ -54,6 +55,7 @@ const NAV_PRIMARY: NavItem[] = [
   { to: PATHS.library, label: "Library", Icon: BookOpen },
   { to: PATHS.sync, label: "Sync & Queue", Icon: Zap },
   { to: PATHS.mal, label: "MyAnimeList", Icon: Clapperboard },
+  { to: PATHS.automations, label: "Automations", Icon: Wand2 },
   { to: PATHS.reporting, label: "Reporting", Icon: BarChart2 },
 ];
 

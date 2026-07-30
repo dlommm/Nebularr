@@ -44,6 +44,8 @@ export const queryKeys = {
   malConfig: ["mal-config"] as const,
   savedViews: ["saved-views"] as const,
   reportingDashboards: ["reporting-dashboards"] as const,
+  automations: ["automations"] as const,
+  automationTemplates: ["automation-templates"] as const,
 
   // Parameterized keys: call with no args for the bare prefix (invalidation),
   // or with the same params used to build the query for the full cache key.
@@ -109,4 +111,9 @@ export const queryKeys = {
     dashboardKey !== undefined
       ? (["reporting-dashboard", dashboardKey, params?.instance_name ?? "", params?.limit ?? 200] as const)
       : (["reporting-dashboard"] as const),
+
+  automationRuns: (automationId?: number) =>
+    automationId !== undefined
+      ? (["automation-runs", automationId] as const)
+      : (["automation-runs"] as const),
 } as const;
