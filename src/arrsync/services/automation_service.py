@@ -107,6 +107,11 @@ class AutomationService:
                 if cap_left < search_budget:
                     details["daily_cap_clamped"] = True
                 search_budget = min(search_budget, cap_left)
+            # Shared across every (source, entity, instance) combination in this run:
+            # budget_per_run/the daily cap are a run-wide ceiling, not a per-instance
+            # allowance, so a multi-instance run must deplete one pool, not reset it
+            # for every instance it touches.
+            budget_state = {"remaining": search_budget}
             instances_processed = 0
             for source, entity in self._targets(params):
                 integrations = await self._run_db(repo.list_enabled_integrations, source)
@@ -121,7 +126,7 @@ class AutomationService:
                         entity=entity,
                         instance=inst,
                         run_id=run_id,
-                        search_budget=search_budget,
+                        budget_state=budget_state,
                         dry_run=dry_run,
                         details=details,
                         counters=counters,
@@ -173,7 +178,7 @@ class AutomationService:
         entity: str,
         instance: dict[str, Any],
         run_id: int,
-        search_budget: int,
+        budget_state: dict[str, int],
         dry_run: bool,
         details: dict[str, Any],
         counters: dict[str, int],
@@ -208,7 +213,11 @@ class AutomationService:
                 ] or [-1]  # unmatched labels match nothing
 
             has_search = any(a.type.startswith("search_") for a in params.actions)
-            limit = search_budget if has_search else self.SEARCHLESS_LIMIT
+            # Bound this instance's select by what's left of the run-wide budget, not
+            # the original per-run allowance — budget_state is shared and depleted as
+            # each instance actually fires searches, so a later instance in the same
+            # run can't spend a pool an earlier instance already used.
+            limit = max(0, budget_state["remaining"]) if has_search else self.SEARCHLESS_LIMIT
             compiled = compile_candidates(params, entity)
             runtime: dict[str, Any] = {
                 "instance_name": name,
@@ -285,6 +294,7 @@ class AutomationService:
                 await self._run_db(_write_ledger)
                 counters["actions"] += len(item_ids)
                 inst_details["searched"] = len(item_ids)
+                budget_state["remaining"] = max(0, budget_state["remaining"] - len(item_ids))
 
             await self._apply_tag_actions(
                 client=client, params=params, entity=entity, candidates=candidates,

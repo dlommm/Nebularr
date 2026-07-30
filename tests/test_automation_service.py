@@ -66,7 +66,12 @@ class ServiceFakeSession(FakeSession):
             return FakeResult(scalar_value=len(self.candidates))
         if "from warehouse.movie m" in sql or "from warehouse.episode e" in sql:
             self.statements.append((sql, params))
-            return FakeResult(rows=self.candidates)
+            # Real SQL applies LIMIT; mirror that here so budget-depletion tests
+            # (a later instance's select seeing a smaller :limit) actually observe
+            # a smaller result set instead of always getting every candidate back.
+            limit = (params or {}).get("limit")
+            rows = self.candidates if limit is None else self.candidates[: max(0, int(limit))]
+            return FakeResult(rows=rows)
         if "update app.automation set state" in sql:
             return FakeResult()
         return super().execute(query, params)
@@ -155,6 +160,43 @@ async def test_daily_cap_clamps_budget(integrations: None) -> None:
         (sql, p) for sql, p in session.statements if "from warehouse.movie m" in sql
     )
     assert select_params["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_budget_depletes_across_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    # cap 100, 97 used today -> 3 remaining for the whole run (shared, not per-instance).
+    # Two enabled radarr instances; the first has 2 candidates and searches both,
+    # leaving 1 in the pool -> the second instance's select must see :limit == 1,
+    # and the run must not search more than 3 items in total across both clients.
+    monkeypatch.setattr(
+        svc_module.repo,
+        "list_enabled_integrations",
+        lambda session, source: [
+            {"source": source, "name": "inst-a", "base_url": "http://a", "api_key": "k"},
+            {"source": source, "name": "inst-b", "base_url": "http://b", "api_key": "k"},
+        ],
+    )
+    session = ServiceFakeSession(
+        recent_searches=97,
+        candidates=[
+            {"source_id": 1, "title": "one", "has_file": False},
+            {"source_id": 2, "title": "two", "has_file": False},
+        ],
+    )
+    service, clients = _service(session)
+    result = await service.run(3)
+
+    select_calls = [(sql, p) for sql, p in session.statements if "from warehouse.movie m" in sql]
+    assert len(select_calls) == 2
+    assert select_calls[0][1]["limit"] == 3  # first instance sees the full remaining pool
+    assert select_calls[1][1]["limit"] == 1  # second instance sees 3 - 2 already searched
+
+    total_searched = sum(len(batch) for client in clients for batch in client.searched)
+    assert total_searched <= 3
+    # The second instance's eligible count (2) exceeds what the depleted budget let
+    # it select (1), so the run must surface that as a budget skip, not silently succeed.
+    assert result["skipped_budget"] == 1
+    assert result["status"] == "partial"
 
 
 @pytest.mark.asyncio
