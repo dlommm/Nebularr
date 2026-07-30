@@ -44,6 +44,16 @@ def test_new_dub_only_requires_dub_gate() -> None:
         validate_params("custom", bad)
 
 
+def test_conforming_tag_action_rejected() -> None:
+    bad = {
+        "scope": {"media": "movies"},
+        "require": {"resolution_min": 1080},
+        "actions": [{"type": "tag", "label": "x264-candidate", "when": "conforming"}],
+    }
+    with pytest.raises(ValueError, match="conforming tag actions"):
+        validate_params("custom", bad)
+
+
 def test_conforming_actions_rejected_for_series_media() -> None:
     bad = {
         "scope": {"media": "both"},

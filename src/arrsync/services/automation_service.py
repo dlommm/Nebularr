@@ -97,6 +97,10 @@ class AutomationService:
         dry_run = bool(automation["dry_run"])
         details: dict[str, Any] = {"reason": reason, "dry_run": dry_run, "instances": {}, "errors": []}
         counters = {"matched": 0, "actions": 0, "skipped_cooldown": 0, "skipped_budget": 0}
+        # Accumulates mal_id -> observed dub_status across every instance touched this
+        # run. Kept local (never written into `details`) so a run row never carries
+        # the full mal_id map — only a transition count does (details["new_dub_transitions"]).
+        dub_observations: dict[str, str] = {}
         status = "failed"
         try:
             has_search = any(a.type.startswith("search_") for a in params.actions)
@@ -130,12 +134,19 @@ class AutomationService:
                         dry_run=dry_run,
                         details=details,
                         counters=counters,
+                        dub_observations=dub_observations,
                     )
             if params.options.new_dub_only and not dry_run:
+                # Merge into whatever state already exists — both the pre-existing
+                # dub_status_seen entries (an instance that saw nothing new this run
+                # must not forget statuses it already recorded) and any other state
+                # keys future features may add.
+                existing_state = automation.get("state") or {}
+                merged_seen = {**existing_state.get("dub_status_seen", {}), **dub_observations}
                 await self._run_db(
                     automation_store.set_automation_state,
                     automation_id,
-                    {"dub_status_seen": details.get("dub_status_seen", {})},
+                    {**existing_state, "dub_status_seen": merged_seen},
                 )
             if dry_run:
                 status = "dry_run"
@@ -182,6 +193,7 @@ class AutomationService:
         dry_run: bool,
         details: dict[str, Any],
         counters: dict[str, int],
+        dub_observations: dict[str, str],
     ) -> int:
         name = str(instance["name"])
         inst_details: dict[str, Any] = {"matched": 0}
@@ -213,6 +225,10 @@ class AutomationService:
                 ] or [-1]  # unmatched labels match nothing
 
             has_search = any(a.type.startswith("search_") for a in params.actions)
+            has_tag_actions = any(a.type == "tag" for a in params.actions)
+            has_nonconforming_monitored = any(
+                a.type == "set_monitored" and a.when == "non_conforming" for a in params.actions
+            )
             # Bound this instance's select by what's left of the run-wide budget, not
             # the original per-run allowance — budget_state is shared and depleted as
             # each instance actually fires searches, so a later instance in the same
@@ -236,22 +252,48 @@ class AutomationService:
             candidates = await self._run_db(
                 _select_rows, compiled.select_sql, {**compiled.binds, **runtime}
             )
+            # Snapshot the budgeted select's row count BEFORE the new_dub_only prune —
+            # skipped_budget must reflect what the daily cap/budget actually cost us,
+            # not how many of those rows also happened to be "already seen" dub
+            # statuses. Conflating the two made steady-state anime-dub-enforcer runs
+            # (where most candidates are pruned as not-fresh, not budget-starved)
+            # report "partial" every time instead of "success".
+            pre_prune_count = len(candidates)
             if params.options.new_dub_only:
                 seen = (automation.get("state") or {}).get("dub_status_seen", {})
-                current = details.setdefault("dub_status_seen", {})
                 fresh = []
                 for row in candidates:
                     mal_id = str(row.get("mal_id"))
                     now_status = str(row.get("dub_status") or "")
-                    current[mal_id] = now_status
+                    dub_observations[mal_id] = now_status
                     if seen.get(mal_id) in (None, "none") and now_status in ("partial", "dubbed"):
                         fresh.append(row)
+                details["new_dub_transitions"] = details.get("new_dub_transitions", 0) + len(fresh)
                 candidates = fresh
             counters["matched"] += len(candidates)
             counters["skipped_cooldown"] += max(0, eligible_all - eligible)
             if has_search:
-                counters["skipped_budget"] += max(0, eligible - len(candidates))
+                counters["skipped_budget"] += max(0, eligible - pre_prune_count)
             inst_details["matched"] = len(candidates)
+
+            # The tag/monitor reconcile target set must never come from the
+            # budget-truncated (or new_dub_only-pruned) search candidate list — tag
+            # and non-conforming set_monitored actions are cheap, idempotent, and
+            # uncapped, and must reconcile against the FULL non-conforming set every
+            # run regardless of how much search budget is left. Recompile without the
+            # search actions (which also drops the ledger join/cooldown clause per the
+            # compiler contract) and select unbounded (SEARCHLESS_LIMIT).
+            needs_action_rows = has_tag_actions or has_nonconforming_monitored
+            action_rows: list[dict[str, Any]] = []
+            if needs_action_rows:
+                action_params = params.model_copy(
+                    update={"actions": [a for a in params.actions if not a.type.startswith("search_")]}
+                )
+                action_compiled = compile_candidates(action_params, entity)
+                action_runtime = {**runtime, "limit": self.SEARCHLESS_LIMIT}
+                action_rows = await self._run_db(
+                    _select_rows, action_compiled.select_sql, {**action_compiled.binds, **action_runtime}
+                )
 
             if has_search and params.require.audio_language_any and not dry_run:
                 try:
@@ -262,14 +304,25 @@ class AutomationService:
                     log.debug("custom format probe failed", exc_info=True)
 
             if dry_run:
-                inst_details["would_do"] = [
-                    {
-                        "source_id": int(r["source_id"]),
-                        "title": str(r.get("series_title") or r.get("title") or ""),
-                        "actions": sorted({a.type for a in params.actions if a.when == "non_conforming"}),
-                    }
-                    for r in candidates
-                ]
+                if has_search:
+                    inst_details["would_do"] = [
+                        {
+                            "source_id": int(r["source_id"]),
+                            "title": str(r.get("series_title") or r.get("title") or ""),
+                            "actions": sorted(
+                                {a.type for a in params.actions if a.type.startswith("search_")}
+                            ),
+                        }
+                        for r in candidates
+                    ]
+                await self._preview_tag_actions(
+                    client=client, params=params, entity=entity, action_rows=action_rows,
+                    inst_details=inst_details,
+                )
+                await self._preview_monitored_actions(
+                    client=client, params=params, entity=entity, action_rows=action_rows,
+                    runtime=runtime, inst_details=inst_details,
+                )
                 return 1
 
             item_ids = [int(r["source_id"]) for r in candidates]
@@ -297,11 +350,11 @@ class AutomationService:
                 budget_state["remaining"] = max(0, budget_state["remaining"] - len(item_ids))
 
             await self._apply_tag_actions(
-                client=client, params=params, entity=entity, candidates=candidates,
+                client=client, params=params, entity=entity, action_rows=action_rows,
                 counters=counters, inst_details=inst_details,
             )
             await self._apply_monitored_actions(
-                client=client, params=params, entity=entity, candidates=candidates,
+                client=client, params=params, entity=entity, action_rows=action_rows,
                 runtime=runtime, counters=counters, inst_details=inst_details,
             )
             return 1
@@ -315,20 +368,30 @@ class AutomationService:
             await client.aclose()
 
     @staticmethod
-    def _target_ids(entity: str, candidates: list[dict[str, Any]]) -> set[int]:
+    def _target_ids(entity: str, rows: list[dict[str, Any]]) -> set[int]:
         """Item ids for movie rules; owning-series ids for episode rules."""
         if entity == "movie":
-            return {int(r["source_id"]) for r in candidates}
-        return {int(r["series_source_id"]) for r in candidates}
+            return {int(r["source_id"]) for r in rows}
+        return {int(r["series_source_id"]) for r in rows}
 
     async def _apply_tag_actions(
         self, *, client: Any, params: RuleParams, entity: str,
-        candidates: list[dict[str, Any]], counters: dict[str, int], inst_details: dict[str, Any],
+        action_rows: list[dict[str, Any]], counters: dict[str, int], inst_details: dict[str, Any],
     ) -> None:
-        tag_actions = [a for a in params.actions if a.type == "tag" and a.when == "non_conforming"]
+        # Conforming tag actions are rejected at validation time (RuleAction), so
+        # every tag action reaching the executor is non-conforming by construction.
+        tag_actions = [a for a in params.actions if a.type == "tag"]
         if not tag_actions:
             return
-        desired_ids = self._target_ids(entity, candidates)
+        desired_ids = self._target_ids(entity, action_rows)
+        # action_rows is capped at SEARCHLESS_LIMIT; hitting that cap means the true
+        # non-conforming set may be larger than what we saw. Removing tags off a
+        # truncated view could strip the label from items that are still genuinely
+        # non-conforming, so skip removals (adds stay safe: under-covering by
+        # omission is not the same failure mode as over-removing).
+        truncated = len(action_rows) >= self.SEARCHLESS_LIMIT
+        if truncated:
+            inst_details["tag_removal_skipped"] = "candidate set truncated"
         live_rows = await (client.list_movies() if entity == "movie" else client.list_series())
         for action in tag_actions:
             tag_id = await client.ensure_tag_id(action.label or "")
@@ -342,7 +405,7 @@ class AutomationService:
                 tags = {int(t) for t in (row.get("tags") or []) if t is not None}
                 if rid in desired_ids and tag_id not in tags:
                     add.append(rid)
-                elif rid not in desired_ids and tag_id in tags:
+                elif not truncated and rid not in desired_ids and tag_id in tags:
                     remove.append(rid)
             for ids, op in ((add, "add"), (remove, "remove")):
                 if not ids:
@@ -356,7 +419,7 @@ class AutomationService:
 
     async def _apply_monitored_actions(
         self, *, client: Any, params: RuleParams, entity: str,
-        candidates: list[dict[str, Any]], runtime: dict[str, Any],
+        action_rows: list[dict[str, Any]], runtime: dict[str, Any],
         counters: dict[str, int], inst_details: dict[str, Any],
     ) -> None:
         monitored_actions = [a for a in params.actions if a.type == "set_monitored"]
@@ -379,7 +442,7 @@ class AutomationService:
                 )
                 target_ids = {int(r["source_id"]) for r in rows}
             else:
-                target_ids = self._target_ids(entity, candidates)
+                target_ids = self._target_ids(entity, action_rows)
             desired = bool(action.value)
             changed = [
                 rid for rid in sorted(target_ids)
@@ -393,3 +456,85 @@ class AutomationService:
                 await client.update_series_monitored(changed, desired)
             counters["actions"] += len(changed)
             inst_details[f"monitored:{action.when}"] = len(changed)
+
+    async def _preview_tag_actions(
+        self, *, client: Any, params: RuleParams, entity: str,
+        action_rows: list[dict[str, Any]], inst_details: dict[str, Any],
+    ) -> None:
+        """Dry-run counterpart of _apply_tag_actions: GETs only, never ensure_tag_id
+        (which creates a tag) and never an editor call — the zero-mutation invariant
+        for dry runs is absolute."""
+        tag_actions = [a for a in params.actions if a.type == "tag"]
+        if not tag_actions:
+            return
+        desired_ids = self._target_ids(entity, action_rows)
+        live_rows = await (client.list_movies() if entity == "movie" else client.list_series())
+        existing_tags = await client.list_tags()
+        by_label = {
+            str(t.get("label", "")).strip().casefold(): int(t["id"])
+            for t in existing_tags
+            if t.get("id") is not None
+        }
+        for action in tag_actions:
+            tag_id = by_label.get((action.label or "").strip().casefold())
+            if tag_id is None:
+                # The tag doesn't exist yet on this instance: nothing to remove, and
+                # every desired item would be a fresh add once the tag is created.
+                add_ids = sorted(desired_ids)
+                remove_ids: list[int] = []
+            else:
+                add_ids = []
+                remove_ids = []
+                for row in live_rows:
+                    raw_id = row.get("id")
+                    if raw_id is None:
+                        continue
+                    rid = int(raw_id)
+                    tags = {int(t) for t in (row.get("tags") or []) if t is not None}
+                    if rid in desired_ids and tag_id not in tags:
+                        add_ids.append(rid)
+                    elif rid not in desired_ids and tag_id in tags:
+                        remove_ids.append(rid)
+                add_ids.sort()
+                remove_ids.sort()
+            inst_details[f"would_tag:{action.label}"] = {
+                "added": len(add_ids),
+                "removed": len(remove_ids),
+                "added_sample": add_ids[:20],
+                "removed_sample": remove_ids[:20],
+            }
+
+    async def _preview_monitored_actions(
+        self, *, client: Any, params: RuleParams, entity: str,
+        action_rows: list[dict[str, Any]], runtime: dict[str, Any], inst_details: dict[str, Any],
+    ) -> None:
+        """Dry-run counterpart of _apply_monitored_actions: GETs and a read-only
+        conforming select only, never an editor call."""
+        monitored_actions = [a for a in params.actions if a.type == "set_monitored"]
+        if not monitored_actions:
+            return
+        live_rows = await (client.list_movies() if entity == "movie" else client.list_series())
+        live_monitored = {
+            int(row["id"]): bool(row.get("monitored", False))
+            for row in live_rows
+            if row.get("id") is not None
+        }
+        for action in monitored_actions:
+            if action.when == "conforming":
+                compiled = compile_candidates(params, "movie", sense="conforming")
+                rows = await self._run_db(
+                    _select_rows,
+                    compiled.select_sql,
+                    {**compiled.binds, **runtime, "limit": self.SEARCHLESS_LIMIT},
+                )
+                target_ids = {int(r["source_id"]) for r in rows}
+            else:
+                target_ids = self._target_ids(entity, action_rows)
+            desired = bool(action.value)
+            changed = sorted(
+                rid for rid in target_ids if rid in live_monitored and live_monitored[rid] != desired
+            )
+            inst_details[f"would_monitor:{action.when}"] = {
+                "changed": len(changed),
+                "sample": changed[:20],
+            }

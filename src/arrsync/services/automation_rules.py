@@ -66,6 +66,11 @@ class RuleAction(BaseModel):
     def _check_fields(self) -> "RuleAction":
         if self.type == "tag" and not (self.label or "").strip():
             raise ValueError("tag action requires a non-empty label")
+        if self.type == "tag" and self.when == "conforming":
+            # The executor's tag reconcile is defined over the non-conforming set
+            # (it owns the label: add to matched, strip from everything else) —
+            # there's no "conforming" tag semantics to silently discard.
+            raise ValueError("conforming tag actions are not supported in v1")
         if self.type == "set_monitored" and self.value is None:
             raise ValueError("set_monitored action requires value true/false")
         if self.type.startswith("search_") and self.when != "non_conforming":
