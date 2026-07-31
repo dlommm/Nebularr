@@ -70,6 +70,7 @@ flowchart TB
 | Setup | `GET/POST /api/setup/*` | First-run wizard, skip, initial sync |
 | Configuration | `GET/PUT /api/config/integrations/{source}`, `POST .../test`, `/api/config/webhook`, `/api/config/alert-webhooks` (+ `POST .../test`), `/api/config/schedules` (+ `POST .../validate`), `/api/config/retention`, `/api/config/queue`, `/api/config/saved-views` | Integrations (+ connection test), webhook verifier, alert targets (+ per-channel test), cron (+ validation/next-run preview), retention & queue policy, saved views |
 | Sync control | `POST /api/sync/<source>/<mode>` — sources: `sonarr`, `radarr`; modes: `full`, `incremental`, `reconcile` | Manual or scripted runs |
+| Automations | `GET/POST /api/automations`, `GET/PUT /api/automations/{id}`, `DELETE /api/automations/{id}`, `POST /api/automations/{id}/run`, `GET /api/automations/{id}/runs`, `GET /api/automations/runs/{run_id}` (+ `POST .../validate`) | CRUD, validation, manual trigger, run history |
 | Webhook ingress | `POST /hooks/sonarr`, `POST /hooks/radarr`, `POST /hooks/<source>/<instance>` | Signed payloads from Arr into the queue (per-instance form for multi-instance setups) |
 | Queue admin | `POST /api/webhooks/replay-dead-letter/<source>`, `POST /api/webhooks/requeue/<job_id>`, `POST /api/webhooks/requeue-bulk` | Recover failed webhook jobs (single, per-source, or bulk by status) |
 | Library UI | `GET /api/ui/*` (shows, episodes, movies, runs, queue, …) | Paged JSON + streamed CSV exports for the SPA |
@@ -221,7 +222,7 @@ With multiple instances of the same app, give each its own URL so events land on
 - `alembic/`: DB migrations.
 - `docker/`: Postgres bootstrap.
 - `docs/`: architecture, operations, backup/restore (canonical; `docs/wiki/` is a synced snapshot for the GitHub wiki).
-  - `ARCHITECTURE.md`, `REPORTING_ARCHITECTURE.md`, `BRANDING.md`, `LOCKING_AND_DLQ.md`, `MIGRATIONS.md`, `POOLING_AND_TIMEOUTS.md`, `ALERTS_AND_SLOS.md`, `DB_BOOTSTRAP.md`, `BACKUP_RESTORE.md`, `OPERATIONS_RUNBOOK.md`, `COMPOSE_RESOURCE_HINTS.md`, `PERF_INDEXING_PLAN.md`, `SCHEDULER_TIMEZONE.md`, `SECRETS.md`, `WEBUI_FRAMEWORK.md`, `WEBUI_AGENT_WORKFLOW.md`
+  - `ARCHITECTURE.md`, `AUTOMATIONS.md`, `REPORTING_ARCHITECTURE.md`, `BRANDING.md`, `LOCKING_AND_DLQ.md`, `MIGRATIONS.md`, `POOLING_AND_TIMEOUTS.md`, `ALERTS_AND_SLOS.md`, `DB_BOOTSTRAP.md`, `BACKUP_RESTORE.md`, `OPERATIONS_RUNBOOK.md`, `COMPOSE_RESOURCE_HINTS.md`, `PERF_INDEXING_PLAN.md`, `SCHEDULER_TIMEZONE.md`, `SECRETS.md`, `WEBUI_FRAMEWORK.md`, `WEBUI_AGENT_WORKFLOW.md`
 
 ## Development
 

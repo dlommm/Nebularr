@@ -15,6 +15,7 @@ const ReportingPage = lazy(() => import("./pages/ReportingPage").then((m) => ({ 
 const LibraryPage = lazy(() => import("./pages/LibraryPage").then((m) => ({ default: m.LibraryPage })));
 const SyncQueuePage = lazy(() => import("./pages/SyncQueuePage").then((m) => ({ default: m.SyncQueuePage })));
 const MalPage = lazy(() => import("./pages/MalPage").then((m) => ({ default: m.MalPage })));
+const AutomationsPage = lazy(() => import("./pages/AutomationsPage").then((m) => ({ default: m.AutomationsPage })));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const SchedulesPage = lazy(() => import("./pages/SchedulesPage").then((m) => ({ default: m.SchedulesPage })));
 const LogsPage = lazy(() => import("./pages/LogsPage").then((m) => ({ default: m.LogsPage })));
@@ -83,6 +84,7 @@ export function App(): JSX.Element {
             <Route path="library" element={<LibraryPage />} />
             <Route path="sync" element={<SyncQueuePage />} />
             <Route path="mal" element={<MalPage />} />
+            <Route path="automations" element={<AutomationsPage />} />
             <Route path="runs" element={<Navigate to={`${PATHS.sync}?tab=runs`} replace />} />
             <Route path="webhooks" element={<Navigate to={`${PATHS.sync}?tab=webhooks`} replace />} />
             <Route path="actions" element={<Navigate to={`${PATHS.sync}?tab=manual`} replace />} />

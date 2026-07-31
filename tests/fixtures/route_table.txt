@@ -1,5 +1,10 @@
+DELETE /api/automations/{automation_id}
 GET /
 GET /api/auth/status
+GET /api/automations
+GET /api/automations/runs/{run_id}
+GET /api/automations/templates
+GET /api/automations/{automation_id}/runs
 GET /api/config/alert-webhooks
 GET /api/config/integrations
 GET /api/config/logging
@@ -48,6 +53,9 @@ GET /{frontend_path:path}
 POST /api/admin/reset-data
 POST /api/auth/login
 POST /api/auth/logout
+POST /api/automations
+POST /api/automations/validate
+POST /api/automations/{automation_id}/run
 POST /api/config/alert-webhooks/test
 POST /api/config/integrations/{source}/test
 POST /api/config/schedules/validate
@@ -72,6 +80,7 @@ POST /api/webhooks/requeue/{job_id}
 POST /hooks/{source}
 POST /hooks/{source}/{instance_name}
 PUT /api/auth/config
+PUT /api/automations/{automation_id}
 PUT /api/config/alert-webhooks
 PUT /api/config/integrations/{source}
 PUT /api/config/logging

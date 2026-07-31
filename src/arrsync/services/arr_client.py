@@ -82,6 +82,8 @@ class ArrClient:
         self.timeout = settings.http_timeout_seconds
         self.retry_attempts = settings.http_retry_attempts
         self.semaphore = asyncio.Semaphore(settings.http_max_parallel_requests)
+        self._command_lock = asyncio.Lock()
+        self._last_command_at = 0.0
         self._client: httpx.AsyncClient | None = None
         self.capabilities = CapabilitySet(
             source=source,
@@ -412,6 +414,63 @@ class ArrClient:
                 "/api/v3/movie/editor",
                 json={"movieIds": chunk, "tags": tag_ids, "applyTags": apply_tags},
             )
+
+    COMMAND_SEARCH_CHUNK = 10
+
+    async def _throttle_commands(self) -> None:
+        """Min-interval gate between /command posts (MalApiClient._throttle pattern)
+        so automation runs can never machine-gun the Arr command queue."""
+        interval = getattr(self.settings, "automation_command_min_interval_seconds", 0.0)
+        async with self._command_lock:
+            loop = asyncio.get_running_loop()
+            wait = self._last_command_at + interval - loop.time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_command_at = loop.time()
+
+    async def _post_command(self, body: dict[str, Any]) -> None:
+        await self._throttle_commands()
+        await self._request("POST", "/api/v3/command", json=body)
+
+    async def search_movies(self, movie_ids: list[int]) -> None:
+        if self.source != "radarr":
+            raise RuntimeError("search_movies requires radarr client")
+        for start in range(0, len(movie_ids), self.COMMAND_SEARCH_CHUNK):
+            chunk = movie_ids[start : start + self.COMMAND_SEARCH_CHUNK]
+            await self._post_command({"name": "MoviesSearch", "movieIds": chunk})
+
+    async def search_episodes(self, episode_ids: list[int]) -> None:
+        if self.source != "sonarr":
+            raise RuntimeError("search_episodes requires sonarr client")
+        for start in range(0, len(episode_ids), self.COMMAND_SEARCH_CHUNK):
+            chunk = episode_ids[start : start + self.COMMAND_SEARCH_CHUNK]
+            await self._post_command({"name": "EpisodeSearch", "episodeIds": chunk})
+
+    async def update_series_monitored(self, series_ids: list[int], monitored: bool) -> None:
+        if self.source != "sonarr":
+            raise RuntimeError("update_series_monitored requires sonarr client")
+        for start in range(0, len(series_ids), self.TAG_EDITOR_CHUNK):
+            chunk = series_ids[start : start + self.TAG_EDITOR_CHUNK]
+            await self._request(
+                "PUT", "/api/v3/series/editor", json={"seriesIds": chunk, "monitored": monitored}
+            )
+
+    async def update_movies_monitored(self, movie_ids: list[int], monitored: bool) -> None:
+        if self.source != "radarr":
+            raise RuntimeError("update_movies_monitored requires radarr client")
+        for start in range(0, len(movie_ids), self.TAG_EDITOR_CHUNK):
+            chunk = movie_ids[start : start + self.TAG_EDITOR_CHUNK]
+            await self._request(
+                "PUT", "/api/v3/movie/editor", json={"movieIds": chunk, "monitored": monitored}
+            )
+
+    async def list_quality_profiles(self) -> list[dict[str, Any]]:
+        payload = await self._request("GET", "/api/v3/qualityprofile")
+        return payload if isinstance(payload, list) else []
+
+    async def list_custom_formats(self) -> list[dict[str, Any]]:
+        payload = await self._request("GET", "/api/v3/customformat")
+        return payload if isinstance(payload, list) else []
 
     @staticmethod
     def validate_webhook_secret(given: str, expected: str) -> bool:

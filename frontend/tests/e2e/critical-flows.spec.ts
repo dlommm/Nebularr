@@ -121,3 +121,41 @@ test("healthz reports ok with auth enabled", async ({ request, baseURL }) => {
   expect(body.status).toBe("ok");
   expect(body.auth).toBe("enabled");
 });
+
+test("automations: create from template in dry-run", async ({ page, baseURL }) => {
+  const root = baseURL ?? "http://localhost:8080";
+
+  // Each test gets its own browser context (no shared cookies across tests even
+  // in serial mode), so log in the same way "authenticated navigation..." does.
+  // RequireSetup's cold-load 401 sends us to /login without a `next` param, and
+  // a successful login lands on "/" — so re-navigate to /automations afterward.
+  await page.goto(`${root}/automations`);
+  await expect(page.getByLabel("Password")).toBeVisible({ timeout: 30_000 });
+  await page.getByLabel("Password").fill("e2e-admin-password");
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes("/api/auth/login") && r.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: /sign in/i }).click(),
+  ]);
+
+  await page.goto(`${root}/automations`);
+  await expect(page.getByText("Templates")).toBeVisible();
+
+  // Each template card is a direct child of the gallery's CSS grid container
+  // (`.grid > div`), so scoping on that relationship (rather than a bare `div`
+  // hasText match, which also matches the enclosing GlassCard — itself a flex
+  // column containing every card) narrows the locator to the one card.
+  const card = page.locator(".grid > div", { hasText: "Missing-content hunter" });
+  await card.getByRole("button", { name: /use template/i }).click();
+
+  // Exact match: "Name" is a substring of several other field labels on this
+  // form (e.g. "Quality name any-of (e.g. WEBDL-1080p)").
+  const nameField = page.getByLabel("Name", { exact: true });
+  await expect(nameField).toBeVisible();
+  await nameField.fill("e2e missing hunter");
+  await page.getByRole("button", { name: /create automation/i }).click();
+
+  await expect(page.getByText("e2e missing hunter")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/dry run/i).first()).toBeVisible();
+});

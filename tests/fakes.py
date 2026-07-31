@@ -145,6 +145,15 @@ class FakeSettings:
     mydublist_confidence_tier: str = "normal"
     coverage_tagging_enabled: bool = False
     coverage_tag_sync_cron: str = "30 4 * * *"
+    automation_command_min_interval_seconds: float = 0.0
+    automation_max_searches_per_day: int = 100
+    http_timeout_seconds: float = 5.0
+    http_retry_attempts: int = 1
+    http_max_parallel_requests: int = 4
+    sonarr_base_url: str = "http://sonarr:8989"
+    sonarr_api_key: str = "k"
+    radarr_base_url: str = "http://radarr:7878"
+    radarr_api_key: str = "k"
 
 
 class FakeMetrics:
@@ -175,6 +184,7 @@ class FakeAppState:
         self.scheduler = SimpleNamespace(reload=lambda: None, settings=self.settings)
         self.manual_sync_tasks: set = set()
         self.setup_bootstrap_token: str | None = None
+        self.automation_service = None
 
     @contextmanager
     def session_scope(self) -> Iterator[FakeSession]:

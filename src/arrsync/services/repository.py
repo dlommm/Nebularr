@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import zlib
 from datetime import datetime, timezone
 from typing import Any
@@ -375,6 +376,20 @@ def _extract_media_languages(episode_or_movie_file: dict[str, Any]) -> tuple[lis
     return sorted(set(audio_languages)), sorted(set(subtitle_languages))
 
 
+def _extract_video_resolution(row: dict[str, Any]) -> int | None:
+    """Vertical resolution from mediaInfo.resolution ("1920x1080"), falling back
+    to the Arr quality name ("WEBDL-1080p"). Mirrors the 0012 backfill SQL."""
+    media_info = row.get("mediaInfo") or {}
+    match = re.search(r"x(\d{3,4})\s*$", str(media_info.get("resolution") or ""))
+    if match:
+        return int(match.group(1))
+    quality = ((row.get("quality") or {}).get("quality") or {}).get("name") or ""
+    match = re.search(r"(\d{3,4})[pi]", str(quality))
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def upsert_episode_file(
     session: Session,
     instance: str,
@@ -390,9 +405,9 @@ def upsert_episode_file(
         text(
             """
             insert into warehouse.episode_file
-            (source_id, instance_name, episode_source_id, path, size_bytes, quality, audio_languages, subtitle_languages, audio_codec, audio_channels, video_codec, payload, sync_source, sync_run_id, seen_at, last_seen_at, deleted)
+            (source_id, instance_name, episode_source_id, path, size_bytes, quality, audio_languages, subtitle_languages, audio_codec, audio_channels, video_codec, video_resolution, payload, sync_source, sync_run_id, seen_at, last_seen_at, deleted)
             values
-            (:source_id, :instance_name, :episode_source_id, :path, :size_bytes, :quality, :audio_languages, :subtitle_languages, :audio_codec, :audio_channels, :video_codec, cast(:payload as jsonb), :sync_source, :sync_run_id, now(), now(), false)
+            (:source_id, :instance_name, :episode_source_id, :path, :size_bytes, :quality, :audio_languages, :subtitle_languages, :audio_codec, :audio_channels, :video_codec, :video_resolution, cast(:payload as jsonb), :sync_source, :sync_run_id, now(), now(), false)
             on conflict (source_id, instance_name) do update
             set path = excluded.path,
                 size_bytes = excluded.size_bytes,
@@ -402,6 +417,7 @@ def upsert_episode_file(
                 audio_codec = excluded.audio_codec,
                 audio_channels = excluded.audio_channels,
                 video_codec = excluded.video_codec,
+                video_resolution = excluded.video_resolution,
                 payload = excluded.payload,
                 sync_source = excluded.sync_source,
                 sync_run_id = excluded.sync_run_id,
@@ -421,6 +437,7 @@ def upsert_episode_file(
             "audio_codec": media_info.get("audioCodec"),
             "audio_channels": media_info.get("audioChannels"),
             "video_codec": media_info.get("videoCodec"),
+            "video_resolution": _extract_video_resolution(row),
             "payload": _to_json(row),
             "sync_source": sync_source,
             "sync_run_id": run_id,
@@ -479,9 +496,9 @@ def upsert_movie_file(
         text(
             """
             insert into warehouse.movie_file
-            (source_id, instance_name, movie_source_id, path, size_bytes, quality, audio_languages, subtitle_languages, audio_codec, audio_channels, video_codec, payload, sync_source, sync_run_id, seen_at, last_seen_at, deleted)
+            (source_id, instance_name, movie_source_id, path, size_bytes, quality, audio_languages, subtitle_languages, audio_codec, audio_channels, video_codec, video_resolution, payload, sync_source, sync_run_id, seen_at, last_seen_at, deleted)
             values
-            (:source_id, :instance_name, :movie_source_id, :path, :size_bytes, :quality, :audio_languages, :subtitle_languages, :audio_codec, :audio_channels, :video_codec, cast(:payload as jsonb), :sync_source, :sync_run_id, now(), now(), false)
+            (:source_id, :instance_name, :movie_source_id, :path, :size_bytes, :quality, :audio_languages, :subtitle_languages, :audio_codec, :audio_channels, :video_codec, :video_resolution, cast(:payload as jsonb), :sync_source, :sync_run_id, now(), now(), false)
             on conflict (source_id, instance_name) do update
             set path = excluded.path,
                 size_bytes = excluded.size_bytes,
@@ -491,6 +508,7 @@ def upsert_movie_file(
                 audio_codec = excluded.audio_codec,
                 audio_channels = excluded.audio_channels,
                 video_codec = excluded.video_codec,
+                video_resolution = excluded.video_resolution,
                 payload = excluded.payload,
                 sync_source = excluded.sync_source,
                 sync_run_id = excluded.sync_run_id,
@@ -510,6 +528,7 @@ def upsert_movie_file(
             "audio_codec": media_info.get("audioCodec"),
             "audio_channels": media_info.get("audioChannels"),
             "video_codec": media_info.get("videoCodec"),
+            "video_resolution": _extract_video_resolution(row),
             "payload": _to_json(row),
             "sync_source": sync_source,
             "sync_run_id": run_id,

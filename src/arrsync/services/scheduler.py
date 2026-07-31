@@ -12,6 +12,7 @@ from sqlalchemy import text
 from arrsync.config import Settings
 from arrsync.db import session_scope
 from arrsync.services import repository as repo
+from arrsync.services.automation_store import read_enabled_automation_schedules
 from arrsync.services.mal_config_store import read_mal_feature_flags
 from arrsync.services.sync_service import SyncService
 
@@ -29,6 +30,7 @@ class SyncScheduler:
         mal_matcher_coro: Callable[[], Awaitable[Any]] | None = None,
         mal_tag_sync_coro: Callable[[], Awaitable[Any]] | None = None,
         coverage_tag_sync_coro: Callable[[], Awaitable[Any]] | None = None,
+        automation_run_coro: Callable[[int], Awaitable[Any]] | None = None,
     ):
         self.settings = settings
         self.sync_service = sync_service
@@ -37,6 +39,7 @@ class SyncScheduler:
         self._mal_matcher_coro = mal_matcher_coro
         self._mal_tag_sync_coro = mal_tag_sync_coro
         self._coverage_tag_sync_coro = coverage_tag_sync_coro
+        self._automation_run_coro = automation_run_coro
         # Loop the AsyncIOScheduler binds to on its first (main-loop) start. reload()
         # is also called from sync endpoints (setup wizard, config) that FastAPI runs
         # in a threadpool worker where asyncio.get_running_loop() is unavailable, so it
@@ -140,6 +143,28 @@ class SyncScheduler:
                 id="coverage_tag_sync",
                 replace_existing=True,
             )
+        if self._automation_run_coro is not None:
+            for row in self._read_enabled_automations():
+                automation_id = int(row["id"])
+                cron = str(row["cron"])
+                tz = str(row["timezone"] or self.settings.scheduler_timezone)
+                try:
+                    trigger = CronTrigger.from_crontab(cron, timezone=tz)
+                except Exception:
+                    # Unlike sync modes there is no env-default cron to fall back to;
+                    # skip just this automation instead of killing scheduler start.
+                    log.warning(
+                        "invalid automation schedule; skipping",
+                        extra={"automation_id": automation_id, "cron": cron, "timezone": tz},
+                        exc_info=True,
+                    )
+                    continue
+                self.scheduler.add_job(
+                    self._make_automation_tick(automation_id),
+                    trigger,
+                    id=f"automation:{automation_id}",
+                    replace_existing=True,
+                )
         self.scheduler.add_job(
             self._run_webhook_drain_tick,
             "interval",
@@ -231,6 +256,18 @@ class SyncScheduler:
     def _read_mal_feature_flags(self) -> dict[str, bool]:
         with session_scope(self.session_factory) as session:
             return read_mal_feature_flags(session, self.settings)
+
+    def _read_enabled_automations(self) -> list[dict[str, Any]]:
+        with session_scope(self.session_factory) as session:
+            return read_enabled_automation_schedules(session)
+
+    def _make_automation_tick(self, automation_id: int) -> Callable[[], Awaitable[None]]:
+        async def _tick() -> None:
+            log.debug("scheduler tick: automation %s", automation_id)
+            assert self._automation_run_coro is not None
+            await self._automation_run_coro(automation_id)
+
+        return _tick
 
     async def _run_incremental_tick(self) -> None:
         log.debug("scheduler tick: incremental + webhook drain")

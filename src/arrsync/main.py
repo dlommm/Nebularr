@@ -36,6 +36,7 @@ from arrsync.services.alert_notifier import AlertNotifier
 from arrsync.mal.ingest_service import MalIngestService
 from arrsync.mal.matcher_service import MalMatcherService
 from arrsync.mal.tag_sync_service import MalTagSyncService
+from arrsync.services.automation_service import AutomationService
 from arrsync.services.coverage_tag_service import CoverageTagSyncService
 from arrsync.services.scheduler import SyncScheduler
 from arrsync.services.sync_service import SyncService
@@ -59,6 +60,7 @@ class AppState:
     mal_matcher_service: MalMatcherService | None = None
     mal_tag_sync_service: MalTagSyncService | None = None
     coverage_tag_service: CoverageTagSyncService | None = None
+    automation_service: AutomationService | None = None
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
     notification_task: asyncio.Task[None] | None = None
@@ -97,6 +99,10 @@ mal_ingest_service = MalIngestService(settings, session_factory_holder)
 mal_matcher_service = MalMatcherService(settings, session_factory_holder)
 mal_tag_sync_service = MalTagSyncService(settings, session_factory_holder)
 coverage_tag_service = CoverageTagSyncService(settings, session_factory_holder)
+alert_notifier = AlertNotifier(settings)
+automation_service = AutomationService(
+    settings, session_factory_holder, event_bus=event_bus, alert_notifier=alert_notifier
+)
 
 
 async def _cron_mal_ingest() -> None:
@@ -115,6 +121,10 @@ async def _cron_coverage_tag_sync() -> None:
     await coverage_tag_service.run(reason="cron")
 
 
+async def _cron_automation(automation_id: int) -> None:
+    await automation_service.run(automation_id, reason="cron")
+
+
 scheduler = SyncScheduler(
     settings,
     sync_service,
@@ -123,8 +133,8 @@ scheduler = SyncScheduler(
     mal_matcher_coro=_cron_mal_matcher,
     mal_tag_sync_coro=_cron_mal_tag_sync,
     coverage_tag_sync_coro=_cron_coverage_tag_sync,
+    automation_run_coro=_cron_automation,
 )
-alert_notifier = AlertNotifier(settings)
 
 app_state = AppState(
     settings=settings,
@@ -140,6 +150,7 @@ app_state = AppState(
     mal_matcher_service=mal_matcher_service,
     mal_tag_sync_service=mal_tag_sync_service,
     coverage_tag_service=coverage_tag_service,
+    automation_service=automation_service,
 )
 
 @asynccontextmanager

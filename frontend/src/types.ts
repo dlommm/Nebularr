@@ -498,3 +498,112 @@ export type AlertTestResult = {
   ok: boolean;
   error: string | null;
 };
+
+export type RuleAction = {
+  type: "search_missing" | "search_upgrade" | "tag" | "set_monitored";
+  label?: string | null;
+  value?: boolean | null;
+  when?: "non_conforming" | "conforming";
+};
+
+export type RuleParams = {
+  scope?: {
+    media?: "movies" | "series" | "both";
+    instances?: string[];
+    anime_only?: boolean;
+    series_type?: string | null;
+    genres_any?: string[];
+    tags_any?: string[];
+    monitored_only?: boolean;
+  };
+  require?: {
+    audio_language_any?: string[];
+    resolution_min?: number | null;
+    video_codec_any?: string[];
+    quality_any?: string[];
+  };
+  actions?: RuleAction[];
+  options?: { mal_dub_gate?: boolean; new_dub_only?: boolean };
+};
+
+export type AutomationRow = {
+  id: number;
+  name: string;
+  template_key: string;
+  params: RuleParams;
+  enabled: boolean;
+  dry_run: boolean;
+  cron: string;
+  timezone: string;
+  budget_per_run: number;
+  cooldown_days: number;
+  created_at: string;
+  updated_at: string;
+  last_run_id: number | null;
+  last_run_status: string | null;
+  last_run_started_at: string | null;
+  last_run_matched: number | null;
+  last_run_actions: number | null;
+};
+
+export type AutomationTemplate = {
+  key: string;
+  title: string;
+  description: string;
+  default_cron: string;
+  default_params: RuleParams;
+};
+
+export type AutomationRunRow = {
+  id: number;
+  automation_id: number;
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "partial" | "failed" | "dry_run";
+  matched_count: number;
+  actions_taken: number;
+  skipped_cooldown: number;
+  skipped_budget: number;
+  error_message: string | null;
+};
+
+export type AutomationRunDetail = AutomationRunRow & {
+  details: {
+    reason?: string;
+    dry_run?: boolean;
+    daily_cap_clamped?: boolean;
+    instances?: Record<
+      string,
+      Record<
+        string,
+        {
+          matched?: number;
+          searched?: number;
+          profile_warning?: string;
+          would_do?: { source_id: number; title: string; actions: string[] }[];
+        } & Record<string, unknown>
+      >
+    >;
+    errors?: { instance?: string; phase?: string; error?: string }[];
+  };
+};
+
+export type AutomationValidateResponse = {
+  valid: boolean;
+  error?: string;
+  next_fire_times?: string[];
+  match_preview?: Record<string, number> | null;
+  preview_note?: string;
+};
+
+export type AutomationPayload = {
+  name: string;
+  template_key: string;
+  params: RuleParams;
+  cron: string;
+  timezone?: string;
+  enabled?: boolean;
+  dry_run?: boolean;
+  budget_per_run?: number;
+  cooldown_days?: number;
+};

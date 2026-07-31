@@ -267,3 +267,69 @@ async def test_reload_from_threadpool_worker_rebinds_captured_loop() -> None:
         assert "incremental" in job_ids
     finally:
         scheduler.shutdown()
+
+
+class AutomationScheduleFakeSession(ScheduleFakeSession):
+    def __init__(self, schedule_rows=None, automation_rows=None) -> None:
+        super().__init__(schedule_rows)
+        self.automation_rows = automation_rows or []
+
+    def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
+        sql = " ".join(str(query).lower().split())
+        if "select id, cron, timezone from app.automation" in sql:
+            self.statements.append((sql, params))
+            return FakeResult(rows=self.automation_rows)
+        return super().execute(query, params)
+
+
+@pytest.mark.asyncio
+async def test_automation_jobs_registered_per_enabled_row() -> None:
+    async def automation_run(automation_id: int) -> None:
+        return None
+
+    session = AutomationScheduleFakeSession(
+        schedule_rows=[{"mode": "incremental", "cron": "*/30 * * * *"}],
+        automation_rows=[
+            {"id": 1, "cron": "0 6 */2 * *", "timezone": "UTC"},
+            {"id": 2, "cron": "15 6 * * *", "timezone": "Europe/Berlin"},
+        ],
+    )
+    scheduler = _build_scheduler(session, _build_settings(), automation_run_coro=automation_run)
+    scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert {"automation:1", "automation:2"} <= job_ids
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_bad_automation_cron_skips_that_job_only() -> None:
+    async def automation_run(automation_id: int) -> None:
+        return None
+
+    session = AutomationScheduleFakeSession(
+        automation_rows=[
+            {"id": 1, "cron": "not a cron", "timezone": "UTC"},
+            {"id": 2, "cron": "0 6 * * *", "timezone": "UTC"},
+        ],
+    )
+    scheduler = _build_scheduler(session, _build_settings(), automation_run_coro=automation_run)
+    scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert "automation:1" not in job_ids  # no sensible fallback cron exists — skip
+        assert "automation:2" in job_ids
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_no_automation_query_without_coro() -> None:
+    session = AutomationScheduleFakeSession()
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()  # must not issue the app.automation select (FakeSession would raise)
+    try:
+        assert not any("app.automation" in sql for sql, _ in session.statements)
+    finally:
+        scheduler.shutdown()

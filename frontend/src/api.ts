@@ -6,6 +6,12 @@ import type {
   SavedViewEntry,
   AuthConfigResponse,
   AuthStatusResponse,
+  AutomationRow,
+  AutomationTemplate,
+  AutomationRunRow,
+  AutomationRunDetail,
+  AutomationValidateResponse,
+  AutomationPayload,
   EpisodeRow,
   HealthzResponse,
   IntegrationRow,
@@ -34,7 +40,7 @@ import type {
   ClearStuckResponse,
 } from "./types";
 
-type HttpMethod = "GET" | "POST" | "PUT";
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 const AUTH_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/status"]);
 
@@ -429,4 +435,21 @@ export const api = {
       instance_name: params.instance_name ?? "",
       limit: params.limit ?? 5000,
     }),
+  automations: () => requestJson<{ automations: AutomationRow[] }>("/api/automations"),
+  automationTemplates: () =>
+    requestJson<{ templates: AutomationTemplate[] }>("/api/automations/templates"),
+  createAutomation: (payload: AutomationPayload) =>
+    requestJson<{ id: number }>("/api/automations", "POST", payload),
+  saveAutomation: (id: number, payload: AutomationPayload) =>
+    requestJson<{ status: string }>(`/api/automations/${id}`, "PUT", payload),
+  deleteAutomation: (id: number) =>
+    requestJson<{ status: string }>(`/api/automations/${id}`, "DELETE"),
+  validateAutomation: (payload: Partial<AutomationPayload>) =>
+    requestJson<AutomationValidateResponse>("/api/automations/validate", "POST", payload),
+  runAutomation: (id: number) =>
+    requestJson<{ status: string }>(`/api/automations/${id}/run`, "POST"),
+  automationRuns: (id: number) =>
+    requestJson<{ runs: AutomationRunRow[] }>(`/api/automations/${id}/runs`),
+  automationRun: (runId: number) =>
+    requestJson<AutomationRunDetail>(`/api/automations/runs/${runId}`),
 };

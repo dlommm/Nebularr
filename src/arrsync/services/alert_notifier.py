@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 _STATE_SEVERITY = {"ok": 0, "warning": 1, "critical": 2}
 
-ALERT_EVENT_TYPES = ("health", "sync_failure", "dead_letter")
+ALERT_EVENT_TYPES = ("health", "sync_failure", "dead_letter", "automation_failure")
 
 DEFAULT_ALERT_EVENTS: dict[str, bool] = {name: True for name in ALERT_EVENT_TYPES}
 
@@ -140,6 +140,12 @@ class AlertNotifier:
                 f"trigger={payload.get('trigger', '?')}, "
                 f"records={payload.get('records_processed', 0)})"
             )
+            if payload.get("error"):
+                message += f": {str(payload['error'])[:400]}"
+        elif event_type == "automation_failure":
+            title = "Nebularr automation failed"
+            name = payload.get("automation_name") or f"#{payload.get('automation_id', '?')}"
+            message = f"automation \"{name}\" (run #{payload.get('run_id', '?')}) failed"
             if payload.get("error"):
                 message += f": {str(payload['error'])[:400]}"
         else:
