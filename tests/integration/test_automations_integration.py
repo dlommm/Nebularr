@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy
 from sqlalchemy import text
 
-DATABASE_URL = os.getenv("NEBULARR_TEST_DATABASE_URL", "")
+from arrsync.migrations import run_migrations
+
+DATABASE_URL = os.getenv("NEBULARR_TEST_DATABASE_URL", "").strip()
 
 pytestmark = [
     pytest.mark.integration,
@@ -16,9 +19,12 @@ pytestmark = [
 ]
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def engine():
-    eng = sqlalchemy.create_engine(DATABASE_URL)
+    # Self-bootstrap like the sibling integration modules: pytest may collect
+    # this file first, so it cannot rely on another module having migrated.
+    run_migrations(SimpleNamespace(database_url=DATABASE_URL))  # type: ignore[arg-type]
+    eng = sqlalchemy.create_engine(DATABASE_URL, future=True)
     yield eng
     eng.dispose()
 

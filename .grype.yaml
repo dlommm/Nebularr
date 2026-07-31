@@ -6,3 +6,8 @@ ignore:
   # Python 3.15.0 (no 3.14.x backport), so the pinned 3.14-slim base stays
   # flagged until Debian backports it or the base moves to 3.15.
   - vulnerability: CVE-2026-15308
+  # TODO(2026-10): CPython binary CVEs; Grype lists the fix only in the
+  # 3.15.0b4 pre-release — no 3.14.x backport exists, so the digest-pinned
+  # 3.14-slim base cannot take the fix. Re-check on base image bumps.
+  - vulnerability: CVE-2026-11940
+  - vulnerability: CVE-2026-11972
