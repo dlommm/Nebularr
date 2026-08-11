@@ -2,6 +2,7 @@ DELETE /api/automations/{automation_id}
 GET /
 GET /api/auth/status
 GET /api/automations
+GET /api/automations/root-folders
 GET /api/automations/runs/{run_id}
 GET /api/automations/templates
 GET /api/automations/{automation_id}/runs
