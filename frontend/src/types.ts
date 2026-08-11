@@ -514,6 +514,7 @@ export type RuleParams = {
     series_type?: string | null;
     genres_any?: string[];
     tags_any?: string[];
+    root_folders_any?: string[];
     monitored_only?: boolean;
   };
   require?: {
@@ -544,6 +545,13 @@ export type AutomationRow = {
   last_run_started_at: string | null;
   last_run_matched: number | null;
   last_run_actions: number | null;
+};
+
+export type AutomationRootFolder = {
+  path: string;
+  media: "movies" | "series";
+  instances: string[];
+  item_count: number;
 };
 
 export type AutomationTemplate = {

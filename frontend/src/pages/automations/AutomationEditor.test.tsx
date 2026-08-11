@@ -12,6 +12,12 @@ vi.mock("../../api", async (importOriginal) => {
       ...actual.api,
       validateSchedule: vi.fn().mockResolvedValue({ valid: true, next_fire_times: [] }),
       validateAutomation: vi.fn(),
+      automationRootFolders: vi.fn().mockResolvedValue({
+        root_folders: [
+          { path: "/media/anime", media: "series", instances: ["sonarr"], item_count: 12 },
+          { path: "/media/movies", media: "movies", instances: ["radarr"], item_count: 40 },
+        ],
+      }),
     },
   };
 });
@@ -50,7 +56,9 @@ describe("AutomationEditor", () => {
     // about unrelated component internals.
     await waitFor(() => expect(api.validateSchedule).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByLabelText(/media/i), { target: { value: "both" } });
+    // Exact match: folder-picker rows are labelled with real paths like
+    // "/media/movies", which a /media/i regex would also hit.
+    fireEvent.change(screen.getByLabelText("Media"), { target: { value: "both" } });
 
     expect(onChange).toHaveBeenCalledTimes(1);
     const nextDraft = onChange.mock.calls[0][0] as AutomationDraft;
@@ -91,5 +99,48 @@ describe("AutomationEditor", () => {
     expect(nextDraft.params?.options?.new_dub_only).toBe(false);
     // mal_dub_gate started false and must stay false — unchecking must not force it true.
     expect(nextDraft.params?.options?.mal_dub_gate).toBe(false);
+  });
+
+  it("offers only the selected media's folders and scopes the rule to the picked one", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AutomationEditor
+        draft={MOVIES_DRAFT_WITH_CONFORMING_ACTION}
+        onChange={onChange}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        saving={false}
+      />,
+    );
+    await waitFor(() => expect(api.automationRootFolders).toHaveBeenCalled());
+
+    const folder = await screen.findByRole("checkbox", { name: /\/media\/movies/ });
+    // media is "movies", so the series-only folder must not be offered.
+    expect(screen.queryByRole("checkbox", { name: /\/media\/anime/ })).toBeNull();
+
+    await user.click(folder);
+
+    const calls = onChange.mock.calls;
+    const nextDraft = calls[calls.length - 1][0] as AutomationDraft;
+    expect(nextDraft.params?.scope?.root_folders_any).toEqual(["/media/movies"]);
+  });
+
+  it("keeps a saved folder that the library no longer reports", async () => {
+    const draft: AutomationDraft = {
+      ...MOVIES_DRAFT_WITH_CONFORMING_ACTION,
+      id: 3,
+      params: {
+        scope: { media: "movies", root_folders_any: ["/mnt/retired"] },
+        actions: [{ type: "search_missing" }],
+      },
+    };
+    render(
+      <AutomationEditor draft={draft} onChange={vi.fn()} onSave={vi.fn()} onCancel={vi.fn()} saving={false} />,
+    );
+    await waitFor(() => expect(api.automationRootFolders).toHaveBeenCalled());
+
+    const stale = await screen.findByRole("checkbox", { name: /\/mnt\/retired/ });
+    expect(stale).toBeChecked();
   });
 });

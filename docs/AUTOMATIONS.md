@@ -10,6 +10,15 @@ actions, driven entirely by warehouse data.
   requirements / actions), its own cron + timezone, `budget_per_run`,
   `cooldown_days`, `enabled`, `dry_run`. New automations start in **dry-run**:
   runs record what they *would* do; flip the switch per rule to go live.
+- **Scope**: which items a rule considers — media type, instances, anime-only,
+  genres, Arr tags, monitored-only, and **folder location**. Folder scoping
+  matches `warehouse.movie.path` / `warehouse.series.path` against the selected
+  root folders (an item at the folder itself, or anywhere beneath it). Episodes
+  inherit their series' folder. The picker's options come from
+  `GET /api/automations/root-folders`, derived from synced library paths rather
+  than a live Arr call — so it only ever offers folders that hold items, and a
+  saved folder the library no longer reports stays selected instead of being
+  silently dropped.
 - **Conformance**: an item conforms when its file satisfies every requirement
   (audio language, resolution floor, codec, quality name). Non-conforming items
   in scope receive the rule's actions.

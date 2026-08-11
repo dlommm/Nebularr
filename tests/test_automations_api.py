@@ -17,9 +17,14 @@ class AutomationApiFakeSession(FakeSession):
         super().__init__()
         self.automations: list[dict[str, Any]] = []
         self.raise_unique_violation_on_update = False
+        # Rows the root-folder discovery query returns, keyed by media.
+        self.root_folder_rows: dict[str, list[dict[str, Any]]] = {}
 
     def execute(self, query: Any, params: dict[str, Any] | None = None) -> FakeResult:
         sql = " ".join(str(query).lower().split())
+        if "as item_count" in sql:  # only the root-folder discovery query aggregates
+            media = "movies" if "from warehouse.movie" in sql else "series"
+            return FakeResult(rows=self.root_folder_rows.get(media, []))
         if "app.automation" in sql:
             self.statements.append((sql, params))
             if sql.startswith("insert into app.automation"):
@@ -80,6 +85,75 @@ def test_templates_catalog(client: TestClient) -> None:
     assert resp.status_code == 200
     keys = {t["key"] for t in resp.json()["templates"]}
     assert "anime-dub-enforcer" in keys and "custom" in keys
+
+
+def test_root_folders_empty_without_enabled_instances(client: TestClient) -> None:
+    resp = client.get("/api/automations/root-folders")
+    assert resp.status_code == 200
+    assert resp.json() == {"root_folders": []}
+
+
+def test_root_folders_merge_across_instances(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        automations_module.repo,
+        "list_enabled_integrations",
+        lambda session, source: (
+            [{"name": "radarr-main"}, {"name": "radarr-4k"}]
+            if source == "radarr"
+            else [{"name": "sonarr-main"}]
+        ),
+    )
+    session = client.app_state.session  # type: ignore[attr-defined]
+    session.root_folder_rows = {
+        "movies": [
+            {"instance_name": "radarr-main", "folder": "/media/movies", "item_count": 12},
+            {"instance_name": "radarr-4k", "folder": "/media/movies", "item_count": 3},
+        ],
+        "series": [{"instance_name": "sonarr-main", "folder": "/media/anime", "item_count": 7}],
+    }
+
+    body = client.get("/api/automations/root-folders").json()["root_folders"]
+
+    # One row per (path, media): the same folder on two Radarr instances is a
+    # single choice for the picker, with both instances and counts folded in.
+    assert body == [
+        {
+            "path": "/media/anime",
+            "media": "series",
+            "instances": ["sonarr-main"],
+            "item_count": 7,
+        },
+        {
+            "path": "/media/movies",
+            "media": "movies",
+            "instances": ["radarr-main", "radarr-4k"],
+            "item_count": 15,
+        },
+    ]
+
+
+def test_root_folder_scope_survives_create_and_validate(client: TestClient) -> None:
+    body = {
+        **VALID_BODY,
+        "params": {
+            **VALID_BODY["params"],
+            "scope": {"media": "both", "root_folders_any": ["/media/anime/", "/media/anime"]},
+        },
+    }
+    created = client.post("/api/automations", json=body)
+    assert created.status_code == 200, created.text
+    validated = client.post("/api/automations/validate", json=body).json()
+    assert validated["valid"] is True
+
+
+def test_blank_root_folder_is_not_a_validation_error(client: TestClient) -> None:
+    body = {
+        **VALID_BODY,
+        "params": {**VALID_BODY["params"], "scope": {"media": "both", "root_folders_any": ["  "]}},
+    }
+    assert client.post("/api/automations/validate", json=body).json()["valid"] is True
 
 
 def test_create_valid_automation_reloads_scheduler(client: TestClient) -> None:

@@ -22,6 +22,33 @@ from arrsync.services.automation_rules import TEMPLATES, compile_candidates, val
 _SOURCES_FOR_MEDIA = {"movies": ["radarr"], "series": ["sonarr"], "both": ["radarr", "sonarr"]}
 _ENTITY_FOR_SOURCE = {"radarr": "movie", "sonarr": "episode"}
 
+# Root folders are derived from synced library paths (the parent directory of each
+# item's own path) rather than fetched from Radarr/Sonarr: no live instance call is
+# needed, and the picker can only ever offer folders that actually hold items.
+_ROOT_FOLDER_SQL = {
+    "movies": r"""
+        select m.instance_name as instance_name,
+               coalesce(nullif(regexp_replace(m.path, '[/\\][^/\\]*$', ''), ''), '/') as folder,
+               count(*) as item_count
+        from warehouse.movie m
+        where not m.deleted
+          and coalesce(m.path, '') <> ''
+          and m.instance_name = any(:instances)
+        group by 1, 2
+    """,
+    "series": r"""
+        select s.instance_name as instance_name,
+               coalesce(nullif(regexp_replace(s.path, '[/\\][^/\\]*$', ''), ''), '/') as folder,
+               count(*) as item_count
+        from warehouse.series s
+        where not s.deleted
+          and coalesce(s.path, '') <> ''
+          and s.instance_name = any(:instances)
+        group by 1, 2
+    """,
+}
+_SOURCE_FOR_MEDIA = {"movies": "radarr", "series": "sonarr"}
+
 
 def _cron_or_400(cron: str, timezone: str) -> None:
     try:
@@ -92,6 +119,33 @@ def build_automations_router(app_state: Any) -> APIRouter:
                 }
                 for t in TEMPLATES.values()
             ]
+        }
+
+    @router.get("/api/automations/root-folders")
+    def list_root_folders() -> dict[str, Any]:
+        """Distinct library locations, for the Scope box's folder picker."""
+        folders: dict[tuple[str, str], dict[str, Any]] = {}
+        with app_state.session_scope() as session:
+            for media, source in _SOURCE_FOR_MEDIA.items():
+                instances = repo.list_enabled_integrations(session, source)
+                names = [str(inst["name"]) for inst in instances]
+                if not names:
+                    continue
+                rows = session.execute(
+                    text(_ROOT_FOLDER_SQL[media]), {"instances": names}
+                ).mappings()
+                for row in rows:
+                    path = str(row["folder"])
+                    entry = folders.setdefault(
+                        (media, path),
+                        {"path": path, "media": media, "instances": [], "item_count": 0},
+                    )
+                    entry["item_count"] += int(row["item_count"])
+                    instance = str(row["instance_name"])
+                    if instance not in entry["instances"]:
+                        entry["instances"].append(instance)
+        return {
+            "root_folders": sorted(folders.values(), key=lambda f: (f["path"], f["media"]))
         }
 
     @router.post("/api/automations/validate")

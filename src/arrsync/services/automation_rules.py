@@ -20,7 +20,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_MAX_FOLDER_LEN = 512
+
+
+def folder_separator(folder: str) -> str:
+    """Separator this path is written with — '\\' only for Windows-style paths."""
+    return "\\" if ("\\" in folder and "/" not in folder) else "/"
+
+
+def normalize_root_folder(raw: str) -> str:
+    """Canonicalize a root-folder path so '/media/anime/' and '/media/anime' scope
+    identically. Returns '' for blank input (callers drop those)."""
+    folder = (raw or "").strip()
+    if not folder:
+        return ""
+    if len(folder) > _MAX_FOLDER_LEN:
+        raise ValueError(f"root folder path exceeds {_MAX_FOLDER_LEN} characters")
+    trimmed = folder.rstrip("/\\")
+    return trimmed or folder_separator(folder)
+
+
+def root_folder_prefix(folder: str) -> str:
+    """The folder plus its trailing separator — the string a child path starts with.
+
+    Baking the separator into the bind is what keeps '/media/anime' from also
+    scoping '/media/anime-movies'.
+    """
+    sep = folder_separator(folder)
+    return folder if folder.endswith(sep) else folder + sep
 
 
 class RuleScope(BaseModel):
@@ -34,7 +63,20 @@ class RuleScope(BaseModel):
     series_type: str | None = None
     genres_any: list[str] = Field(default_factory=list, max_length=20)
     tags_any: list[str] = Field(default_factory=list, max_length=20)
+    # Library location filter, matched against warehouse.movie.path /
+    # warehouse.series.path. Empty = every folder.
+    root_folders_any: list[str] = Field(default_factory=list, max_length=40)
     monitored_only: bool = True
+
+    @field_validator("root_folders_any", mode="after")
+    @classmethod
+    def _normalize_root_folders(cls, value: list[str]) -> list[str]:
+        folders: list[str] = []
+        for raw in value:
+            folder = normalize_root_folder(raw)
+            if folder and folder not in folders:
+                folders.append(folder)
+        return folders
 
 
 class RuleRequire(BaseModel):
@@ -275,6 +317,28 @@ def _jsonb_text_any(expr: str, bind: str) -> str:
     )
 
 
+def _root_folder_fragment(alias: str) -> str:
+    """Scope to items living under any of the selected root folders.
+
+    ``starts_with`` rather than LIKE: a real library path can contain '_' or '%',
+    which LIKE would treat as wildcards, and there is nothing to escape here. The
+    equality arm catches an item stored directly at the root folder itself; a NULL
+    path yields NULL from both arms, so unpathed rows fall out of scope.
+    """
+    return (
+        f"({alias}.path = any(:root_folders)"
+        " or exists (select 1 from unnest(cast(:root_folder_prefixes as text[])) rfp"
+        f" where starts_with({alias}.path, rfp)))"
+    )
+
+
+def _root_folder_binds(folders: list[str]) -> dict[str, Any]:
+    return {
+        "root_folders": list(folders),
+        "root_folder_prefixes": [root_folder_prefix(folder) for folder in folders],
+    }
+
+
 def compile_candidates(
     params: RuleParams, entity: str, sense: str = "non_conforming"
 ) -> CompiledQuery:
@@ -316,6 +380,9 @@ def compile_candidates(
                 "coalesce(m.payload->'tags', '[]'::jsonb)) tg"
                 " where tg ~ '^[0-9]+$' and tg::int = any(:tag_ids))"
             )
+        if scope.root_folders_any:
+            where.append(_root_folder_fragment("m"))
+            binds.update(_root_folder_binds(scope.root_folders_any))
         if options.mal_dub_gate:
             # mal.warehouse_link is unique on (mal_id, instance_name, arr_entity),
             # NOT on warehouse_source_id — MAL can split one series/movie across
@@ -376,6 +443,11 @@ def compile_candidates(
                 "coalesce(s.payload->'tags', '[]'::jsonb)) tg"
                 " where tg ~ '^[0-9]+$' and tg::int = any(:tag_ids))"
             )
+        if scope.root_folders_any:
+            # Episodes have no path of their own; the series' folder is what the
+            # picker offers and what "location" means for a show.
+            where.append(_root_folder_fragment("s"))
+            binds.update(_root_folder_binds(scope.root_folders_any))
         if options.mal_dub_gate:
             # Same fan-out hazard as the movie branch above — one series can
             # be linked from multiple mal_ids — so gate via a lateral join

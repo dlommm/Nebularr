@@ -358,6 +358,62 @@ def test_conforming_sense_returns_movies_that_already_meet_bar(engine) -> None:
     assert got == {1}
 
 
+def test_root_folder_scope_respects_path_boundaries(engine) -> None:
+    """Prefix matching must stop at a separator, and must not treat '_' as a wildcard."""
+    from arrsync.services.automation_rules import compile_candidates, validate_params
+
+    params = validate_params(
+        "custom",
+        {
+            "scope": {
+                "media": "movies",
+                "monitored_only": True,
+                # Trailing separator on one of them: normalization must make the
+                # two forms behave identically.
+                "root_folders_any": ["/media/movies/", "/media/my_movies"],
+            },
+            "require": {"resolution_min": 1080},
+            "actions": [{"type": "search_missing"}],
+        },
+    )
+    compiled = compile_candidates(params, "movie")
+    instance = "itest-automations-folders"
+    with engine.begin() as conn:
+        conn.execute(text("delete from warehouse.movie where instance_name = :i"), {"i": instance})
+        conn.execute(
+            text(
+                """
+                insert into warehouse.movie
+                    (source_id, instance_name, title, monitored, path, payload,
+                     seen_at, last_seen_at, deleted)
+                values
+                    (1, :i, 'under folder', true, '/media/movies/Film (2020)',
+                     '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (2, :i, 'prefix-adjacent folder', true, '/media/movies-4k/Film (2021)',
+                     '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (3, :i, 'the folder itself', true, '/media/movies',
+                     '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (4, :i, 'nested under second folder', true, '/media/my_movies/Box/Film (2022)',
+                     '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (5, :i, 'underscore is not a wildcard', true, '/media/myXmovies/Film (2023)',
+                     '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (6, :i, 'no path yet', true, null,
+                     '{"hasFile": false}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(compiled.select_sql),
+            {**compiled.binds, "instance_name": instance, "cooldown_days": 7, "limit": 50},
+        ).mappings().all()
+    got = {int(r["source_id"]) for r in rows}
+    # 2 would leak in on a bare prefix compare, 5 on a LIKE with '_' unescaped,
+    # 6 has no path at all.
+    assert got == {1, 3, 4}
+
+
 def test_count_sql_and_count_all_sql_reflect_ledger_cooldown(engine) -> None:
     from arrsync.services.automation_rules import compile_candidates, validate_params
 

@@ -1,5 +1,11 @@
-import { useState } from "react";
-import type { AutomationPayload, AutomationValidateResponse, RuleAction, RuleParams } from "../../types";
+import { useEffect, useState } from "react";
+import type {
+  AutomationPayload,
+  AutomationRootFolder,
+  AutomationValidateResponse,
+  RuleAction,
+  RuleParams,
+} from "../../types";
 import { api } from "../../api";
 import { CronPreview } from "@/components/nebula/CronPreview";
 import { GlassCard } from "@/components/nebula/GlassCard";
@@ -37,6 +43,8 @@ export function AutomationEditor({
 }): JSX.Element {
   const [cronValid, setCronValid] = useState(true);
   const [preview, setPreview] = useState<AutomationValidateResponse | null>(null);
+  const [rootFolders, setRootFolders] = useState<AutomationRootFolder[] | null>(null);
+  const [rootFoldersFailed, setRootFoldersFailed] = useState(false);
   const params: RuleParams = draft.params ?? {};
   const scope = params.scope ?? {};
   const require = params.require ?? {};
@@ -56,6 +64,53 @@ export function AutomationEditor({
     patchParams({
       actions: actions.map((action) => (action.type === type ? { ...action, ...patch } : action)),
     });
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .automationRootFolders()
+      .then((res) => {
+        if (!cancelled) setRootFolders(res.root_folders);
+      })
+      .catch(() => {
+        if (!cancelled) setRootFoldersFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const media = scope.media ?? "both";
+  const selectedFolders = scope.root_folders_any ?? [];
+  // One row per distinct path: a folder holding both movies and series, or the
+  // same path on two instances, is one choice for the user, not three.
+  const folderChoices = Array.from(
+    (rootFolders ?? [])
+      .filter((folder) => media === "both" || folder.media === media)
+      .reduce((acc, folder) => {
+        const prior = acc.get(folder.path);
+        acc.set(
+          folder.path,
+          prior ? { ...prior, item_count: prior.item_count + folder.item_count } : folder,
+        );
+        return acc;
+      }, new Map<string, AutomationRootFolder>())
+      .values(),
+  );
+  // A saved rule can name a folder the library no longer reports (renamed mount,
+  // media switched, not yet synced). Show it checked rather than dropping it
+  // silently — the scope is still live on the backend either way.
+  const unlistedFolders = selectedFolders.filter(
+    (path) => !folderChoices.some((folder) => folder.path === path),
+  );
+  // With nothing to pick from, the picker degrades to the same comma-separated
+  // input the other scope fields use, so a rule can still be written before the
+  // first sync (or while the lookup is down).
+  const folderFreeText = rootFoldersFailed || (rootFolders !== null && folderChoices.length === 0);
+  const setFolders = (next: string[]): void =>
+    patchParams({ scope: { ...scope, root_folders_any: next } });
+  const toggleFolder = (path: string, checked: boolean): void =>
+    setFolders(checked ? [...selectedFolders, path] : selectedFolders.filter((p) => p !== path));
 
   const validate = async (): Promise<void> => {
     try {
@@ -166,6 +221,48 @@ export function AutomationEditor({
             <Input id="automation-tags" value={csv(scope.tags_any)}
               onChange={(e) => patchParams({ scope: { ...scope, tags_any: parseCsv(e.target.value) } })} />
           </div>
+          <div className="grid gap-1.5">
+            <Label className="text-xs text-muted-foreground">
+              Folder location (any of; none selected = every location)
+            </Label>
+            {rootFolders === null && !rootFoldersFailed ? (
+              <p className="text-xs text-muted-foreground">Loading library locations…</p>
+            ) : null}
+            {folderChoices.map((folder, index) => (
+              <div key={folder.path} className="flex items-center gap-2">
+                <Checkbox id={`automation-folder-${index}`}
+                  checked={selectedFolders.includes(folder.path)}
+                  onCheckedChange={(value) => toggleFolder(folder.path, value === true)} />
+                <Label htmlFor={`automation-folder-${index}`} className="text-sm font-normal">
+                  {folder.path}
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {folder.item_count} item{folder.item_count === 1 ? "" : "s"}
+                  </span>
+                </Label>
+              </div>
+            ))}
+            {(folderFreeText ? [] : unlistedFolders).map((path, index) => (
+              <div key={path} className="flex items-center gap-2">
+                <Checkbox id={`automation-folder-unlisted-${index}`} checked
+                  onCheckedChange={() => toggleFolder(path, false)} />
+                <Label htmlFor={`automation-folder-unlisted-${index}`} className="text-sm font-normal">
+                  {path}
+                  <span className="ml-2 text-xs text-muted-foreground">not in the synced library</span>
+                </Label>
+              </div>
+            ))}
+            {folderFreeText ? (
+              <>
+                <Input id="automation-root-folders" value={csv(selectedFolders)}
+                  onChange={(e) => setFolders(parseCsv(e.target.value))} />
+                <p className="text-xs text-muted-foreground">
+                  {rootFoldersFailed
+                    ? "Could not load library locations — enter folder paths, comma-separated."
+                    : "No synced locations to pick from — enter folder paths, comma-separated."}
+                </p>
+              </>
+            ) : null}
+          </div>
         </fieldset>
 
         <fieldset className="grid gap-2 rounded-lg border border-border p-3">
@@ -239,7 +336,7 @@ export function AutomationEditor({
                 onChange={(e) => patchAction("tag", { label: e.target.value })} />
             ) : null}
           </div>
-          {(scope.media ?? "both") === "movies" ? (
+          {media === "movies" ? (
             <div className="flex items-center gap-2">
               <Checkbox id="automation-unmonitor" checked={Boolean(monitorAction)}
                 onCheckedChange={() => toggleAction("set_monitored", { value: false, when: "conforming" })} />

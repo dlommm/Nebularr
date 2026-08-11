@@ -6,6 +6,7 @@ import type {
   SavedViewEntry,
   AuthConfigResponse,
   AuthStatusResponse,
+  AutomationRootFolder,
   AutomationRow,
   AutomationTemplate,
   AutomationRunRow,
@@ -438,6 +439,8 @@ export const api = {
   automations: () => requestJson<{ automations: AutomationRow[] }>("/api/automations"),
   automationTemplates: () =>
     requestJson<{ templates: AutomationTemplate[] }>("/api/automations/templates"),
+  automationRootFolders: () =>
+    requestJson<{ root_folders: AutomationRootFolder[] }>("/api/automations/root-folders"),
   createAutomation: (payload: AutomationPayload) =>
     requestJson<{ id: number }>("/api/automations", "POST", payload),
   saveAutomation: (id: number, payload: AutomationPayload) =>

@@ -148,6 +148,64 @@ def test_tags_scope_requires_runtime_tag_ids_bind() -> None:
     assert "tag_ids" not in compiled.binds  # resolved live per instance by the executor
 
 
+def test_root_folder_scope_binds_paths_and_prefixes() -> None:
+    params = validate_params(
+        "custom", _minimal(scope={"media": "movies", "root_folders_any": ["/media/movies/"]})
+    )
+    compiled = compile_candidates(params, "movie")
+    assert ":root_folders" in compiled.select_sql
+    assert "starts_with(m.path, rfp)" in compiled.select_sql
+    assert "/media/movies" not in compiled.select_sql  # value bound, never inlined
+    # Trailing separator normalized away; the prefix bind carries the separator so
+    # '/media/movies' can never scope '/media/movies-4k'.
+    assert compiled.binds["root_folders"] == ["/media/movies"]
+    assert compiled.binds["root_folder_prefixes"] == ["/media/movies/"]
+
+
+def test_root_folder_scope_matches_series_path_for_episodes() -> None:
+    params = validate_params(
+        "custom", _minimal(scope={"media": "series", "root_folders_any": ["/media/anime"]})
+    )
+    compiled = compile_candidates(params, "episode")
+    assert "starts_with(s.path, rfp)" in compiled.select_sql
+    assert "e.path" not in compiled.select_sql  # episodes carry no path of their own
+
+
+def test_root_folders_are_deduped_and_blanks_dropped() -> None:
+    params = validate_params(
+        "custom",
+        _minimal(
+            scope={
+                "media": "movies",
+                "root_folders_any": ["/media/movies", "/media/movies/", "  ", "/media/4k"],
+            }
+        ),
+    )
+    assert params.scope.root_folders_any == ["/media/movies", "/media/4k"]
+
+
+def test_windows_root_folder_keeps_backslash_separator() -> None:
+    params = validate_params(
+        "custom", _minimal(scope={"media": "movies", "root_folders_any": ["C:\\Media\\Movies\\"]})
+    )
+    compiled = compile_candidates(params, "movie")
+    assert compiled.binds["root_folders"] == ["C:\\Media\\Movies"]
+    assert compiled.binds["root_folder_prefixes"] == ["C:\\Media\\Movies\\"]
+
+
+def test_root_folder_too_long_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        validate_params(
+            "custom", _minimal(scope={"media": "movies", "root_folders_any": ["/" + "x" * 600]})
+        )
+
+
+def test_no_root_folder_scope_leaves_sql_and_binds_untouched() -> None:
+    compiled = compile_candidates(validate_params("custom", _minimal()), "movie")
+    assert "root_folders" not in compiled.select_sql
+    assert "root_folders" not in compiled.binds
+
+
 def test_tag_only_rule_has_no_cooldown_or_ledger() -> None:
     params = validate_params(
         "custom",
