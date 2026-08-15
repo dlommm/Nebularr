@@ -47,6 +47,23 @@ whitelist-only SQL compiler — user input is bind values, never SQL text.
 **Note:** Tag actions with `when=conforming` are rejected by validation in v1
 (not supported for live-state reconciles; use `when=non_conforming` instead).
 
+## WebUI
+
+The page is a list of rules; a single automation is worked on in a right-hand
+sheet, so the list never reflows underneath you. Each row carries one primary
+action (**Run now**) with the rest behind an overflow menu.
+
+- The editor leads with the rule stated as a sentence ("Every Saturday at 05:00,
+  look at monitored movies — for anything that isn't 1080p or better, search for
+  an upgrade") and validates live, reporting how many items it would act on
+  right now. `frontend/src/pages/automations/automationSummary.ts` owns that
+  phrasing; anything it cannot phrase safely (an exotic cron) falls back to the
+  raw value rather than guessing.
+- **Go live** and **Delete** confirm first. Leaving dry-run is the only control
+  that converts a simulation into real indexer traffic; every other toggle is
+  reversible and stays one click.
+- Templates appear inside the sheet when creating, not permanently on the page.
+
 ## Operations
 
 - Runs are recorded in `app.automation_run`; per-item outcomes live in `details`.

@@ -4,10 +4,8 @@ import { api } from "../../api";
 import { queryKeys } from "../../lib/queryKeys";
 import { fmtDate } from "../../hooks";
 import type { AutomationRow } from "../../types";
-import { GlassCard } from "@/components/nebula/GlassCard";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/nebula/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function RunDetail({ runId }: { runId: number }): JSX.Element {
@@ -61,60 +59,49 @@ function RunDetail({ runId }: { runId: number }): JSX.Element {
   );
 }
 
-export function AutomationRunHistory({
-  automation,
-  onClose,
-}: {
-  automation: AutomationRow;
-  onClose: () => void;
-}): JSX.Element {
+/** Renders inside the automation sheet, which supplies the frame, title and
+ *  close affordance — hence no card wrapper or "Close history" button here. */
+export function AutomationRunHistory({ automation }: { automation: AutomationRow }): JSX.Element {
   const runs = useQuery({
     queryKey: queryKeys.automationRuns(automation.id),
     queryFn: () => api.automationRuns(automation.id),
   });
   const [openRunId, setOpenRunId] = useState<number | null>(null);
   return (
-    <GlassCard>
-      <CardHeader>
-        <CardTitle>Run history: {automation.name}</CardTitle>
-        <CardDescription>
-          Dry-run rows list what the rule would have done; live rows list what it did.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {runs.isLoading ? <Skeleton className="h-20 w-full" /> : null}
-        {runs.data && runs.data.runs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No runs yet.</p>
-        ) : null}
-        {(runs.data?.runs ?? []).map((run) => (
-          <div key={run.id} className="rounded-lg border border-border bg-muted/40 p-3">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge variant={run.status === "failed" ? "destructive" : "secondary"}>{run.status}</Badge>
-              <span>{fmtDate(run.started_at)}</span>
-              <span className="text-muted-foreground">
-                matched {run.matched_count}, actions {run.actions_taken}, cooldown-skipped{" "}
-                {run.skipped_cooldown}, budget-skipped {run.skipped_budget}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="ml-auto"
-                onClick={() => setOpenRunId(openRunId === run.id ? null : run.id)}
-              >
-                {openRunId === run.id ? "Hide detail" : "Detail"}
-              </Button>
-            </div>
-            {run.error_message ? (
-              <p role="alert" className="mt-1 text-sm text-destructive">{run.error_message}</p>
-            ) : null}
-            {openRunId === run.id ? <RunDetail runId={run.id} /> : null}
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Dry-run rows list what the rule would have done; live rows list what it did.
+      </p>
+      {runs.isLoading ? <Skeleton className="h-20 w-full" /> : null}
+      {runs.data && runs.data.runs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No runs yet.</p>
+      ) : null}
+      {(runs.data?.runs ?? []).map((run) => (
+        <div key={run.id} className="rounded-lg border border-border bg-muted/40 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <StatusBadge status={run.status} />
+            <span>{fmtDate(run.started_at)}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => setOpenRunId(openRunId === run.id ? null : run.id)}
+            >
+              {openRunId === run.id ? "Hide detail" : "Detail"}
+            </Button>
           </div>
-        ))}
-        <Button type="button" size="sm" variant="secondary" onClick={onClose}>
-          Close history
-        </Button>
-      </CardContent>
-    </GlassCard>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {run.matched_count} matched · {run.actions_taken} action
+            {run.actions_taken === 1 ? "" : "s"} · {run.skipped_cooldown} skipped (cooldown) ·{" "}
+            {run.skipped_budget} skipped (budget)
+          </p>
+          {run.error_message ? (
+            <p role="alert" className="mt-1 text-sm text-destructive">{run.error_message}</p>
+          ) : null}
+          {openRunId === run.id ? <RunDetail runId={run.id} /> : null}
+        </div>
+      ))}
+    </div>
   );
 }

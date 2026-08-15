@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { AutomationList } from "./AutomationList";
 import type { AutomationRow } from "../../types";
 
@@ -23,37 +24,60 @@ const ROW: AutomationRow = {
   last_run_actions: 0,
 };
 
+function renderList(overrides: Partial<React.ComponentProps<typeof AutomationList>> = {}) {
+  const props = {
+    automations: [ROW],
+    onEdit: vi.fn(),
+    onRun: vi.fn(),
+    onDelete: vi.fn(),
+    onToggle: vi.fn(),
+    onHistory: vi.fn(),
+    onCreate: vi.fn(),
+    ...overrides,
+  };
+  render(<AutomationList {...props} />);
+  return props;
+}
+
 describe("AutomationList", () => {
-  it("shows empty state without rows", () => {
-    render(
-      <AutomationList
-        automations={[]}
-        onEdit={vi.fn()}
-        onRun={vi.fn()}
-        onDelete={vi.fn()}
-        onToggle={vi.fn()}
-        onHistory={vi.fn()}
-      />,
-    );
+  it("shows an empty state that offers the primary action", () => {
+    const props = renderList({ automations: [] });
     expect(screen.getByText(/no automations yet/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /new automation/i }));
+    expect(props.onCreate).toHaveBeenCalled();
   });
 
-  it("renders row with dry-run badge and fires onRun", () => {
-    const onRun = vi.fn();
-    render(
-      <AutomationList
-        automations={[ROW]}
-        onEdit={vi.fn()}
-        onRun={onRun}
-        onDelete={vi.fn()}
-        onToggle={vi.fn()}
-        onHistory={vi.fn()}
-      />,
-    );
+  it("renders the row with its dry-run badge and fires onRun", () => {
+    const props = renderList();
     expect(screen.getByText("dub hunt")).toBeInTheDocument();
     expect(screen.getByText(/dry run/i)).toBeInTheDocument();
-    expect(screen.getByText(/matched 12/i)).toBeInTheDocument();
+    expect(screen.getByText(/12 matched/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /run now/i }));
-    expect(onRun).toHaveBeenCalledWith(ROW);
+    expect(props.onRun).toHaveBeenCalledWith(ROW);
+  });
+
+  it("phrases the schedule in English instead of showing the raw crontab", () => {
+    renderList();
+    expect(screen.getByText(/every 2 days at 06:00/i)).toBeInTheDocument();
+    expect(screen.queryByText(/0 6 \*\/2 \* \*/)).toBeNull();
+  });
+
+  it("keeps only one action in the row and puts the rest behind the overflow menu", async () => {
+    // The point of the redesign: Delete and "Go live" must not sit at the same
+    // visual weight as Run now.
+    const props = renderList();
+    expect(screen.queryByRole("button", { name: /^delete/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /go live/i })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /more actions for dub hunt/i }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+    expect(props.onDelete).toHaveBeenCalledWith(ROW);
+  });
+
+  it("routes going live through onToggle so the page can confirm it", async () => {
+    const props = renderList();
+    await userEvent.click(screen.getByRole("button", { name: /more actions for dub hunt/i }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /go live/i }));
+    expect(props.onToggle).toHaveBeenCalledWith(ROW, { dry_run: false });
   });
 });
