@@ -45,40 +45,42 @@ export function AutomationsPage(): JSX.Element {
     await queryClient.invalidateQueries({ queryKey: queryKeys.automations });
   };
 
+  // Validity belongs to the rule being edited, not to the page — without this
+  // reset a rule left invalid would disable Save on the *next* rule opened,
+  // until its own validation round-trip came back.
+  const openEditor = (draft: AutomationDraft): void => {
+    setValid(true);
+    setSheet({ kind: "editor", draft });
+  };
+
   const useTemplate = (template: AutomationTemplate): void => {
     const existingNames = new Set((automations.data?.automations ?? []).map((row) => row.name));
     const seededName = template.key === "custom" || existingNames.has(template.title) ? "" : template.title;
-    setSheet({
-      kind: "editor",
-      draft: {
-        name: seededName,
-        template_key: template.key,
-        params: template.default_params,
-        cron: template.default_cron,
-        timezone: "UTC",
-        enabled: false,
-        dry_run: true,
-        budget_per_run: 10,
-        cooldown_days: 7,
-      },
+    openEditor({
+      name: seededName,
+      template_key: template.key,
+      params: template.default_params,
+      cron: template.default_cron,
+      timezone: "UTC",
+      enabled: false,
+      dry_run: true,
+      budget_per_run: 10,
+      cooldown_days: 7,
     });
   };
 
   const editRow = (row: AutomationRow): void =>
-    setSheet({
-      kind: "editor",
-      draft: {
-        id: row.id,
-        name: row.name,
-        template_key: row.template_key,
-        params: row.params,
-        cron: row.cron,
-        timezone: row.timezone,
-        enabled: row.enabled,
-        dry_run: row.dry_run,
-        budget_per_run: row.budget_per_run,
-        cooldown_days: row.cooldown_days,
-      },
+    openEditor({
+      id: row.id,
+      name: row.name,
+      template_key: row.template_key,
+      params: row.params,
+      cron: row.cron,
+      timezone: row.timezone,
+      enabled: row.enabled,
+      dry_run: row.dry_run,
+      budget_per_run: row.budget_per_run,
+      cooldown_days: row.cooldown_days,
     });
 
   const saveDraft = async (draft: AutomationDraft): Promise<void> => {

@@ -134,6 +134,26 @@ describe("AutomationsPage", () => {
     expect(mockedApi.saveAutomation.mock.calls[0][1]).toMatchObject({ dry_run: true });
   });
 
+  it("does not carry one rule's invalidity over to the next rule opened", async () => {
+    mockedApi.validateAutomation.mockResolvedValue({ valid: false, error: "bad rule" });
+    renderPage();
+    await openRowMenu();
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^edit$/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save changes/i })).toBeDisabled(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    // Hold the next rule's verdict outstanding, so Save's state can only come
+    // from the reset — not from a fresh validation result racing the assertion.
+    mockedApi.validateAutomation.mockReturnValue(new Promise(() => {}));
+    await openRowMenu();
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^edit$/i }));
+
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeEnabled();
+  });
+
   it("opens the template picker in the sheet instead of stacking it on the page", async () => {
     renderPage();
     // Nothing template-ish is mounted until the user asks to create one.
