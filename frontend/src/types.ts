@@ -516,9 +516,17 @@ export type RuleParams = {
     tags_any?: string[];
     root_folders_any?: string[];
     monitored_only?: boolean;
+    /** Sonarr series status; rejected by the backend for media="movies". */
+    series_status_any?: ("continuing" | "ended" | "upcoming" | "deleted")[];
+    /** Season 0. Defaults true server-side, to preserve pre-existing rules. */
+    include_specials?: boolean;
+    /** Count every aired episode, not just monitored ones (the series itself is
+     *  still gated by monitored_only). What a completeness check wants. */
+    include_unmonitored_episodes?: boolean;
   };
   require?: {
     audio_language_any?: string[];
+    subtitle_language_any?: string[];
     resolution_min?: number | null;
     video_codec_any?: string[];
     quality_any?: string[];
@@ -589,6 +597,10 @@ export type AutomationRunDetail = AutomationRunRow & {
           searched?: number;
           profile_warning?: string;
           would_do?: { source_id: number; title: string; actions: string[] }[];
+          /** Why items missed the spec: reason code -> item count. */
+          failure_reasons?: Record<string, number>;
+          /** Worst offenders, already bounded and sorted server-side. */
+          failure_worst?: { title: string; items: number; reasons: string[] }[];
         } & Record<string, unknown>
       >
     >;

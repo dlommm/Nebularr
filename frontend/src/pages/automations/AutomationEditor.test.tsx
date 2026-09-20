@@ -81,7 +81,10 @@ describe("AutomationEditor", () => {
     expect(await screen.findByText(/needs at least one require clause/i)).toBeInTheDocument();
   });
 
-  it("drops the movies-only conforming action when media leaves movies", async () => {
+  it("keeps a conforming action when media leaves movies", async () => {
+    // It used to be stripped here, because the backend only supported
+    // when=conforming for movies. Series completeness is exactly that action
+    // applied to a whole show, so stripping it now would delete the user's rule.
     const onChange = await renderEditor({
       ...DRAFT,
       params: {
@@ -90,12 +93,78 @@ describe("AutomationEditor", () => {
       },
     });
 
-    fireEvent.change(screen.getByLabelText("Media"), { target: { value: "both" } });
+    fireEvent.change(screen.getByLabelText("Media"), { target: { value: "series" } });
 
     const next = onChange.mock.calls[0][0] as AutomationDraft;
-    expect(next.params?.scope?.media).toBe("both");
-    expect(next.params?.actions ?? []).not.toContainEqual(
-      expect.objectContaining({ when: "conforming" }),
+    expect(next.params?.scope?.media).toBe("series");
+    expect(next.params?.actions ?? []).toContainEqual(
+      expect.objectContaining({ type: "set_monitored", when: "conforming" }),
+    );
+  });
+
+  it("drops the series-only status filter when media becomes movies", async () => {
+    // The asymmetry that remains: the backend rejects series_status_any for
+    // movies, so leaving it behind would make the rule unsaveable with no
+    // visible cause (the control it came from is no longer on screen).
+    const onChange = await renderEditor({
+      ...DRAFT,
+      params: {
+        scope: { media: "series", series_status_any: ["ended"] },
+        actions: [{ type: "tag", label: "ready", when: "conforming" }],
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText("Media"), { target: { value: "movies" } });
+
+    const next = onChange.mock.calls[0][0] as AutomationDraft;
+    expect(next.params?.scope?.media).toBe("movies");
+    expect(next.params?.scope?.series_status_any).toEqual([]);
+  });
+
+  it("offers the series completeness controls for a series scope", async () => {
+    await renderEditor({
+      ...DRAFT,
+      params: { scope: { media: "series" }, actions: [{ type: "tag", label: "x" }] },
+    });
+    // byRole, not byLabelText: these labels carry an explanatory second line, so
+    // the label text matches more than one node.
+    expect(screen.getByRole("checkbox", { name: /ignore specials/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /count episodes you have unmonitored/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /filter series status/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the series completeness controls for a movies scope", async () => {
+    // A separate render rather than switching the select: the editor is fully
+    // controlled, so a change event only reports upward — the parent owns what
+    // media the component is then re-rendered with.
+    await renderEditor({
+      ...DRAFT,
+      params: { scope: { media: "movies" }, actions: [{ type: "tag", label: "x" }] },
+    });
+    expect(screen.queryByRole("checkbox", { name: /ignore specials/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /filter series status/i })).toBeNull();
+  });
+
+  it("lets a tag action target the passing set", async () => {
+    const onChange = await renderEditor({
+      ...DRAFT,
+      params: {
+        scope: { media: "series" },
+        actions: [{ type: "tag", label: "ready-to-unmonitor" }],
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText("Tag which items"), {
+      target: { value: "conforming" },
+    });
+
+    const next = onChange.mock.calls[0][0] as AutomationDraft;
+    expect(next.params?.actions?.[0]).toEqual(
+      expect.objectContaining({ type: "tag", when: "conforming" }),
     );
   });
 
@@ -149,5 +218,29 @@ describe("AutomationEditor", () => {
 
     const stale = await screen.findByRole("menuitemcheckbox", { name: "/mnt/retired" });
     expect(stale).toBeInTheDocument();
+  });
+
+  it("edits only the tag action its control is bound to", async () => {
+    // A rule may legitimately carry both a conforming and a non-conforming tag;
+    // the editor shows one control, so patching every match would collapse the
+    // two labels into one and silently destroy the second rule half.
+    const onChange = await renderEditor({
+      ...DRAFT,
+      params: {
+        scope: { media: "series" },
+        actions: [
+          { type: "tag", label: "needs-fix", when: "non_conforming" },
+          { type: "tag", label: "ready-to-unmonitor", when: "conforming" },
+        ],
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText("Tag label"), { target: { value: "renamed" } });
+
+    const next = onChange.mock.calls[0][0] as AutomationDraft;
+    expect(next.params?.actions).toEqual([
+      { type: "tag", label: "renamed", when: "non_conforming" },
+      { type: "tag", label: "ready-to-unmonitor", when: "conforming" },
+    ]);
   });
 });

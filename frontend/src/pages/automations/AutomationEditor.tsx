@@ -94,10 +94,20 @@ export function AutomationEditor({
         : [...actions, { type, when: "non_conforming" as const, ...extra }],
     });
   };
-  const patchAction = (type: RuleAction["type"], patch: Partial<RuleAction>): void =>
+  /** Patches only the FIRST action of this type — which is the one the editor's
+   *  single control is bound to. Patching every match would rewrite a sibling the
+   *  UI cannot show: a rule may carry a conforming and a non-conforming tag at
+   *  once (valid, and useful — "tag the finished shows, tag what needs fixing"),
+   *  and editing the label would otherwise collapse both onto one label. */
+  const patchAction = (type: RuleAction["type"], patch: Partial<RuleAction>): void => {
+    const target = actions.findIndex((action) => action.type === type);
+    if (target === -1) return;
     patchParams({
-      actions: actions.map((action) => (action.type === type ? { ...action, ...patch } : action)),
+      actions: actions.map((action, index) =>
+        index === target ? { ...action, ...patch } : action,
+      ),
     });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -219,12 +229,16 @@ export function AutomationEditor({
             value={media}
             onChange={(e) => {
               const next = e.target.value as "movies" | "series" | "both";
-              // The "conforming" set_monitored action is movie-only (the backend
-              // rejects it otherwise); drop any stale one in the same patch so
-              // leaving movies can never strand a hidden, invalid action.
+              // Conforming actions now work for series too (a whole-show
+              // completeness check), so nothing is stripped here any more. The
+              // remaining asymmetry runs the other way: series status is a
+              // series-only filter the backend rejects for movies, so drop it in
+              // the same patch rather than stranding a rule that cannot save.
               patchParams({
-                scope: { ...scope, media: next },
-                actions: next === "movies" ? actions : actions.filter((a) => a.when !== "conforming"),
+                scope:
+                  next === "movies"
+                    ? { ...scope, media: next, series_status_any: [] }
+                    : { ...scope, media: next },
               });
             }}
           >
@@ -248,6 +262,65 @@ export function AutomationEditor({
             </div>
           ))}
         </div>
+        {media !== "movies" ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Series status</Label>
+              <MultiSelectFilter
+                label="series status"
+                options={["ended", "continuing", "upcoming"]}
+                selected={scope.series_status_any ?? []}
+                onChange={(next) =>
+                  patchScope({
+                    series_status_any: next as NonNullable<
+                      NonNullable<RuleParams["scope"]>["series_status_any"]
+                    >,
+                  })
+                }
+              />
+              <span className="text-xs text-muted-foreground">
+                {(scope.series_status_any ?? []).length === 0
+                  ? "any status"
+                  : "only these"}
+              </span>
+            </div>
+            <div className="grid gap-2">
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="automation-no-specials"
+                  checked={!(scope.include_specials ?? true)}
+                  onCheckedChange={(v) => patchScope({ include_specials: v !== true })}
+                />
+                <Label htmlFor="automation-no-specials" className="text-sm font-normal">
+                  Ignore specials (season 0)
+                  <span className="block text-xs text-muted-foreground">
+                    A missing special is the most common reason a finished show never
+                    counts as complete.
+                  </span>
+                </Label>
+              </div>
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="automation-count-unmonitored-eps"
+                  checked={scope.include_unmonitored_episodes ?? false}
+                  onCheckedChange={(v) =>
+                    patchScope({ include_unmonitored_episodes: v === true })
+                  }
+                />
+                <Label
+                  htmlFor="automation-count-unmonitored-eps"
+                  className="text-sm font-normal"
+                >
+                  Count episodes you have unmonitored
+                  <span className="block text-xs text-muted-foreground">
+                    Otherwise a gap you unmonitored stops counting as a gap. Leave on
+                    for “do I have every episode” rules.
+                  </span>
+                </Label>
+              </div>
+            </div>
+          </>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <Label className="text-xs text-muted-foreground">Folder location</Label>
           <MultiSelectFilter
@@ -304,6 +377,14 @@ export function AutomationEditor({
             />
           </div>
           <TokenField
+            id="automation-subs"
+            label="Subtitle language"
+            hint="For libraries with no dub: keep the original audio and require these subs."
+            values={require.subtitle_language_any ?? []}
+            onChange={(next) => patchRequire({ subtitle_language_any: next })}
+            placeholder="eng, english…"
+          />
+          <TokenField
             id="automation-codecs"
             label="Video codec"
             values={require.video_codec_any ?? []}
@@ -349,26 +430,43 @@ export function AutomationEditor({
           />
           <Label htmlFor="automation-tag" className="text-sm font-normal">Apply tag</Label>
           {tagAction ? (
-            <Input
-              className="h-8 w-48"
-              aria-label="Tag label"
-              value={tagAction.label ?? ""}
-              onChange={(e) => patchAction("tag", { label: e.target.value })}
-            />
+            <>
+              <Input
+                className="h-8 w-48"
+                aria-label="Tag label"
+                value={tagAction.label ?? ""}
+                onChange={(e) => patchAction("tag", { label: e.target.value })}
+              />
+              <select
+                className={SELECT_CLASS}
+                aria-label="Tag which items"
+                value={tagAction.when ?? "non_conforming"}
+                onChange={(e) =>
+                  patchAction("tag", { when: e.target.value as RuleAction["when"] })
+                }
+              >
+                <option value="non_conforming">to what falls short</option>
+                <option value="conforming">
+                  {media === "series" ? "to shows fully in spec" : "to what is fully in spec"}
+                </option>
+              </select>
+            </>
           ) : null}
         </div>
-        {media === "movies" ? (
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="automation-unmonitor"
-              checked={Boolean(monitorAction)}
-              onCheckedChange={() => toggleAction("set_monitored", { value: false, when: "conforming" })}
-            />
-            <Label htmlFor="automation-unmonitor" className="text-sm font-normal">
-              Unmonitor movies once they conform
-            </Label>
-          </div>
-        ) : null}
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="automation-unmonitor"
+            checked={Boolean(monitorAction)}
+            onCheckedChange={() => toggleAction("set_monitored", { value: false, when: "conforming" })}
+          />
+          <Label htmlFor="automation-unmonitor" className="text-sm font-normal">
+            {media === "series"
+              ? "Unmonitor a show once every aired episode is in spec"
+              : media === "movies"
+                ? "Unmonitor movies once they conform"
+                : "Unmonitor once everything is in spec"}
+          </Label>
+        </div>
         <div className="flex items-center gap-2">
           <Checkbox
             id="automation-dub-gate"

@@ -102,11 +102,20 @@ function mediaNoun(media: string | undefined): string {
   return "movies and series";
 }
 
-/** "monitored anime movies and series in /media/anime tagged keep" */
+const STATUS_WORDS: Record<string, string> = {
+  ended: "ended",
+  continuing: "still-running",
+  upcoming: "upcoming",
+  deleted: "deleted",
+};
+
+/** "monitored ended anime series under /media/anime tagged keep" */
 export function describeScope(scope: RuleParams["scope"]): string {
   const s = scope ?? {};
   const qualifiers: string[] = [];
   if (s.monitored_only ?? true) qualifiers.push("monitored");
+  const statuses = (s.series_status_any ?? []).map((st) => STATUS_WORDS[st]).filter(Boolean);
+  if (statuses.length > 0) qualifiers.push(joinList(statuses));
   if (s.anime_only) qualifiers.push("anime");
 
   let phrase = `${qualifiers.join(" ")} ${mediaNoun(s.media)}`.trim();
@@ -132,6 +141,8 @@ export function describeRequirements(require: RuleParams["require"]): string | n
   const clauses: string[] = [];
   const langs = r.audio_language_any ?? [];
   if (langs.length > 0) clauses.push(`${joinList(langs)} audio`);
+  const subs = r.subtitle_language_any ?? [];
+  if (subs.length > 0) clauses.push(`${joinList(subs)} subtitles`);
   if (r.resolution_min != null) clauses.push(`${r.resolution_min}p or better`);
   const codecs = r.video_codec_any ?? [];
   if (codecs.length > 0) clauses.push(`${joinList(codecs)} video`);
@@ -140,27 +151,37 @@ export function describeRequirements(require: RuleParams["require"]): string | n
   return clauses.length === 0 ? null : joinList(clauses);
 }
 
-function describeAction(action: RuleAction): string | null {
+/**
+ * `subject` is what the action lands on. For a series rule that is the show, not
+ * the episode the fault was found on — saying "it" there would describe an
+ * episode-level action the backend never performs.
+ */
+function describeAction(action: RuleAction, subject: string): string | null {
   switch (action.type) {
     case "search_missing":
       return "search for the missing file";
     case "search_upgrade":
       return "search for an upgrade";
     case "tag":
-      return action.label ? `tag it “${action.label}”` : "tag it";
+      return action.label ? `tag ${subject} “${action.label}”` : `tag ${subject}`;
     case "set_monitored":
-      if (action.when === "conforming") {
-        return action.value ? "monitor it once it conforms" : "unmonitor it once it conforms";
-      }
-      return action.value ? "monitor it" : "unmonitor it";
+      // The "once it conforms" qualifier is dropped here: the sentence that folds
+      // these in already opens with the conforming condition, so repeating it read
+      // as two separate conditions.
+      return action.value ? `monitor ${subject}` : `unmonitor ${subject}`;
     default:
       return null;
   }
 }
 
 /** "search for an upgrade and tag it “needs-upgrade”" */
-export function describeActions(actions: RuleAction[] | undefined): string {
-  const phrases = (actions ?? []).map(describeAction).filter((p): p is string => p !== null);
+export function describeActions(
+  actions: RuleAction[] | undefined,
+  subject = "it",
+): string {
+  const phrases = (actions ?? [])
+    .map((action) => describeAction(action, subject))
+    .filter((p): p is string => p !== null);
   return phrases.length === 0 ? "do nothing" : joinList(phrases);
 }
 
@@ -187,15 +208,38 @@ export function summarizeAutomation(input: {
 
   const lead = schedule ? `${sentenceCase(schedule)}, look at ${scope}` : `Looks at ${scope}`;
 
+  // A series action always lands on the show, because the conformance question is
+  // asked of every aired episode and answered about the series.
+  const isSeries = (params.scope?.media ?? "both") === "series";
+  const subject = isSeries ? "the show" : "it";
+
   const clauses: string[] = [];
   if (onNonConforming.length > 0) {
-    const target = requirements ? `anything that isn't ${requirements}` : "anything missing a file";
-    clauses.push(`for ${target}, ${describeActions(onNonConforming)}`);
+    const target = requirements
+      ? `anything that isn't ${requirements}`
+      : isSeries
+        ? "any show missing an episode"
+        : "anything missing a file";
+    clauses.push(`for ${target}, ${describeActions(onNonConforming, subject)}`);
   }
-  if (onConforming.length > 0) clauses.push(describeActions(onConforming));
+  if (onConforming.length > 0) {
+    // Stated as the completeness condition it actually compiles to, not as "once
+    // it conforms" — for a series that is an every-aired-episode claim, and the
+    // whole point of the rule is that it is not a per-episode one.
+    const condition = requirements
+      ? isSeries
+        ? `where every aired episode is ${requirements}`
+        : `where the file is already ${requirements}`
+      : isSeries
+        ? "where no aired episode is missing"
+        : "where the file is already there";
+    clauses.push(`${condition}, ${describeActions(onConforming, subject)}`);
+  }
 
   if (clauses.length === 0) return `${lead}.`;
-  return `${lead} — ${joinList(clauses)}.`;
+  // Semicolon, not "and": the two clauses describe opposite sets, and "…search for
+  // an upgrade and where the file is already 1080p…" reads as one run-on condition.
+  return `${lead} — ${clauses.join("; ")}.`;
 }
 
 function sentenceCase(value: string): string {
@@ -215,4 +259,44 @@ export function describeLimits(input: {
   const budget = input.budget_per_run ?? 10;
   const cooldown = input.cooldown_days ?? 7;
   return `Up to ${budget} search${budget === 1 ? "" : "es"} per run, at most once every ${cooldown} day${cooldown === 1 ? "" : "s"} per item.`;
+}
+
+/**
+ * Human labels for the reason codes a run records in
+ * `details.instances[*][*].failure_reasons`. An unrecognised code is returned
+ * as-is rather than guessed at, so a reason added server-side shows up honestly
+ * in an older UI instead of being dropped or mislabelled.
+ */
+const REASON_LABELS: Record<string, string> = {
+  no_file: "missing a file",
+  audio_language: "wrong audio language",
+  subtitle_language: "missing the required subtitles",
+  resolution: "below the resolution floor",
+  video_codec: "wrong video codec",
+  quality: "wrong quality",
+  unknown: "unexplained",
+};
+
+export function describeFailureReason(code: string): string {
+  return REASON_LABELS[code] ?? code;
+}
+
+/**
+ * "42 missing a file, 18 below the resolution floor and 6 wrong audio language"
+ * — the per-reason counts as one line. Returns null for an empty set so callers
+ * can omit the row entirely rather than render an empty label.
+ */
+export function describeFailureReasons(
+  reasons: Record<string, number> | undefined,
+): string | null {
+  const entries = Object.entries(reasons ?? {});
+  if (entries.length === 0) return null;
+  // Already sorted by count server-side; sorted again here so the line does not
+  // depend on JSON key order surviving the round trip.
+  return joinList(
+    entries
+      .slice()
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([code, count]) => `${count} ${describeFailureReason(code)}`),
+  );
 }

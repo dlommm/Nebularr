@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { queryKeys } from "../../lib/queryKeys";
 import { fmtDate } from "../../hooks";
 import type { AutomationRow } from "../../types";
+import { describeFailureReason, describeFailureReasons } from "./automationSummary";
 import { StatusBadge } from "@/components/nebula/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,6 +37,27 @@ function RunDetail({ runId }: { runId: number }): JSX.Element {
                 would {item.actions.join(" + ")}: {item.title || `#${item.source_id}`}
               </p>
             ))}
+            {describeFailureReasons(info.failure_reasons) ? (
+              <p className="text-muted-foreground">
+                Not in spec: {describeFailureReasons(info.failure_reasons)}.
+              </p>
+            ) : null}
+            {(info.failure_worst ?? []).length > 0 ? (
+              <details className="mt-1">
+                <summary className="cursor-pointer text-xs text-muted-foreground">
+                  What to fix first ({(info.failure_worst ?? []).length} shown)
+                </summary>
+                <ul className="mt-1 space-y-0.5">
+                  {(info.failure_worst ?? []).map((item) => (
+                    <li key={item.title} className="text-xs text-muted-foreground">
+                      <span className="font-medium">{item.title || "(untitled)"}</span> — {item.items}{" "}
+                      item{item.items === 1 ? "" : "s"} (
+                      {item.reasons.map(describeFailureReason).join(", ")})
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {Object.entries(info)
               .filter(([key]) =>
                 ["would_tag:", "would_monitor:", "tag:", "monitored:"].some((prefix) => key.startsWith(prefix)),

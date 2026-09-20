@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   describeCron,
+  describeFailureReason,
+  describeFailureReasons,
   describeLimits,
   describeRequirements,
   describeScope,
@@ -98,7 +100,9 @@ describe("summarizeAutomation", () => {
       },
     });
     expect(sentence).toContain("for anything that isn't 1080p or better, search for an upgrade");
-    expect(sentence).toContain("unmonitor it once it conforms");
+    // Stated as the condition it compiles to, rather than "once it conforms": the
+    // clause already opens with the condition, so repeating it read as two.
+    expect(sentence).toContain("where the file is already 1080p or better, unmonitor it");
   });
 
   it("describes a no-requirements rule as hunting missing files", () => {
@@ -143,5 +147,120 @@ describe("describeLimits", () => {
         cooldown_days: 1,
       }),
     ).toBe("Up to 1 search per run, at most once every 1 day per item.");
+  });
+});
+
+describe("series completeness phrasing", () => {
+  const retirementRule = {
+    cron: "0 4 * * 6",
+    params: {
+      scope: {
+        media: "series" as const,
+        series_status_any: ["ended" as const],
+        monitored_only: true,
+        include_specials: false,
+        include_unmonitored_episodes: true,
+        root_folders_any: ["/PerPlexed/Anime/TV Shows"],
+      },
+      require: { audio_language_any: ["english", "eng"], resolution_min: 1080 },
+      actions: [
+        { type: "tag" as const, label: "ready-to-unmonitor", when: "conforming" as const },
+      ],
+    },
+  };
+
+  it("states the every-aired-episode condition rather than 'once it conforms'", () => {
+    // The whole point of the rule is that conformance is asked of every episode
+    // and answered about the show; "once it conforms" would hide that.
+    expect(summarizeAutomation(retirementRule)).toBe(
+      "Every Saturday at 04:00, look at monitored ended series under " +
+        "/PerPlexed/Anime/TV Shows — where every aired episode is english and eng " +
+        "audio and 1080p or better, tag the show “ready-to-unmonitor”.",
+    );
+  });
+
+  it("says the show, not it, because a series action never lands on an episode", () => {
+    const sentence = summarizeAutomation({
+      cron: "0 8 * * 6",
+      params: {
+        scope: { media: "series" as const },
+        require: { resolution_min: 1080 },
+        actions: [{ type: "tag" as const, label: "needs-fix" }],
+      },
+    });
+    expect(sentence).toContain("tag the show “needs-fix”");
+    expect(sentence).not.toContain("tag it");
+  });
+
+  it("describes a requirement-free series rule as hunting missing episodes", () => {
+    const sentence = summarizeAutomation({
+      cron: "30 8 * * 6",
+      params: {
+        scope: { media: "series" as const, series_status_any: ["ended" as const] },
+        actions: [{ type: "tag" as const, label: "incomplete-ended" }],
+      },
+    });
+    expect(sentence).toContain("monitored ended series");
+    expect(sentence).toContain("for any show missing an episode");
+  });
+
+  it("names the status qualifier for still-running shows", () => {
+    expect(
+      describeScope({ media: "series", series_status_any: ["continuing"] }),
+    ).toBe("monitored still-running series");
+  });
+
+  it("includes subtitles in the requirement phrase", () => {
+    expect(
+      describeRequirements({
+        audio_language_any: ["korean"],
+        subtitle_language_any: ["eng"],
+        resolution_min: 1080,
+      }),
+    ).toBe("korean audio, eng subtitles and 1080p or better");
+  });
+
+  it("keeps both clauses legible when a rule carries both senses", () => {
+    const sentence = summarizeAutomation({
+      cron: "0 4 * * 6",
+      params: {
+        scope: { media: "series" as const },
+        require: { resolution_min: 1080 },
+        actions: [
+          { type: "tag" as const, label: "ready", when: "conforming" as const },
+          { type: "tag" as const, label: "needs-fix" },
+        ],
+      },
+    });
+    expect(sentence).toContain(
+      "for anything that isn't 1080p or better, tag the show “needs-fix”; " +
+        "where every aired episode is 1080p or better, tag the show “ready”",
+    );
+  });
+});
+
+describe("failure reason phrasing", () => {
+  it("renders per-reason counts highest first", () => {
+    expect(
+      describeFailureReasons({ resolution: 18, no_file: 42, audio_language: 6 }),
+    ).toBe(
+      "42 missing a file, 18 below the resolution floor and 6 wrong audio language",
+    );
+  });
+
+  it("stays silent when a run recorded no reasons", () => {
+    expect(describeFailureReasons(undefined)).toBeNull();
+    expect(describeFailureReasons({})).toBeNull();
+  });
+
+  it("passes an unrecognised code through rather than guessing", () => {
+    // A reason added server-side must not be dropped or mislabelled by an older UI.
+    expect(describeFailureReason("hdr_missing")).toBe("hdr_missing");
+  });
+
+  it("breaks count ties on the reason name so the line is stable", () => {
+    expect(describeFailureReasons({ resolution: 3, audio_language: 3 })).toBe(
+      "3 wrong audio language and 3 below the resolution floor",
+    );
   });
 });
