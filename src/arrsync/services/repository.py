@@ -376,15 +376,62 @@ def _extract_media_languages(episode_or_movie_file: dict[str, Any]) -> tuple[lis
     return sorted(set(audio_languages)), sorted(set(subtitle_languages))
 
 
+# Frame width -> the quality tier that width belongs to. Width is what survives
+# letterboxing: a 2:1 show delivered as 1080p is 1920x960, and its height alone
+# says "960", which is not a tier anybody names.
+_WIDTH_TIERS: tuple[tuple[int, int], ...] = (
+    (3840, 2160),
+    (2560, 1440),
+    (1920, 1080),
+    (1280, 720),
+    (852, 480),
+    (640, 360),
+)
+
+
+def _tier_from_width(width: int) -> int | None:
+    for min_width, tier in _WIDTH_TIERS:
+        if width >= min_width:
+            return tier
+    return None
+
+
 def _extract_video_resolution(row: dict[str, Any]) -> int | None:
-    """Vertical resolution from mediaInfo.resolution ("1920x1080"), falling back
-    to the Arr quality name ("WEBDL-1080p"). Mirrors the 0012 backfill SQL."""
-    media_info = row.get("mediaInfo") or {}
-    match = re.search(r"x(\d{3,4})\s*$", str(media_info.get("resolution") or ""))
+    """The file's **quality tier** (1080, 2160, ...), not its literal frame height.
+
+    "1080p" names a tier, not a pixel count. A 2:1 show delivered as 1080p is
+    1920x960, and comparing that 960 against a 1080 floor rejects a file both the
+    Arr and the user call 1080p — which, for a whole-series completeness rule,
+    silently disqualifies the entire show over a letterbox crop.
+
+    Precedence, most authoritative first:
+      1. ``quality.quality.resolution`` — the Arr's own tier number. It is the
+         number Sonarr/Radarr show in their UI, so agreeing with it means the app
+         never contradicts what the operator sees.
+      2. The quality *name* ("WEBDL-1080p"), for payloads that omit the number.
+      3. mediaInfo frame **width**, mapped to a tier — the letterbox-proof route.
+      4. mediaInfo frame height, last resort: better than nothing when a file
+         carries no quality metadata at all, and correct for 16:9 content.
+
+    Mirrors the 0013 re-derivation SQL; keep the two in step.
+    """
+    quality_block = (row.get("quality") or {}).get("quality") or {}
+    tier = quality_block.get("resolution")
+    if isinstance(tier, bool):  # guard: bools are ints in Python
+        tier = None
+    if isinstance(tier, int) and 240 <= tier <= 4320:
+        return tier
+    match = re.search(r"(\d{3,4})[pi]", str(quality_block.get("name") or ""))
     if match:
         return int(match.group(1))
-    quality = ((row.get("quality") or {}).get("quality") or {}).get("name") or ""
-    match = re.search(r"(\d{3,4})[pi]", str(quality))
+    media_info = row.get("mediaInfo") or {}
+    resolution = str(media_info.get("resolution") or "")
+    match = re.search(r"^\s*(\d{3,5})\s*x", resolution)
+    if match:
+        from_width = _tier_from_width(int(match.group(1)))
+        if from_width is not None:
+            return from_width
+    match = re.search(r"x\s*(\d{3,4})\s*$", resolution)
     if match:
         return int(match.group(1))
     return None

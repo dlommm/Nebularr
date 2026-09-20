@@ -659,3 +659,235 @@ def test_subtitle_require_runs_against_real_postgres(engine) -> None:
         ).mappings().all()
     # 601 has English subs and conforms; the other two are what needs fixing.
     assert {int(r["source_id"]) for r in rows} == {602, 603}
+
+
+def test_0013_rederives_resolution_as_the_quality_tier(engine) -> None:
+    """The 0013 re-derivation, executed for real.
+
+    Each row below is a shape that appears in a real library, seeded with the wrong
+    value 0012 would have produced (the frame height), and expected to come out as
+    the tier. The migration has already run by the time this test does, so the SQL
+    is invoked directly — which is also what proves it is idempotent.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "m0013", "alembic/versions/0013_resolution_quality_tier.py"
+    )
+    assert spec and spec.loader
+    m0013 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m0013)
+
+    instance = "itest-resolution-tier"
+    # (source_id, payload, seeded wrong value, expected tier, why)
+    rows = [
+        (
+            9101,
+            '{"quality": {"quality": {"name": "WEBRip-1080p", "resolution": 1080}},'
+            ' "mediaInfo": {"resolution": "1920x960"}}',
+            960,
+            1080,
+            "2:1 letterbox, the 1883 case",
+        ),
+        (
+            9102,
+            '{"quality": {"quality": {"name": "Bluray-1080p", "resolution": 1080}},'
+            ' "mediaInfo": {"resolution": "1920x800"}}',
+            800,
+            1080,
+            "2.39:1 scope letterbox",
+        ),
+        (
+            9103,
+            '{"quality": {"quality": {"name": "WEBDL-1080p"}},'
+            ' "mediaInfo": {"resolution": "1920x816"}}',
+            816,
+            1080,
+            "no tier number: the quality name carries it",
+        ),
+        (
+            9104,
+            '{"mediaInfo": {"resolution": "1920x872"}}',
+            872,
+            1080,
+            "no quality metadata at all: width implies the tier",
+        ),
+        (
+            9105,
+            '{"quality": {"quality": {"name": "Bluray-2160p", "resolution": 2160}},'
+            ' "mediaInfo": {"resolution": "3840x1600"}}',
+            1600,
+            2160,
+            "letterboxed 4K",
+        ),
+        (
+            9106,
+            '{"quality": {"quality": {"name": "HDTV-720p", "resolution": 720}},'
+            ' "mediaInfo": {"resolution": "1280x720"}}',
+            720,
+            720,
+            "plain 16:9 720p is unchanged",
+        ),
+        (
+            9107,
+            '{"quality": {"quality": {"name": "WEBDL-1080p", "resolution": 99999}},'
+            ' "mediaInfo": {"resolution": "1920x800"}}',
+            800,
+            1080,
+            "nonsense tier number falls through to the name",
+        ),
+        (
+            9108,
+            '{"mediaInfo": {"resolution": "400x1080"}}',
+            1080,
+            1080,
+            "too narrow to imply a tier: height is the last resort",
+        ),
+        (
+            9109,
+            '{"mediaInfo": {"resolution": "widescreen"}}',
+            555,
+            555,
+            "nothing derivable: the existing value is kept, not nulled",
+        ),
+    ]
+    with engine.begin() as conn:
+        conn.execute(
+            text("delete from warehouse.episode_file where instance_name = :i"), {"i": instance}
+        )
+        for source_id, payload, seeded, _expected, _why in rows:
+            conn.execute(
+                text(
+                    """
+                    insert into warehouse.episode_file
+                        (source_id, instance_name, episode_source_id, video_resolution,
+                         payload, seen_at, last_seen_at, deleted)
+                    values (:sid, :i, 1, :res, cast(:payload as jsonb), now(), now(), false)
+                    """
+                ),
+                {"sid": source_id, "i": instance, "res": seeded, "payload": payload},
+            )
+        conn.execute(text(m0013._rederive_sql("episode_file")))
+        got = dict(
+            conn.execute(
+                text(
+                    "select source_id, video_resolution from warehouse.episode_file"
+                    " where instance_name = :i"
+                ),
+                {"i": instance},
+            ).all()
+        )
+
+    for source_id, _payload, seeded, expected, why in rows:
+        assert got[source_id] == expected, (
+            f"source_id {source_id} ({why}): seeded {seeded}, expected {expected},"
+            f" got {got[source_id]}"
+        )
+
+    # Idempotent: running it again must not move anything.
+    with engine.begin() as conn:
+        conn.execute(text(m0013._rederive_sql("episode_file")))
+        again = dict(
+            conn.execute(
+                text(
+                    "select source_id, video_resolution from warehouse.episode_file"
+                    " where instance_name = :i"
+                ),
+                {"i": instance},
+            ).all()
+        )
+    assert again == got
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("delete from warehouse.episode_file where instance_name = :i"), {"i": instance}
+        )
+
+
+def test_letterboxed_episode_no_longer_disqualifies_a_complete_series(engine) -> None:
+    """End to end, on real Postgres: a finished show whose every episode is a
+    letterboxed 1080p release must land in the completeness set.
+
+    This is the regression that hid ~5,000 episodes in one library — the shape of
+    the 1883 and 11.22.63 reports — so it is asserted against the compiled rule, not
+    just against the extraction helper.
+    """
+    from arrsync.services.automation_rules import compile_candidates, validate_params
+
+    params = validate_params(
+        "complete-series-tagger",
+        {
+            "scope": {
+                "media": "series",
+                "series_status_any": ["ended"],
+                "monitored_only": False,
+                "include_specials": False,
+                "include_unmonitored_episodes": True,
+            },
+            "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "ready", "when": "conforming"}],
+        },
+    )
+    compiled = compile_candidates(params, "episode", sense="conforming")
+    instance = "itest-letterbox-complete"
+    with engine.begin() as conn:
+        for table in ("episode_file", "episode", "series"):
+            conn.execute(
+                text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
+            )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.series
+                    (source_id, instance_name, title, monitored, status, payload,
+                     seen_at, last_seen_at, deleted)
+                values
+                    (7701, :i, 'letterboxed but complete', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (7702, :i, 'genuinely below the floor', true, 'ended', '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode
+                    (source_id, instance_name, series_source_id, season_number, episode_number,
+                     title, monitored, air_date, payload, seen_at, last_seen_at, deleted)
+                values
+                    (8801, :i, 7701, 1, 1, 'ep1', true, now() - interval '20 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (8802, :i, 7701, 1, 2, 'ep2', true, now() - interval '10 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (8803, :i, 7702, 1, 1, 'ep1', true, now() - interval '20 days', '{"hasFile": true}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        # 7701: both episodes are 1920x960 Bluray-1080p -> tier 1080 -> complete.
+        # 7702: a real 720p file -> tier 720 -> correctly not complete.
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode_file
+                    (source_id, instance_name, episode_source_id, audio_languages,
+                     video_resolution, quality, payload, seen_at, last_seen_at, deleted)
+                values
+                    (9901, :i, 8801, array['english'], 1080, 'Bluray-1080p', '{}'::jsonb, now(), now(), false),
+                    (9902, :i, 8802, array['eng'], 1080, 'Bluray-1080p', '{}'::jsonb, now(), now(), false),
+                    (9903, :i, 8803, array['english'], 720, 'HDTV-720p', '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(compiled.select_sql),
+            {**compiled.binds, "instance_name": instance, "limit": 50},
+        ).mappings().all()
+    got = {int(r["source_id"]) for r in rows}
+    assert got == {7701}, "the letterboxed-but-complete show must be in the conforming set"
+
+    with engine.begin() as conn:
+        for table in ("episode_file", "episode", "series"):
+            conn.execute(
+                text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
+            )

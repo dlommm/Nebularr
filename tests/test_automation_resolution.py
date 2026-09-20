@@ -152,3 +152,91 @@ def test_upsert_movie_file_resolution_none() -> None:
     sql, params = session.statements[0]
     assert params is not None
     assert params.get("video_resolution") is None, f"Expected video_resolution=None, got {params.get('video_resolution')}"
+
+
+# --- the quality tier, not the frame height --------------------------------
+# "1080p" names a tier. Storing a letterboxed file's crop height instead made a
+# 1920x960 Bluray-1080p read as 960, which a resolution_min: 1080 rule rejects —
+# and under the series-completeness rules one such episode disqualifies a whole
+# show. These cases are the shapes that actually appear in a real library.
+
+
+def test_letterboxed_1080p_is_a_1080p_file() -> None:
+    """2:1 (1920x960) and 2.39:1 (1920x800) releases are what broke this: both are
+    1080p to Sonarr and to the operator, and neither is 1080 pixels tall."""
+    for height in (960, 904, 872, 816, 800):
+        row = {
+            "quality": {"quality": {"name": "Bluray-1080p", "resolution": 1080}},
+            "mediaInfo": {"resolution": f"1920x{height}"},
+        }
+        assert _extract_video_resolution(row) == 1080, f"1920x{height}"
+
+
+def test_letterboxed_4k_is_a_4k_file() -> None:
+    row = {
+        "quality": {"quality": {"name": "Bluray-2160p", "resolution": 2160}},
+        "mediaInfo": {"resolution": "3840x1600"},
+    }
+    assert _extract_video_resolution(row) == 2160
+
+
+def test_arr_tier_number_wins_over_frame_geometry() -> None:
+    """The Arr's own number is the one shown in its UI, so agreeing with it means
+    never contradicting what the operator sees."""
+    row = {
+        "quality": {"quality": {"name": "WEBRip-1080p", "resolution": 1080}},
+        "mediaInfo": {"resolution": "1920x960"},
+    }
+    assert _extract_video_resolution(row) == 1080
+
+
+def test_quality_name_used_when_the_tier_number_is_absent() -> None:
+    row = {
+        "quality": {"quality": {"name": "WEBDL-1080p"}},
+        "mediaInfo": {"resolution": "1920x800"},
+    }
+    assert _extract_video_resolution(row) == 1080
+
+
+def test_width_derives_the_tier_when_no_quality_metadata_exists() -> None:
+    """Width is the letterbox-proof signal: 1920 wide is 1080p whatever the crop."""
+    assert _extract_video_resolution({"mediaInfo": {"resolution": "1920x816"}}) == 1080
+    assert _extract_video_resolution({"mediaInfo": {"resolution": "3840x1608"}}) == 2160
+    assert _extract_video_resolution({"mediaInfo": {"resolution": "1280x536"}}) == 720
+
+
+def test_height_is_the_last_resort_for_unusually_narrow_frames() -> None:
+    """A frame too narrow to imply a tier (vertical video, odd crops) still yields
+    its height rather than nothing."""
+    assert _extract_video_resolution({"mediaInfo": {"resolution": "400x1080"}}) == 1080
+
+
+def test_nonsense_tier_number_falls_through_instead_of_poisoning_the_column() -> None:
+    row = {
+        "quality": {"quality": {"name": "WEBDL-1080p", "resolution": 99999}},
+        "mediaInfo": {"resolution": "1920x800"},
+    }
+    assert _extract_video_resolution(row) == 1080
+
+
+def test_boolean_tier_number_is_not_treated_as_an_int() -> None:
+    """bool is a subclass of int in Python; True must not become a resolution."""
+    row = {
+        "quality": {"quality": {"name": "Bluray-1080p", "resolution": True}},
+        "mediaInfo": {"resolution": "1920x1080"},
+    }
+    assert _extract_video_resolution(row) == 1080
+
+
+def test_tier_boundaries_map_to_named_tiers() -> None:
+    cases = {
+        "3840x2160": 2160,
+        "2560x1080": 1440,
+        "1920x1080": 1080,
+        "1280x720": 720,
+        "1024x576": 480,
+        "852x480": 480,
+        "640x480": 360,
+    }
+    for resolution, expected in cases.items():
+        assert _extract_video_resolution({"mediaInfo": {"resolution": resolution}}) == expected, resolution

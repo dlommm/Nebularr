@@ -23,6 +23,17 @@ actions, driven entirely by warehouse data.
   (audio language, subtitle language, resolution floor, codec, quality name).
   Actions fire on the non-conforming set by default, or on the conforming set with
   `when=conforming`.
+- **`resolution_min` is a quality tier, not a pixel height.** `1080` means "the
+  Arr calls this 1080p", so a letterboxed release — a 2:1 show delivered as
+  1920x960, or 2.39:1 as 1920x800 — satisfies a 1080 floor, because it is a 1080p
+  file to both Sonarr and you. `warehouse.{movie,episode}_file.video_resolution`
+  stores that tier, derived in this order: the Arr's own
+  `quality.quality.resolution`, then the quality name ("WEBDL-1080p"), then frame
+  **width** mapped to a tier (1920 wide is 1080p whatever the crop), then frame
+  height as a last resort. Before 0013 the height came first, which read a
+  letterboxed 1080p file as 960 and — since one failing episode disqualifies a
+  whole show — hid thousands of complete series. `repository._extract_video_resolution`
+  and the 0013 SQL implement the same precedence; keep them in step.
 - **Series completeness**: a series conforms when *no* aired in-scope episode
   fails — an anti-join, not a rollup of conforming episodes, since a show with one
   good episode out of forty conforms to nothing. A missing episode and a 720p file
