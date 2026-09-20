@@ -4,6 +4,121 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.9.0] - 2026-09-20
+
+Automations release: rules can now act on the set of items that *pass*, which is
+what makes "this show is finished, retire it" expressible. Adds per-library
+folder scoping, series completeness, six templates aimed at gaps neither Sonarr
+nor Radarr fills, and a rebuilt automations page. No DB migration.
+
+### Added
+- **Series completeness.** A series conforms when *no* aired in-scope episode
+  fails — compiled as an anti-join, deliberately not a rollup of conforming
+  episodes, since a show with one good episode out of forty conforms to nothing.
+  A missing episode and an out-of-spec file disqualify a show through the same
+  predicate, so "do I have every episode, all in spec" is one question. This is
+  what made series-level `when=conforming` unsafe before now, and why it was
+  restricted to movies.
+- **Tag actions can target the conforming set** (`when=conforming`), and tag /
+  monitor reconciles resolve one row set per `when` — so one rule can tag the
+  finished shows and what still needs fixing without either borrowing the
+  other's set.
+- **Scope: series status** (`series_status_any`, e.g. ended), plus
+  `include_specials` and `include_unmonitored_episodes`. The latter two exist
+  for the two ways a show reads as unfinished for the wrong reason: a missing
+  season-0 special, and a gap that was papered over by unmonitoring it.
+- **Requirement: subtitle language** (`subtitle_language_any`), for libraries
+  where no dub exists and English subtitles are the actual requirement — a
+  question neither Arr can answer.
+- **Scope: folder location** (`root_folders_any`), matched against synced
+  library paths so per-library specs are one rule each. Episodes inherit their
+  series' folder. Options come from `GET /api/automations/root-folders`, derived
+  from the warehouse rather than a live Arr call, so a saved folder the library
+  no longer reports stays selected instead of vanishing.
+- **Six templates** for what both Arrs lack — both reason per-episode, and
+  neither ever stops monitoring something it has satisfied:
+  `complete-series-tagger` (tag finished, in-spec shows),
+  `series-done-unmonitor` (and retire them), `movie-done-unmonitor`,
+  `series-spec-audit` (tag what is not in spec, with reasons),
+  `incomplete-ended-series` (a gap in a running show is normal; in an ended one
+  it is permanent), and `foreign-subs-audit`.
+- **Failure reasons in run details.** `failure_reasons` and `failure_worst`
+  answer "what has to be fixed before this show can retire", derived from
+  columns the candidate select already returns — no extra query. Series rules
+  group by show: the fault sits on an episode, the show is what you act on.
+
+### Changed (web UI)
+- The automations page is a list of rules worked on in a right-hand sheet, so
+  the list never reflows underneath you. Each row carries one primary action
+  (Run now) with the rest behind an overflow menu; templates appear inside the
+  sheet when creating rather than permanently on the page.
+- The editor leads with the rule as a sentence and validates live, reporting how
+  many items it would act on right now. A conforming clause states the condition
+  it compiles to — "where every aired episode is english and eng audio and 1080p
+  or better" — rather than "once it conforms", which would hide that conformance
+  is asked of every episode and answered about the show. Series actions say "the
+  show", never "it".
+- Going live and deleting confirm first. Leaving dry-run is the only control
+  that converts a simulation into real indexer traffic; every other toggle is
+  reversible and stays one click.
+- Run detail renders failure reasons as a sentence plus a what-to-fix-first
+  list. An unrecognised reason code is shown verbatim rather than guessed at.
+
+### Fixed
+- Rule validity no longer leaks between rules: opening a second rule in the
+  sheet could inherit the first one's validity state.
+- The editor's tag control edits only the action it is bound to. A rule may
+  carry a conforming and a non-conforming tag at once, and editing the label
+  would otherwise collapse both onto one label.
+- The media switch no longer strips conforming actions when leaving movies
+  (they now work for series, so stripping would delete the rule); it drops
+  `series_status_any` when entering movies instead, which the backend rejects.
+
+### Security
+- `react-router-dom` 6.30.4 → 7.18.2, closing three advisories (open redirect
+  and injection). The v6 patch range was EOL.
+- Two rounds of transitive npm bumps clearing HIGH advisories in build/test
+  dependencies: `browserslist`, `fast-uri`, `js-yaml`, `hono`, `qs` and others.
+  Lockfile only, no overrides.
+
+## [2.8.0] - 2026-07-30
+
+Automations engine. Backfilled entry — this release shipped without changelog
+notes; reconstructed from git history and `docs/AUTOMATIONS.md`.
+
+### Added
+- **Automations engine.** Rule templates with their own cron and timezone,
+  per-rule `budget_per_run`, `cooldown_days`, `enabled` and `dry_run`. New rules
+  start in dry-run: runs record what they *would* do until you flip the switch.
+- Whitelist-only SQL predicate compiler — user params contribute bind values,
+  never SQL text — plus a rule schema and template registry.
+- Run executor with per-run search budget, per-item cooldown ledger, dry-run
+  fidelity, and actions diffed against live Arr state before any mutation, so a
+  stale warehouse snapshot can never drive a write.
+- Four layers of rate protection: minimum interval between Arr command posts, a
+  per-run search budget, a global daily search cap, and a per-item cooldown
+  keyed globally so two rules can never double-search one item.
+- Arr client: search commands, monitored editors, quality-profile and
+  custom-format reads, and a command throttle.
+- REST surface with a validation preview and run-now; per-automation cron jobs;
+  automation / run / action-ledger store; run history in the web UI.
+- Migration 0012: automations tables, action ledger, and `video_resolution`
+  columns on the file tables, promoted into the sync upserts.
+
+### Fixed
+- The MAL dub gate joins via a single-row lateral, not a plain join:
+  `mal.warehouse_link` is not unique on `warehouse_source_id`, so one series
+  split across several `mal_id`s would otherwise fan out and duplicate
+  candidate rows.
+- Search budget depletes across instances within a run rather than resetting
+  per instance; tag and monitor targets are unbudgeted (they are idempotent
+  live-state diffs, not searches).
+- Dub observations are buffered per instance and discarded if that instance's
+  search phase fails, so a none→dubbed transition is never watermarked as seen
+  against a search that never fired.
+- Failure alerting for automation runs; 409 on rename collision in the update
+  endpoint.
+
 ## [2.7.0] - 2026-07-18
 
 Security-and-correctness release from a third full-application audit: two
