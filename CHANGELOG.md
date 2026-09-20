@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.9.1] - 2026-09-20
+
+Fixes the resolution comparison that made 2.9.0's series-completeness rules
+exclude finished shows. One additive migration (0013) runs automatically and
+needs no re-sync.
+
+### Fixed
+- **`resolution_min` now means the quality tier, not the literal frame height.**
+  A letterboxed 1080p release is 1920x960 (2:1) or 1920x800 (2.39:1), and 0012
+  stored `video_resolution` height-first — so those read as 960 and 800 and failed
+  a `resolution_min: 1080` floor, despite being 1080p to both the Arr and the
+  operator. Latent until 2.9.0: on its own a wrong height mis-sorts one file, but
+  under series completeness one failing episode disqualifies an entire show, so it
+  swallowed complete series wholesale. Measured on a real library (one `ended` TV
+  library, specials excluded): 9,443 episodes failed a 1080 floor against 4,374 at
+  720 — the ~5,000 difference being 1080p-tier files whose stored height was
+  800–1000.
+- `video_resolution` is now derived from the Arr's own
+  `quality.quality.resolution` (the number its UI shows), then the quality name,
+  then frame **width** mapped to a tier (1920 wide is 1080p whatever the crop),
+  then height as a last resort. Migration **0013** re-derives every existing row
+  from the retained payload — no re-sync required, and a row that yields nothing
+  keeps the value it had.
+
 ## [2.9.0] - 2026-09-20
 
 Automations release: rules can now act on the set of items that *pass*, which is
