@@ -6,7 +6,9 @@ from arrsync.services.automation_rules import (
     TEMPLATES,
     CompiledQuery,
     RuleParams,  # noqa: F401 - part of the documented public interface exercised below
+    RuleRequire,
     compile_candidates,
+    failure_reasons,
     validate_params,
 )
 
@@ -44,24 +46,38 @@ def test_new_dub_only_requires_dub_gate() -> None:
         validate_params("custom", bad)
 
 
-def test_conforming_tag_action_rejected() -> None:
-    bad = {
-        "scope": {"media": "movies"},
-        "require": {"resolution_min": 1080},
-        "actions": [{"type": "tag", "label": "x264-candidate", "when": "conforming"}],
-    }
-    with pytest.raises(ValueError, match="conforming tag actions"):
-        validate_params("custom", bad)
+def test_conforming_tag_action_is_allowed() -> None:
+    """The v1 rejection is gone: tagging the set that *passes* is the whole point of
+    a ready-to-unmonitor label, and the reconcile is now per-action."""
+    params = validate_params(
+        "custom",
+        {
+            "scope": {"media": "movies"},
+            "require": {"resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "retired-complete", "when": "conforming"}],
+        },
+    )
+    assert params.actions[0].when == "conforming"
 
 
-def test_conforming_actions_rejected_for_series_media() -> None:
-    bad = {
-        "scope": {"media": "both"},
-        "require": {"audio_language_any": ["english"]},
-        "actions": [{"type": "set_monitored", "value": False, "when": "conforming"}],
-    }
-    with pytest.raises(ValueError, match="conforming"):
-        validate_params("custom", bad)
+def test_conforming_actions_allowed_for_series_media() -> None:
+    params = validate_params(
+        "custom",
+        {
+            "scope": {"media": "both"},
+            "require": {"audio_language_any": ["english"]},
+            "actions": [{"type": "set_monitored", "value": False, "when": "conforming"}],
+        },
+    )
+    assert params.scope.media == "both"
+
+
+def test_search_actions_still_cannot_be_conforming() -> None:
+    with pytest.raises(ValueError, match="search actions"):
+        validate_params(
+            "custom",
+            _minimal(actions=[{"type": "search_upgrade", "when": "conforming"}]),
+        )
 
 
 def test_all_templates_have_valid_default_params() -> None:
@@ -72,10 +88,36 @@ def test_all_templates_have_valid_default_params() -> None:
         "missing-hunter",
         "codec-preference",
         "language-audit",
+        "complete-series-tagger",
+        "series-done-unmonitor",
+        "series-spec-audit",
+        "incomplete-ended-series",
+        "movie-done-unmonitor",
+        "foreign-subs-audit",
         "custom",
     }
     for template in TEMPLATES.values():
         validate_params(template.key, template.default_params)
+
+
+def test_language_templates_carry_both_spellings() -> None:
+    """Arrs report a mix of ISO-639-2 codes and full names for one language, even
+    inside a single library ('english' and 'eng'), so a template that shipped one
+    spelling would silently miss half the files."""
+    for key in ("anime-dub-enforcer", "complete-series-tagger", "movie-done-unmonitor"):
+        langs = TEMPLATES[key].default_params["require"]["audio_language_any"]
+        assert {"english", "eng"} <= set(langs), key
+    subs = TEMPLATES["foreign-subs-audit"].default_params["require"]["subtitle_language_any"]
+    assert {"eng", "english"} <= set(subs)
+
+
+def test_completeness_templates_exclude_specials_and_count_unmonitored() -> None:
+    """Both settings exist to stop a show reading as incomplete for the wrong
+    reason: a missing special, or a gap that was papered over by unmonitoring it."""
+    for key in ("complete-series-tagger", "series-done-unmonitor", "incomplete-ended-series"):
+        scope = TEMPLATES[key].default_params["scope"]
+        assert scope["include_specials"] is False, key
+        assert scope["include_unmonitored_episodes"] is True, key
 
 
 def test_movie_sql_binds_are_values_not_text() -> None:
@@ -224,8 +266,225 @@ def test_compile_candidates_rejects_unknown_sense() -> None:
         compile_candidates(params, "movie", sense="bogus")
 
 
+def _complete_series(**scope_extra):
+    scope = {
+        "media": "series",
+        "series_status_any": ["ended"],
+        "include_specials": False,
+        "include_unmonitored_episodes": True,
+    }
+    scope.update(scope_extra)
+    return validate_params(
+        "custom",
+        {
+            "scope": scope,
+            "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "ready", "when": "conforming"}],
+        },
+    )
+
+
+def test_conforming_episode_sense_compiles_a_series_anti_join() -> None:
+    """The correctness crux of series completeness: a show is in spec when NO aired
+    episode fails, never when some episode passes. A rollup of conforming episodes
+    would tag a show with one good episode out of forty as finished."""
+    sql = compile_candidates(_complete_series(), "episode", sense="conforming").select_sql
+    assert sql.startswith("select s.source_id")
+    assert "from warehouse.series s" in sql
+    assert "not exists (select 1 from warehouse.episode e" in sql
+    # The failing-episode probe is the negation of the whole conformance predicate,
+    # so one missing file and one 720p file are the same kind of disqualification.
+    assert "and not (coalesce((e.payload->>'hasFile')::boolean, false)" in sql
+    # No ledger/cooldown: nothing is being searched here.
+    assert ":cooldown_days" not in sql
+    assert "automation_action_ledger" not in sql
+
+
+def test_complete_series_requires_at_least_one_aired_episode() -> None:
+    """'No episode fails' is vacuously true for a show with nothing aired yet, and an
+    empty show is not a finished one."""
+    sql = compile_candidates(_complete_series(), "episode", sense="conforming").select_sql
+    assert "exists (select 1 from warehouse.episode e" in sql
+    assert "e.air_date <= now()" in sql
+
+
+def test_complete_series_scopes_status_by_bind() -> None:
+    compiled = compile_candidates(_complete_series(), "episode", sense="conforming")
+    assert "lower(coalesce(s.status, '')) = any(:series_statuses)" in compiled.select_sql
+    assert compiled.binds["series_statuses"] == ["ended"]
+    assert "ended" not in compiled.select_sql  # value bound, never inlined
+
+
+def test_include_specials_toggles_season_zero() -> None:
+    off = compile_candidates(_complete_series(), "episode", sense="conforming").select_sql
+    assert "e.season_number > 0" in off
+    on = compile_candidates(
+        _complete_series(include_specials=True), "episode", sense="conforming"
+    ).select_sql
+    assert "e.season_number > 0" not in on
+
+
+def test_include_specials_defaults_to_on_for_pre_existing_rules() -> None:
+    """Specials were unconditionally in scope before the field existed; a saved rule
+    must not change meaning when this code ships under it."""
+    params = validate_params("custom", _minimal(scope={"media": "series"}))
+    assert params.scope.include_specials is True
+    assert "e.season_number > 0" not in compile_candidates(params, "episode").select_sql
+
+
+def test_include_unmonitored_episodes_keeps_the_series_gate() -> None:
+    """An episode you already unmonitored is still a gap in the show, but an
+    unmonitored *show* is still out of scope."""
+    sql = compile_candidates(_complete_series(), "episode", sense="conforming").select_sql
+    assert "e.monitored" not in sql
+    assert "s.monitored" in sql
+
+
+def test_episode_monitored_gate_survives_by_default() -> None:
+    sql = compile_candidates(
+        validate_params("custom", _minimal(scope={"media": "series"})), "episode"
+    ).select_sql
+    assert "e.monitored" in sql
+    assert "s.monitored" in sql
+
+
+def test_series_status_rejected_for_movie_media() -> None:
+    with pytest.raises(ValueError, match="series_status_any"):
+        validate_params("custom", _minimal(scope={"media": "movies", "series_status_any": ["ended"]}))
+
+
+def test_unknown_series_status_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown series status"):
+        validate_params("custom", _minimal(scope={"media": "series", "series_status_any": ["finished"]}))
+
+
+def test_series_statuses_are_normalized_and_deduped() -> None:
+    params = validate_params(
+        "custom", _minimal(scope={"media": "series", "series_status_any": ["Ended", "ended", " "]})
+    )
+    assert params.scope.series_status_any == ["ended"]
+
+
+def test_subtitle_require_compiles_and_binds() -> None:
+    params = validate_params(
+        "custom",
+        _minimal(
+            actions=[{"type": "tag", "label": "subs-missing"}],
+            require={"subtitle_language_any": ["eng"], "resolution_min": 1080},
+        ),
+    )
+    compiled = compile_candidates(params, "movie")
+    assert "mf.subtitle_languages" in compiled.select_sql
+    assert ":subtitle_langs" in compiled.select_sql
+    assert compiled.binds["subtitle_langs"] == ["eng"]
+
+
+def test_subtitle_only_require_is_not_empty() -> None:
+    """is_empty gates search_upgrade; a subtitle clause is a real requirement."""
+    params = validate_params(
+        "custom", _minimal(require={"subtitle_language_any": ["eng"]})
+    )
+    assert not params.require.is_empty()
+
+
+def test_series_scope_fragments_are_shared_by_both_series_queries() -> None:
+    """Regression guard for the refactor: the episode candidate query and the
+    series-completeness query must read the same scope, or a folder/genre/status
+    filter would apply to one and silently not the other."""
+    params = _complete_series(root_folders_any=["/PerPlexed/Anime/TV Shows"], genres_any=["Anime"])
+    non_conf = compile_candidates(
+        params.model_copy(update={"actions": [a for a in params.actions]}), "episode"
+    ).select_sql
+    conf = compile_candidates(params, "episode", sense="conforming").select_sql
+    for fragment in (
+        "starts_with(s.path, rfp)",
+        "lower(coalesce(s.status, '')) = any(:series_statuses)",
+        "s.monitored",
+    ):
+        assert fragment in non_conf, fragment
+        assert fragment in conf, fragment
+
+
 def test_validate_rejects_unknown_param_keys() -> None:
     bad = _minimal()
     bad["require"] = {"audio_langauge_any": ["english"]}  # typo: langauge
     with pytest.raises(ValueError):
         validate_params("custom", bad)
+
+
+# --- failure reasons -------------------------------------------------------
+# Derived in Python from columns the candidate select already returns, so "why is
+# this show not ready" costs a run no extra query. The clauses must stay in step
+# with the SQL in _require_fragments; the tests below are that contract.
+
+
+def _require(**kw) -> RuleRequire:
+    return RuleRequire(**kw)
+
+
+def test_no_file_short_circuits_every_other_reason() -> None:
+    """An episode with no file has nothing to hold against the spec; reporting five
+    problems for one absent file would read as five things to fix."""
+    row = {"has_file": False, "video_resolution": None, "audio_languages": None}
+    assert failure_reasons(row, _require(audio_language_any=["english"], resolution_min=1080)) == [
+        "no_file"
+    ]
+
+
+def test_reasons_report_every_failing_clause_in_a_stable_order() -> None:
+    row = {
+        "has_file": True,
+        "audio_languages": ["japanese"],
+        "subtitle_languages": [],
+        "video_resolution": 720,
+        "video_codec": "x264",
+        "quality": "HDTV-720p",
+    }
+    reasons = failure_reasons(
+        row,
+        _require(
+            audio_language_any=["english", "eng"],
+            subtitle_language_any=["eng"],
+            resolution_min=1080,
+            video_codec_any=["x265"],
+            quality_any=["Bluray-1080p"],
+        ),
+    )
+    assert reasons == [
+        "audio_language",
+        "subtitle_language",
+        "resolution",
+        "video_codec",
+        "quality",
+    ]
+
+
+def test_a_code_does_not_satisfy_a_name_spelling() -> None:
+    """The trap the _ENGLISH constant exists for: matching is set membership after
+    case-folding, not language identity, so a file tagged 'eng' fails a require that
+    lists only 'english'. Same semantics as the SQL's any(:audio_langs) — which is
+    why every shipped template lists both spellings."""
+    row = {"has_file": True, "audio_languages": ["ENG"], "video_resolution": 1080}
+    assert failure_reasons(row, _require(audio_language_any=["english"], resolution_min=1080)) == [
+        "audio_language"
+    ]
+    assert failure_reasons(
+        row, _require(audio_language_any=["english", "eng"], resolution_min=1080)
+    ) == []
+
+
+def test_conforming_row_reports_nothing() -> None:
+    row = {"has_file": True, "audio_languages": ["english"], "video_resolution": 2160}
+    assert failure_reasons(row, _require(audio_language_any=["english"], resolution_min=1080)) == []
+
+
+def test_a_clean_row_reports_no_reasons() -> None:
+    """The helper reports only what it can see failing. Deciding that a failing row
+    with no explicable reason is 'unknown' belongs to the caller, which is the only
+    side that knows the rows it holds are non-conforming."""
+    assert failure_reasons({"has_file": True}, _require()) == []
+
+
+def test_missing_resolution_column_counts_as_below_floor() -> None:
+    row = {"has_file": True, "video_resolution": None}
+    assert failure_reasons(row, _require(resolution_min=1080)) == ["resolution"]

@@ -20,7 +20,12 @@ from arrsync.db import session_scope
 from arrsync.services import automation_store
 from arrsync.services import repository as repo
 from arrsync.services.arr_client import ArrClient
-from arrsync.services.automation_rules import RuleParams, compile_candidates, validate_params
+from arrsync.services.automation_rules import (
+    RuleParams,
+    compile_candidates,
+    failure_reasons,
+    validate_params,
+)
 
 log = logging.getLogger(__name__)
 
@@ -244,16 +249,22 @@ class AutomationService:
                 ] or [-1]  # unmatched labels match nothing
 
             has_search = any(a.type.startswith("search_") for a in params.actions)
-            has_tag_actions = any(a.type == "tag" for a in params.actions)
-            has_nonconforming_monitored = any(
-                a.type == "set_monitored" and a.when == "non_conforming" for a in params.actions
+            # Which set this run is *about*. Search actions are non-conforming by
+            # validation, so a rule whose every action is conforming (a
+            # ready-to-unmonitor tagger) has nothing to say about the failing set:
+            # counting that set as "matched" would report hundreds of matches for a
+            # run whose whole job was to tag eight finished shows.
+            primary_sense = (
+                "non_conforming"
+                if any(a.when == "non_conforming" for a in params.actions)
+                else "conforming"
             )
             # Bound this instance's select by what's left of the run-wide budget, not
             # the original per-run allowance — budget_state is shared and depleted as
             # each instance actually fires searches, so a later instance in the same
             # run can't spend a pool an earlier instance already used.
             limit = max(0, budget_state["remaining"]) if has_search else self.SEARCHLESS_LIMIT
-            compiled = compile_candidates(params, entity)
+            compiled = compile_candidates(params, entity, sense=primary_sense)
             runtime: dict[str, Any] = {
                 "instance_name": name,
                 "cooldown_days": int(automation["cooldown_days"]),
@@ -301,24 +312,38 @@ class AutomationService:
                 counters["skipped_budget"] += max(0, eligible - pre_prune_count)
             inst_details["matched"] = len(candidates)
 
-            # The tag/monitor reconcile target set must never come from the
+            # The tag/monitor reconcile target sets must never come from the
             # budget-truncated (or new_dub_only-pruned) search candidate list — tag
-            # and non-conforming set_monitored actions are cheap, idempotent, and
-            # uncapped, and must reconcile against the FULL non-conforming set every
-            # run regardless of how much search budget is left. Recompile without the
-            # search actions (which also drops the ledger join/cooldown clause per the
-            # compiler contract) and select unbounded (SEARCHLESS_LIMIT).
-            needs_action_rows = has_tag_actions or has_nonconforming_monitored
-            action_rows: list[dict[str, Any]] = []
-            if needs_action_rows:
+            # and set_monitored actions are cheap, idempotent, and uncapped, and must
+            # reconcile against the FULL set every run regardless of how much search
+            # budget is left. Recompile without the search actions (which also drops
+            # the ledger join/cooldown clause per the compiler contract) and select
+            # unbounded (SEARCHLESS_LIMIT).
+            #
+            # One row set per `when` the rule actually uses, so a rule can carry both
+            # senses at once — "tag the finished shows, tag what still needs fixing"
+            # in one pass — without either action borrowing the other's set.
+            row_sets: dict[str, list[dict[str, Any]]] = {}
+            senses_needed = {a.when for a in params.actions if a.type in ("tag", "set_monitored")}
+            if senses_needed:
                 action_params = params.model_copy(
                     update={"actions": [a for a in params.actions if not a.type.startswith("search_")]}
                 )
-                action_compiled = compile_candidates(action_params, entity)
-                action_runtime = {**runtime, "limit": self.SEARCHLESS_LIMIT}
-                action_rows = await self._run_db(
-                    _select_rows, action_compiled.select_sql, {**action_compiled.binds, **action_runtime}
-                )
+                for sense in sorted(senses_needed):
+                    action_compiled = compile_candidates(action_params, entity, sense=sense)
+                    row_sets[sense] = await self._run_db(
+                        _select_rows,
+                        action_compiled.select_sql,
+                        {**action_compiled.binds, **runtime, "limit": self.SEARCHLESS_LIMIT},
+                    )
+
+            # "What would I have to fix before this show could retire" — answered
+            # from the rows already in hand, so it costs a run no extra query.
+            reason_rows = row_sets.get("non_conforming")
+            if reason_rows is None and primary_sense == "non_conforming":
+                reason_rows = candidates
+            if reason_rows:
+                inst_details.update(self._reason_summary(reason_rows, params, entity))
 
             if has_search and params.require.audio_language_any and not dry_run:
                 try:
@@ -341,12 +366,12 @@ class AutomationService:
                         for r in candidates
                     ]
                 await self._preview_tag_actions(
-                    client=client, params=params, entity=entity, action_rows=action_rows,
+                    client=client, params=params, entity=entity, row_sets=row_sets,
                     inst_details=inst_details,
                 )
                 await self._preview_monitored_actions(
-                    client=client, params=params, entity=entity, action_rows=action_rows,
-                    runtime=runtime, inst_details=inst_details,
+                    client=client, params=params, entity=entity, row_sets=row_sets,
+                    inst_details=inst_details,
                 )
                 return 1
 
@@ -385,12 +410,12 @@ class AutomationService:
             dub_observations.update(local_dub_observations)
 
             await self._apply_tag_actions(
-                client=client, params=params, entity=entity, action_rows=action_rows,
+                client=client, params=params, entity=entity, row_sets=row_sets,
                 counters=counters, inst_details=inst_details,
             )
             await self._apply_monitored_actions(
-                client=client, params=params, entity=entity, action_rows=action_rows,
-                runtime=runtime, counters=counters, inst_details=inst_details,
+                client=client, params=params, entity=entity, row_sets=row_sets,
+                counters=counters, inst_details=inst_details,
             )
             return 1
         except Exception as exc:
@@ -403,32 +428,66 @@ class AutomationService:
             await client.aclose()
 
     @staticmethod
-    def _target_ids(entity: str, rows: list[dict[str, Any]]) -> set[int]:
-        """Item ids for movie rules; owning-series ids for episode rules."""
-        if entity == "movie":
+    def _target_ids(entity: str, rows: list[dict[str, Any]], sense: str) -> set[int]:
+        """Item ids for movie rules and for the conforming series set (whose rows are
+        already series, not episodes); owning-series ids for non-conforming episode
+        rows, where the fault is an episode but the thing you act on is the show."""
+        if entity == "movie" or sense == "conforming":
             return {int(r["source_id"]) for r in rows}
         return {int(r["series_source_id"]) for r in rows}
 
+    @staticmethod
+    def _reason_summary(
+        rows: list[dict[str, Any]], params: RuleParams, entity: str
+    ) -> dict[str, Any]:
+        """Per-reason counts plus a bounded worst-offenders list, so "what has to be
+        fixed before this show can retire" is answerable from the run row without
+        re-querying. Series rules group by show: the fault sits on an episode, but
+        the show is the unit you act on.
+        """
+        totals: dict[str, int] = {}
+        per_item: dict[Any, dict[str, Any]] = {}
+        for row in rows:
+            # These rows are the non-conforming set by construction, so a row the
+            # helper finds nothing wrong with means the SQL predicate and the helper
+            # disagree — reported as 'unknown' rather than as a clean bill of health.
+            reasons = failure_reasons(row, params.require) or ["unknown"]
+            for reason in reasons:
+                totals[reason] = totals.get(reason, 0) + 1
+            if entity == "episode":
+                key, title = row.get("series_source_id"), row.get("series_title") or ""
+            else:
+                key, title = row.get("source_id"), row.get("title") or ""
+            entry = per_item.setdefault(key, {"title": str(title), "items": 0, "reasons": []})
+            entry["items"] += 1
+            entry["reasons"] = sorted(set(entry["reasons"]) | set(reasons))
+        return {
+            "failure_reasons": dict(sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))),
+            # Bounded: a run row must stay a run row, not a copy of the library.
+            "failure_worst": sorted(per_item.values(), key=lambda e: (-e["items"], e["title"]))[:20],
+        }
+
+    def _rows_for(self, row_sets: dict[str, list[dict[str, Any]]], sense: str) -> list[dict[str, Any]]:
+        return row_sets.get(sense, [])
+
     async def _apply_tag_actions(
         self, *, client: Any, params: RuleParams, entity: str,
-        action_rows: list[dict[str, Any]], counters: dict[str, int], inst_details: dict[str, Any],
+        row_sets: dict[str, list[dict[str, Any]]], counters: dict[str, int],
+        inst_details: dict[str, Any],
     ) -> None:
-        # Conforming tag actions are rejected at validation time (RuleAction), so
-        # every tag action reaching the executor is non-conforming by construction.
         tag_actions = [a for a in params.actions if a.type == "tag"]
         if not tag_actions:
             return
-        desired_ids = self._target_ids(entity, action_rows)
-        # action_rows is capped at SEARCHLESS_LIMIT; hitting that cap means the true
-        # non-conforming set may be larger than what we saw. Removing tags off a
-        # truncated view could strip the label from items that are still genuinely
-        # non-conforming, so skip removals (adds stay safe: under-covering by
-        # omission is not the same failure mode as over-removing).
-        truncated = len(action_rows) >= self.SEARCHLESS_LIMIT
-        if truncated:
-            inst_details["tag_removal_skipped"] = "candidate set truncated"
         live_rows = await (client.list_movies() if entity == "movie" else client.list_series())
         for action in tag_actions:
+            rows = self._rows_for(row_sets, action.when)
+            desired_ids = self._target_ids(entity, rows, action.when)
+            # The row set is capped at SEARCHLESS_LIMIT; hitting that cap means the
+            # true set may be larger than what we saw. Removing tags off a truncated
+            # view could strip the label from items that still genuinely belong in it,
+            # so skip removals (adds stay safe: under-covering by omission is not the
+            # same failure mode as over-removing).
+            truncated = len(rows) >= self.SEARCHLESS_LIMIT
             tag_id = await client.ensure_tag_id(action.label or "")
             add: list[int] = []
             remove: list[int] = []
@@ -450,11 +509,14 @@ class AutomationService:
                 else:
                     await client.update_series_tags(ids, [tag_id], op)
             counters["actions"] += len(add) + len(remove)
-            inst_details[f"tag:{action.label}"] = {"added": len(add), "removed": len(remove)}
+            detail: dict[str, Any] = {"added": len(add), "removed": len(remove)}
+            if truncated:
+                detail["removal_skipped"] = "candidate set truncated"
+            inst_details[f"tag:{action.label}"] = detail
 
     async def _apply_monitored_actions(
         self, *, client: Any, params: RuleParams, entity: str,
-        action_rows: list[dict[str, Any]], runtime: dict[str, Any],
+        row_sets: dict[str, list[dict[str, Any]]],
         counters: dict[str, int], inst_details: dict[str, Any],
     ) -> None:
         monitored_actions = [a for a in params.actions if a.type == "set_monitored"]
@@ -467,17 +529,9 @@ class AutomationService:
             if row.get("id") is not None
         }
         for action in monitored_actions:
-            if action.when == "conforming":
-                # validation guarantees media == movies here
-                compiled = compile_candidates(params, "movie", sense="conforming")
-                rows = await self._run_db(
-                    _select_rows,
-                    compiled.select_sql,
-                    {**compiled.binds, **runtime, "limit": self.SEARCHLESS_LIMIT},
-                )
-                target_ids = {int(r["source_id"]) for r in rows}
-            else:
-                target_ids = self._target_ids(entity, action_rows)
+            target_ids = self._target_ids(
+                entity, self._rows_for(row_sets, action.when), action.when
+            )
             desired = bool(action.value)
             changed = [
                 rid for rid in sorted(target_ids)
@@ -494,7 +548,7 @@ class AutomationService:
 
     async def _preview_tag_actions(
         self, *, client: Any, params: RuleParams, entity: str,
-        action_rows: list[dict[str, Any]], inst_details: dict[str, Any],
+        row_sets: dict[str, list[dict[str, Any]]], inst_details: dict[str, Any],
     ) -> None:
         """Dry-run counterpart of _apply_tag_actions: GETs only, never ensure_tag_id
         (which creates a tag) and never an editor call — the zero-mutation invariant
@@ -502,7 +556,6 @@ class AutomationService:
         tag_actions = [a for a in params.actions if a.type == "tag"]
         if not tag_actions:
             return
-        desired_ids = self._target_ids(entity, action_rows)
         live_rows = await (client.list_movies() if entity == "movie" else client.list_series())
         existing_tags = await client.list_tags()
         by_label = {
@@ -511,6 +564,9 @@ class AutomationService:
             if t.get("id") is not None
         }
         for action in tag_actions:
+            desired_ids = self._target_ids(
+                entity, self._rows_for(row_sets, action.when), action.when
+            )
             tag_id = by_label.get((action.label or "").strip().casefold())
             if tag_id is None:
                 # The tag doesn't exist yet on this instance: nothing to remove, and
@@ -541,10 +597,10 @@ class AutomationService:
 
     async def _preview_monitored_actions(
         self, *, client: Any, params: RuleParams, entity: str,
-        action_rows: list[dict[str, Any]], runtime: dict[str, Any], inst_details: dict[str, Any],
+        row_sets: dict[str, list[dict[str, Any]]], inst_details: dict[str, Any],
     ) -> None:
-        """Dry-run counterpart of _apply_monitored_actions: GETs and a read-only
-        conforming select only, never an editor call."""
+        """Dry-run counterpart of _apply_monitored_actions: GETs only, never an
+        editor call."""
         monitored_actions = [a for a in params.actions if a.type == "set_monitored"]
         if not monitored_actions:
             return
@@ -555,16 +611,9 @@ class AutomationService:
             if row.get("id") is not None
         }
         for action in monitored_actions:
-            if action.when == "conforming":
-                compiled = compile_candidates(params, "movie", sense="conforming")
-                rows = await self._run_db(
-                    _select_rows,
-                    compiled.select_sql,
-                    {**compiled.binds, **runtime, "limit": self.SEARCHLESS_LIMIT},
-                )
-                target_ids = {int(r["source_id"]) for r in rows}
-            else:
-                target_ids = self._target_ids(entity, action_rows)
+            target_ids = self._target_ids(
+                entity, self._rows_for(row_sets, action.when), action.when
+            )
             desired = bool(action.value)
             changed = sorted(
                 rid for rid in target_ids if rid in live_monitored and live_monitored[rid] != desired

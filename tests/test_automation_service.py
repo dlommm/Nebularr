@@ -37,7 +37,8 @@ CANDIDATES = [
 class ServiceFakeSession(FakeSession):
     def __init__(self, automation_row: dict | None = AUTOMATION_ROW, candidates: list | None = None,
                  recent_searches: int = 0, alt_rows: list | None = None,
-                 candidates_by_instance: dict[str, list] | None = None) -> None:
+                 candidates_by_instance: dict[str, list] | None = None,
+                 series_rows: list | None = None) -> None:
         super().__init__()
         self.automation_row = automation_row
         self.candidates = candidates if candidates is not None else list(CANDIDATES)
@@ -56,6 +57,12 @@ class ServiceFakeSession(FakeSession):
         # tell two instances' candidates apart (e.g. F1's per-instance dub
         # observation buffering).
         self.candidates_by_instance = candidates_by_instance
+        # Rows for the series-completeness query (episode entity, conforming sense),
+        # which selects `from warehouse.series s` and returns SERIES rows — not the
+        # episode rows every other warehouse select returns. Kept separate so a test
+        # can prove the executor treats those source_ids as series ids rather than
+        # rolling them up through series_source_id like episode rows.
+        self.series_rows = series_rows
         self.recent_searches = recent_searches
         self.finish_params: dict | None = None
         self.ledger_writes: list[dict] = []
@@ -83,6 +90,12 @@ class ServiceFakeSession(FakeSession):
             return FakeResult()
         if "select count(*) from app.automation_action_ledger" in sql:
             return FakeResult(scalar_value=self.recent_searches)
+        if "from warehouse.series s where" in sql:
+            self.statements.append((sql, params))
+            rows = self.series_rows or []
+            if sql.startswith("select count(*)"):
+                return FakeResult(scalar_value=len(rows))
+            return FakeResult(rows=rows)
         if sql.startswith("select count(*)"):
             # candidate count variants: cooldown-filtered then unfiltered
             return FakeResult(scalar_value=len(self._candidates_for(params)))
@@ -677,3 +690,211 @@ def test_profile_warning_flags_missing_language_formats() -> None:
         )
         is None
     )
+
+
+# --- series completeness ("ready to unmonitor") ----------------------------
+# The conforming sense for a series rule returns SERIES rows from the
+# completeness anti-join, not episode rows. Every test below exists because the
+# two row shapes are easy to confuse and confusing them silently mislabels shows
+# as finished.
+
+SERIES_RULE = {
+    "scope": {
+        "media": "series",
+        "series_status_any": ["ended"],
+        "monitored_only": True,
+        "include_specials": False,
+        "include_unmonitored_episodes": True,
+    },
+    "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+    "actions": [{"type": "tag", "label": "ready-to-unmonitor", "when": "conforming"}],
+}
+
+# Deliberately disjoint from the episode rows' series_source_id below: if the
+# executor ever rolled these up as though they were episode rows, it would look
+# for a series_source_id key that isn't there, or tag the wrong shows.
+COMPLETE_SERIES = [
+    {"source_id": 41, "title": "finished and perfect", "status": "ended", "episode_count": 26},
+    {"source_id": 42, "title": "also perfect", "status": "ended", "episode_count": 12},
+]
+
+
+@pytest.mark.asyncio
+async def test_conforming_series_tag_uses_series_ids_directly(integrations: None) -> None:
+    session = ServiceFakeSession(
+        automation_row={**AUTOMATION_ROW, "params": SERIES_RULE},
+        series_rows=COMPLETE_SERIES,
+        candidates=[],
+    )
+    live_series = {
+        "default": [
+            {"id": 41, "tags": []},        # complete -> gets the tag
+            {"id": 42, "tags": [9]},       # complete and already tagged -> untouched
+            {"id": 43, "tags": [9]},       # not complete any more -> tag stripped
+        ]
+    }
+    service, clients = _service(session, live_series=live_series, tags=[{"id": 9, "label": "ready-to-unmonitor"}])
+    result = await service.run(3)
+
+    assert result["status"] == "success"
+    assert clients[0].tag_editor_calls == [
+        ("series", [41], [9], "add"),
+        ("series", [43], [9], "remove"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conforming_only_rule_counts_the_conforming_set_as_matched(
+    integrations: None,
+) -> None:
+    """A ready-to-unmonitor tagger has nothing to say about the failing set, so
+    reporting that set as 'matched' would claim hundreds of matches for a run whose
+    entire job was to tag two finished shows."""
+    session = ServiceFakeSession(
+        automation_row={**AUTOMATION_ROW, "params": SERIES_RULE},
+        series_rows=COMPLETE_SERIES,
+        candidates=[{"source_id": 1, "series_source_id": 99, "has_file": False}] * 400,
+    )
+    service, _clients = _service(session, live_series={"default": [{"id": 41, "tags": []}]})
+    result = await service.run(3)
+
+    assert result["matched"] == len(COMPLETE_SERIES)
+    details = json.loads(session.finish_params["details"])
+    assert details["instances"]["default"]["episode"]["matched"] == 2
+
+
+@pytest.mark.asyncio
+async def test_series_unmonitor_targets_complete_shows(integrations: None) -> None:
+    row = {
+        **AUTOMATION_ROW,
+        "params": {
+            **SERIES_RULE,
+            "actions": [
+                {"type": "tag", "label": "retired-complete", "when": "conforming"},
+                {"type": "set_monitored", "value": False, "when": "conforming"},
+            ],
+        },
+    }
+    session = ServiceFakeSession(automation_row=row, series_rows=COMPLETE_SERIES, candidates=[])
+    live_series = {
+        "default": [
+            {"id": 41, "tags": [], "monitored": True},
+            {"id": 42, "tags": [], "monitored": False},  # already retired -> no-op
+            {"id": 43, "tags": [], "monitored": True},   # incomplete -> left monitored
+        ]
+    }
+    service, clients = _service(session, live_series=live_series)
+    result = await service.run(3)
+
+    assert result["status"] == "success"
+    # Only the complete, still-monitored show is changed: the live-state diff keeps
+    # an already-unmonitored show out, and an incomplete one is never a target.
+    assert clients[0].monitored_calls == [("series", [41], False)]
+
+
+@pytest.mark.asyncio
+async def test_one_rule_can_carry_both_senses_without_crossing_sets(
+    integrations: None,
+) -> None:
+    """Tag the finished shows AND tag what still needs fixing, in one pass. Each
+    action must read its own row set — crossing them would label every failing show
+    'ready-to-unmonitor'."""
+    row = {
+        **AUTOMATION_ROW,
+        "params": {
+            **SERIES_RULE,
+            "actions": [
+                {"type": "tag", "label": "ready-to-unmonitor", "when": "conforming"},
+                {"type": "tag", "label": "needs-fix", "when": "non_conforming"},
+            ],
+        },
+    }
+    failing_episodes = [
+        {"source_id": 501, "series_source_id": 43, "series_title": "broken", "has_file": True,
+         "video_resolution": 720, "audio_languages": ["english"]},
+    ]
+    session = ServiceFakeSession(
+        automation_row=row, series_rows=COMPLETE_SERIES, candidates=failing_episodes
+    )
+    live_series = {"default": [{"id": 41, "tags": []}, {"id": 42, "tags": []}, {"id": 43, "tags": []}]}
+    service, clients = _service(session, live_series=live_series)
+    await service.run(3)
+
+    adds = {
+        tags[0]: ids
+        for (_kind, ids, tags, op) in clients[0].tag_editor_calls
+        if op == "add"
+    }
+    ready_tag = clients[0].tags[0]["id"]
+    needs_tag = clients[0].tags[1]["id"]
+    assert adds[ready_tag] == [41, 42]   # the conforming set, as series ids
+    assert adds[needs_tag] == [43]       # the failing episode's owning series
+
+
+@pytest.mark.asyncio
+async def test_failure_reasons_are_recorded_per_reason_and_per_show(
+    integrations: None,
+) -> None:
+    """The answer to 'what do I have to fix before this show can retire', taken from
+    rows already in hand rather than a second query."""
+    row = {
+        **AUTOMATION_ROW,
+        "params": {**SERIES_RULE, "actions": [{"type": "tag", "label": "needs-fix"}]},
+    }
+    candidates = [
+        # One show with two distinct problems across three episodes.
+        {"source_id": 1, "series_source_id": 43, "series_title": "Boruto", "has_file": True,
+         "video_resolution": 720, "audio_languages": ["english"]},
+        {"source_id": 2, "series_source_id": 43, "series_title": "Boruto", "has_file": False},
+        {"source_id": 3, "series_source_id": 43, "series_title": "Boruto", "has_file": True,
+         "video_resolution": 1080, "audio_languages": ["japanese"]},
+        # One show missing a single episode.
+        {"source_id": 4, "series_source_id": 44, "series_title": "Berserk", "has_file": False},
+    ]
+    session = ServiceFakeSession(automation_row=row, candidates=candidates)
+    service, _clients = _service(session, live_series={"default": []})
+    await service.run(3)
+
+    detail = json.loads(session.finish_params["details"])["instances"]["default"]["episode"]
+    assert detail["failure_reasons"] == {"no_file": 2, "audio_language": 1, "resolution": 1}
+    worst = detail["failure_worst"]
+    assert worst[0]["title"] == "Boruto"
+    assert worst[0]["items"] == 3
+    assert worst[0]["reasons"] == ["audio_language", "no_file", "resolution"]
+    assert worst[1] == {"title": "Berserk", "items": 1, "reasons": ["no_file"]}
+
+
+@pytest.mark.asyncio
+async def test_dry_run_conforming_series_rule_previews_without_mutating(
+    integrations: None,
+) -> None:
+    row = {
+        **AUTOMATION_ROW,
+        "dry_run": True,
+        "params": {
+            **SERIES_RULE,
+            "actions": [
+                {"type": "tag", "label": "ready-to-unmonitor", "when": "conforming"},
+                {"type": "set_monitored", "value": False, "when": "conforming"},
+            ],
+        },
+    }
+    session = ServiceFakeSession(automation_row=row, series_rows=COMPLETE_SERIES, candidates=[])
+    live_series = {
+        "default": [
+            {"id": 41, "tags": [], "monitored": True},
+            {"id": 42, "tags": [], "monitored": True},
+        ]
+    }
+    service, clients = _service(session, live_series=live_series)
+    result = await service.run(3)
+
+    assert result["status"] == "dry_run"
+    assert clients[0].ensure_tag_calls == []
+    assert clients[0].tag_editor_calls == []
+    assert clients[0].monitored_calls == []
+
+    preview = json.loads(session.finish_params["details"])["instances"]["default"]["episode"]
+    assert preview["would_tag:ready-to-unmonitor"]["added"] == 2
+    assert preview["would_tag:ready-to-unmonitor"]["added_sample"] == [41, 42]
+    assert preview["would_monitor:conforming"]["changed"] == 2

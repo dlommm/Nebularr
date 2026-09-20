@@ -483,3 +483,179 @@ def test_count_sql_and_count_all_sql_reflect_ledger_cooldown(engine) -> None:
     assert count_all_after == 2
     assert count_after == 1
     assert count_after < count_all_after
+
+
+def test_complete_series_anti_join_against_real_postgres(engine) -> None:
+    """The series-completeness query, executed for real.
+
+    Four shows that between them cover every way a show can fail to be finished —
+    a below-floor file, a wrong-language file, a gap, and a gap that was papered
+    over by unmonitoring the episode — plus one that is genuinely done. Only the
+    last may come back, and it must come back as a SERIES id.
+    """
+    from arrsync.services.automation_rules import compile_candidates, validate_params
+
+    params = validate_params(
+        "complete-series-tagger",
+        {
+            "scope": {
+                "media": "series",
+                "series_status_any": ["ended"],
+                "monitored_only": True,
+                "include_specials": False,
+                "include_unmonitored_episodes": True,
+            },
+            "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "ready-to-unmonitor", "when": "conforming"}],
+        },
+    )
+    compiled = compile_candidates(params, "episode", sense="conforming")
+    instance = "itest-automations-complete"
+    with engine.begin() as conn:
+        for table in ("episode_file", "episode", "series"):
+            conn.execute(
+                text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
+            )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.series
+                    (source_id, instance_name, title, monitored, status, payload,
+                     seen_at, last_seen_at, deleted)
+                values
+                    (701, :i, 'perfect and ended', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (702, :i, 'one 720p episode', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (703, :i, 'one japanese episode', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (704, :i, 'missing an episode', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (705, :i, 'gap hidden by unmonitoring', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (706, :i, 'perfect but still running', true, 'continuing', '{}'::jsonb, now(), now(), false),
+                    (707, :i, 'nothing aired yet', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (708, :i, 'perfect but special missing', true, 'ended', '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode
+                    (source_id, instance_name, series_source_id, season_number, episode_number,
+                     title, monitored, air_date, payload, seen_at, last_seen_at, deleted)
+                values
+                    (801, :i, 701, 1, 1, 'ok', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (802, :i, 701, 1, 2, 'ok', true, now() - interval '20 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (803, :i, 702, 1, 1, 'ok', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (804, :i, 702, 1, 2, '720p', true, now() - interval '20 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (805, :i, 703, 1, 1, 'japanese', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (806, :i, 704, 1, 1, 'ok', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (807, :i, 704, 1, 2, 'no file', true, now() - interval '20 days', '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (808, :i, 705, 1, 1, 'ok', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (809, :i, 705, 1, 2, 'unmonitored gap', false, now() - interval '20 days', '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (810, :i, 706, 1, 1, 'ok', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (811, :i, 707, 1, 1, 'unaired', true, now() + interval '30 days', '{"hasFile": false}'::jsonb, now(), now(), false),
+                    (812, :i, 708, 1, 1, 'ok', true, now() - interval '30 days', '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (813, :i, 708, 0, 1, 'missing special', true, now() - interval '25 days', '{"hasFile": false}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode_file
+                    (source_id, instance_name, episode_source_id, audio_languages, video_resolution,
+                     payload, seen_at, last_seen_at, deleted)
+                values
+                    (901, :i, 801, array['english'], 1080, '{}'::jsonb, now(), now(), false),
+                    (902, :i, 802, array['eng'], 2160, '{}'::jsonb, now(), now(), false),
+                    (903, :i, 803, array['english'], 1080, '{}'::jsonb, now(), now(), false),
+                    (904, :i, 804, array['english'], 720, '{}'::jsonb, now(), now(), false),
+                    (905, :i, 805, array['japanese'], 1080, '{}'::jsonb, now(), now(), false),
+                    (906, :i, 806, array['english'], 1080, '{}'::jsonb, now(), now(), false),
+                    (907, :i, 808, array['english'], 1080, '{}'::jsonb, now(), now(), false),
+                    (908, :i, 810, array['english'], 1080, '{}'::jsonb, now(), now(), false),
+                    (909, :i, 812, array['english'], 1080, '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(compiled.select_sql),
+            {**compiled.binds, "instance_name": instance, "limit": 100},
+        ).mappings().all()
+        counted = conn.execute(
+            text(compiled.count_sql), {**compiled.binds, "instance_name": instance}
+        ).scalar_one()
+
+    got = {int(r["source_id"]) for r in rows}
+    # 701: every aired episode english + >=1080 -> complete.
+    # 708: complete too — its only gap is a season-0 special, excluded by scope.
+    # 702/703: one file misses the spec. 704: a gap. 705: a gap that was
+    # unmonitored, which include_unmonitored_episodes refuses to forgive.
+    # 706: not ended. 707: nothing aired, so "no episode fails" must not count.
+    assert got == {701, 708}
+    assert int(counted) == 2
+    # Series rows, not episode rows: the executor tags these ids directly.
+    by_id = {int(r["source_id"]): r for r in rows}
+    assert by_id[701]["title"] == "perfect and ended"
+    assert int(by_id[701]["episode_count"]) == 2
+    assert by_id[701]["status"] == "ended"
+
+
+def test_subtitle_require_runs_against_real_postgres(engine) -> None:
+    """The subtitle clause, which has no equivalent in either Arr's own filters."""
+    from arrsync.services.automation_rules import compile_candidates, validate_params
+
+    params = validate_params(
+        "foreign-subs-audit",
+        {
+            "scope": {"media": "movies", "monitored_only": True},
+            "require": {
+                "audio_language_any": ["korean", "kor"],
+                "subtitle_language_any": ["eng", "english"],
+            },
+            "actions": [{"type": "tag", "label": "subs-missing"}],
+        },
+    )
+    compiled = compile_candidates(params, "movie")
+    instance = "itest-automations-subs"
+    with engine.begin() as conn:
+        for table in ("movie_file", "movie"):
+            conn.execute(
+                text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
+            )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.movie
+                    (source_id, instance_name, title, monitored, payload, seen_at, last_seen_at, deleted)
+                values
+                    (601, :i, 'korean with eng subs', true, '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (602, :i, 'korean, no eng subs', true, '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (603, :i, 'korean, no subs at all', true, '{"hasFile": true}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.movie_file
+                    (source_id, instance_name, movie_source_id, audio_languages, subtitle_languages,
+                     payload, seen_at, last_seen_at, deleted)
+                values
+                    (611, :i, 601, array['korean'], array['eng','spa'], '{}'::jsonb, now(), now(), false),
+                    (612, :i, 602, array['kor'], array['spa'], '{}'::jsonb, now(), now(), false),
+                    (613, :i, 603, array['korean'], array[]::text[], '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(compiled.select_sql),
+            {**compiled.binds, "instance_name": instance, "limit": 50},
+        ).mappings().all()
+    # 601 has English subs and conforms; the other two are what needs fixing.
+    assert {int(r["source_id"]) for r in rows} == {602, 603}
