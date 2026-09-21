@@ -27,6 +27,8 @@ from typing import Any
 
 from sqlalchemy import text
 
+from arrsync.services.warehouse_sql import EPISODE_FILE_JOIN
+
 Params = dict[str, Any]
 Built = tuple[str, dict[str, Any]]
 
@@ -95,20 +97,14 @@ EPISODE_INVENTORY_CTE = """
           on s.source_id = e.series_source_id
          and s.instance_name = e.instance_name
          and not s.deleted
-        left join warehouse.episode_file ef
-          on ef.instance_name = e.instance_name
-          and not ef.deleted
-          -- One file can cover several episodes ("S02E01-E02"), which
-          -- episode_file's single episode_source_id cannot express: the second
-          -- episode was orphaned and read as having no file. Join on the
-          -- episode's OWN file id, falling back where it is unknown.
-          and (case when e.episode_file_id is not null
-                    then ef.source_id = e.episode_file_id
-                    else ef.episode_source_id = e.source_id end)
+        {EPISODE_FILE_JOIN}
         where not e.deleted
           and {inst}
     )
-""".format(inst=instance_filter("e.instance_name"))
+""".format(
+    inst=instance_filter("e.instance_name"),
+    EPISODE_FILE_JOIN=EPISODE_FILE_JOIN,
+)
 
 
 def distribution_by_view(
@@ -577,16 +573,7 @@ _register("monitoring-audit", "unmonitored_non_english_shows", "Unmonitored Show
       on e.series_source_id = s.source_id
      and e.instance_name = s.instance_name
      and not e.deleted
-    left join warehouse.episode_file ef
-      on ef.instance_name = e.instance_name
-      and not ef.deleted
-      -- One file can cover several episodes ("S02E01-E02"), which
-      -- episode_file's single episode_source_id cannot express: the second
-      -- episode was orphaned and read as having no file. Join on the
-      -- episode's OWN file id, falling back where it is unknown.
-      and (case when e.episode_file_id is not null
-                then ef.source_id = e.episode_file_id
-                else ef.episode_source_id = e.source_id end)
+    {EPISODE_FILE_JOIN}
     where not s.deleted
       and not s.monitored
       and coalesce((e.payload ->> 'hasFile')::boolean, false) is true

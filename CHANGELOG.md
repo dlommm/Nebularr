@@ -4,6 +4,77 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.9.3] - 2026-09-21
+
+A hotfix for v2.9.2. The multi-episode orphan fix shipped a join the planner cannot
+index, and on a real library it took every query that reads an episode with its file
+past the statement timeout — automations, reports and the library listing alike.
+Migration **0015** runs automatically and also reclaims what 0013 and 0014 left
+behind; no re-sync, no manual step.
+
+### Fixed
+- **Series completeness, episode reports and the library listing no longer time
+  out.** v2.9.2 joined an episode to its file through a `CASE`, which is opaque to
+  the query planner: it cannot push either branch down to an index, so the join
+  degraded to a materialised scan of the whole `episode_file` table replayed once
+  per episode row. Rewritten as an `OR` of two equalities, which lets the planner
+  `BitmapOr` the `episode_file` primary key against
+  `idx_episode_file_episode_instance`. The rows it matches are identical — the
+  fallback arm stays guarded on `episode_file_id is null`, so the two arms remain
+  mutually exclusive exactly as the `CASE` made them.
+
+  Measured on a 133k-episode / 111k-file library, against the shipped rule
+  *"Retire finished shows"*:
+
+  | Query | v2.9.2 | v2.9.3 |
+  | --- | --- | --- |
+  | Series-completeness count | timed out (>180s) | 470 ms |
+  | Episode inventory (reports + library) | timed out (120s) | 472 ms |
+
+  Worth stating plainly, because it was checked: **no amount of database tuning
+  fixes this.** Re-measured with a 16x larger buffer pool, `random_page_cost` set
+  for SSD, zero table bloat and a warm cache, the v2.9.2 query still exceeded 180
+  seconds. A `CASE` join is unindexable by construction.
+
+- **The join now has one definition instead of five.** It had been hand-copied into
+  the rule compiler, both library listings and both reporting queries, and all five
+  copies carried the same defect. They now read `warehouse_sql.EPISODE_FILE_JOIN`,
+  and a test fails the build if any source file spells the predicate out again.
+
+### Changed
+- **Migration 0015 reclaims the heap 0013 and 0014 left behind.** Both bulk-rewrote
+  an entire table, and an `UPDATE` leaves the old tuple dead — autovacuum frees that
+  space for reuse but cannot return it to the filesystem, so each table stayed at
+  roughly twice its necessary size. Measured with `pgstattuple` before the
+  migration: `episode` 420 MB holding 186 MB of live tuples (55.1% free),
+  `episode_file` 430 MB holding 188 MB (54.0% free). `VACUUM FULL ANALYZE` on both
+  took **1031 MB to 583 MB in under 8 seconds** on that library. The `ANALYZE` also
+  supplies statistics 0013 and 0014 never refreshed after their bulk updates. A
+  one-time correction, not a scheduled job — ordinary sync churn under a healthy
+  autovacuum does not bloat these tables.
+- **Seven indexes nothing reads are dropped**, each verified at `idx_scan = 0` over
+  statistics that had never been reset. Three could never have been used at all:
+  `ix_episode_episode_file_id` (added by 0014) indexes the driving side of the join
+  rather than the side looked up, and the `video_resolution` and `quality` indexes
+  are defeated by their own predicates, which wrap the column in `coalesce()`. None
+  was free — every one was maintained on every upsert, and a full reconcile upserts
+  133k episodes and 111k files. `idx_episode_file_size` and `idx_movie_file_size`
+  are kept; the large-files view still uses them.
+- **The bundled Postgres is no longer left at stock defaults.** Both compose files
+  now pass a tuned `command:`, every value overridable from `.env`
+  (`POSTGRES_SHARED_BUFFERS`, `POSTGRES_WORK_MEM`, `POSTGRES_RANDOM_PAGE_COST` and
+  the rest), plus `shm_size` so parallel workers do not die on Docker's 64 MB
+  `/dev/shm`. Stock `shared_buffers` is 128 MB against ~850 MB of hot tables, which
+  measured a **10.9% cache hit ratio**; healthy is above 95%. Defaults here suit
+  about 8 GB of RAM — see `docs/DATABASE-TUNING.md` for the per-RAM table and for
+  how to confirm the change took.
+
+### Added
+- `docs/DATABASE-TUNING.md` — what to set, why each setting matters to this
+  workload, how to size it to your host, and how to verify it worked. Includes what
+  tuning will *not* fix, since Postgres has no auto-indexing and autovacuum already
+  handles what it handles.
+
 ## [2.9.2] - 2026-09-20
 
 Two more reasons a completeness rule read the wrong state, plus the scope-staleness
