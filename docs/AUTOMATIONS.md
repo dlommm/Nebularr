@@ -34,6 +34,17 @@ actions, driven entirely by warehouse data.
   letterboxed 1080p file as 960 and — since one failing episode disqualifies a
   whole show — hid thousands of complete series. `repository._extract_video_resolution`
   and the 0013 SQL implement the same precedence; keep them in step.
+- **One file can cover several episodes.** A double episode ("S02E01-E02") is a
+  single file that Sonarr returns on both episode records, but
+  `warehouse.episode_file` is keyed on the file and carries one
+  `episode_source_id` — so upserting it for E1 then E2 left a single row linked to
+  whichever was written last, orphaning the other. The orphan reported
+  `hasFile: true` with no file row and read as a *missing file*, which under series
+  completeness disqualified the whole show. Queries therefore join on
+  `warehouse.episode.episode_file_id` (the episode's own file id, added by 0014 and
+  backfilled from the payload), falling back to the old link only where that id is
+  unknown. Measured before the fix on a real library: 131 orphaned episodes against
+  123 multi-episode files, blocking 7 of 340 sampled ended shows.
 - **Series completeness**: a series conforms when *no* aired in-scope episode
   fails — an anti-join, not a rollup of conforming episodes, since a show with one
   good episode out of forty conforms to nothing. A missing episode and a 720p file

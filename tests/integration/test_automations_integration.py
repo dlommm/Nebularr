@@ -891,3 +891,170 @@ def test_letterboxed_episode_no_longer_disqualifies_a_complete_series(engine) ->
             conn.execute(
                 text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
             )
+
+
+def test_multi_episode_file_no_longer_orphans_the_second_episode(engine) -> None:
+    """The Mr. Robot case, end to end on real Postgres.
+
+    A double episode is ONE file covering two episodes ("S02E01-E02"), returned by
+    Sonarr on both episode records. ``episode_file`` is keyed on the file and carries
+    a single ``episode_source_id``, so upserting it for E1 then E2 leaves one row
+    whose link points at whichever was written last — orphaning the other, which then
+    reports ``hasFile: true`` with no file row and reads as a missing file. Under
+    series completeness that one orphan disqualified the whole show.
+
+    Measured on a real library before the fix: 131 orphaned episodes against 123
+    multi-episode files, and 7 of 340 sampled ended shows blocked solely by it.
+    """
+    from arrsync.services.automation_rules import compile_candidates, validate_params
+
+    params = validate_params(
+        "complete-series-tagger",
+        {
+            "scope": {
+                "media": "series",
+                "series_status_any": ["ended"],
+                "monitored_only": False,
+                "include_specials": False,
+                "include_unmonitored_episodes": True,
+            },
+            "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "ready", "when": "conforming"}],
+        },
+    )
+    compiled = compile_candidates(params, "episode", sense="conforming")
+    instance = "itest-multi-episode-file"
+    with engine.begin() as conn:
+        for table in ("episode_file", "episode", "series"):
+            conn.execute(
+                text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
+            )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.series
+                    (source_id, instance_name, title, monitored, status, payload,
+                     seen_at, last_seen_at, deleted)
+                values
+                    (6601, :i, 'has a double episode', true, 'ended', '{}'::jsonb, now(), now(), false),
+                    (6602, :i, 'genuinely missing a file', true, 'ended', '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        # 6601: E1 and E2 share file 7701 — exactly what Sonarr reports for
+        # "S02E01-E02". Only E1 carries episode_source_id on the file row, which is
+        # what used to orphan E2.
+        # 6602: E1 claims a file that does not exist anywhere. Still incomplete.
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode
+                    (source_id, instance_name, series_source_id, season_number, episode_number,
+                     title, monitored, air_date, episode_file_id, payload, seen_at, last_seen_at, deleted)
+                values
+                    (5501, :i, 6601, 2, 1, 'pt1', true, now() - interval '30 days', 7701, '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (5502, :i, 6601, 2, 2, 'pt2', true, now() - interval '30 days', 7701, '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (5503, :i, 6601, 2, 3, 'solo',true, now() - interval '20 days', 7702, '{"hasFile": true}'::jsonb, now(), now(), false),
+                    (5504, :i, 6602, 1, 1, 'gone', true, now() - interval '30 days', null, '{"hasFile": true}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode_file
+                    (source_id, instance_name, episode_source_id, audio_languages,
+                     video_resolution, quality, payload, seen_at, last_seen_at, deleted)
+                values
+                    (7701, :i, 5501, array['english'], 1080, 'Bluray-1080p', '{}'::jsonb, now(), now(), false),
+                    (7702, :i, 5503, array['eng'], 1080, 'Bluray-1080p', '{}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(compiled.select_sql),
+            {**compiled.binds, "instance_name": instance, "limit": 50},
+        ).mappings().all()
+        # The shared file must be reachable from BOTH episodes, not just the one it
+        # happens to name.
+        reachable = conn.execute(
+            text(
+                """
+                select e.source_id, ef.source_id as file_id
+                from warehouse.episode e
+                left join warehouse.episode_file ef
+                  on ef.instance_name = e.instance_name and not ef.deleted
+                 and (case when e.episode_file_id is not null
+                           then ef.source_id = e.episode_file_id
+                           else ef.episode_source_id = e.source_id end)
+                where e.instance_name = :i and e.series_source_id = 6601
+                order by e.source_id
+                """
+            ),
+            {"i": instance},
+        ).mappings().all()
+
+    assert {int(r["source_id"]) for r in rows} == {6601}, (
+        "the show with a double episode must be complete; the one with a vanished"
+        " file must not"
+    )
+    assert [(int(r["source_id"]), r["file_id"]) for r in reachable] == [
+        (5501, 7701),
+        (5502, 7701),
+        (5503, 7702),
+    ]
+
+    with engine.begin() as conn:
+        for table in ("episode_file", "episode", "series"):
+            conn.execute(
+                text(f"delete from warehouse.{table} where instance_name = :i"), {"i": instance}
+            )
+
+
+def test_0014_backfills_episode_file_id_from_the_payload(engine) -> None:
+    """The backfill, executed for real: existing rows get the column without a
+    re-sync, and Sonarr's 0-means-no-file is normalised to NULL."""
+    instance = "itest-episode-file-id-backfill"
+    with engine.begin() as conn:
+        conn.execute(text("delete from warehouse.episode where instance_name = :i"), {"i": instance})
+        conn.execute(
+            text(
+                """
+                insert into warehouse.episode
+                    (source_id, instance_name, series_source_id, season_number, episode_number,
+                     title, monitored, episode_file_id, payload, seen_at, last_seen_at, deleted)
+                values
+                    (4401, :i, 1, 1, 1, 'has one',  true, null, '{"episodeFileId": 8801}'::jsonb, now(), now(), false),
+                    (4402, :i, 1, 1, 2, 'zero',     true, null, '{"episodeFileId": 0}'::jsonb, now(), now(), false),
+                    (4403, :i, 1, 1, 3, 'absent',   true, null, '{}'::jsonb, now(), now(), false),
+                    (4404, :i, 1, 1, 4, 'junk',     true, null, '{"episodeFileId": "abc"}'::jsonb, now(), now(), false)
+                """
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                """
+                update warehouse.episode
+                set episode_file_id = nullif((payload->>'episodeFileId')::bigint, 0)
+                where payload->>'episodeFileId' ~ '^[0-9]+$'
+                  and episode_file_id is distinct from nullif((payload->>'episodeFileId')::bigint, 0)
+                """
+            )
+        )
+        got = dict(
+            conn.execute(
+                text(
+                    "select source_id, episode_file_id from warehouse.episode"
+                    " where instance_name = :i"
+                ),
+                {"i": instance},
+            ).all()
+        )
+        conn.execute(text("delete from warehouse.episode where instance_name = :i"), {"i": instance})
+
+    assert got == {4401: 8801, 4402: None, 4403: None, 4404: None}

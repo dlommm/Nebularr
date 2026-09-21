@@ -4,6 +4,7 @@ from typing import Any
 
 from arrsync.services.repository import (
     _extract_video_resolution,
+    upsert_episode,
     upsert_episode_file,
     upsert_movie_file,
 )
@@ -240,3 +241,52 @@ def test_tier_boundaries_map_to_named_tiers() -> None:
     }
     for resolution, expected in cases.items():
         assert _extract_video_resolution({"mediaInfo": {"resolution": resolution}}) == expected, resolution
+
+
+# --- one file, several episodes --------------------------------------------
+
+
+def test_episode_file_id_is_recorded_from_the_episode() -> None:
+    """The episode carries the id of the file it uses, which is how a file shared by
+    two episodes ("S02E01-E02") stays reachable from both."""
+    session = RecordingSession()
+    upsert_episode(
+        session=session,
+        instance="inst",
+        row={"id": 501, "seriesId": 9, "seasonNumber": 2, "episodeNumber": 2, "episodeFileId": 7002},
+        run_id=1,
+        sync_source="test",
+    )
+    sql, params = session.statements[0]
+    assert "episode_file_id" in sql
+    assert "episode_file_id = excluded.episode_file_id" in sql
+    assert params is not None and params["episode_file_id"] == 7002
+
+
+def test_zero_episode_file_id_is_stored_as_no_file() -> None:
+    """Sonarr reports 0 for "no file"; storing that verbatim would look like a real
+    id that joins to nothing."""
+    session = RecordingSession()
+    upsert_episode(
+        session=session,
+        instance="inst",
+        row={"id": 502, "seriesId": 9, "seasonNumber": 1, "episodeNumber": 1, "episodeFileId": 0},
+        run_id=1,
+        sync_source="test",
+    )
+    _sql, params = session.statements[0]
+    assert params is not None and params["episode_file_id"] is None
+
+
+def test_absent_or_junk_episode_file_id_is_none() -> None:
+    for value in ({}, {"episodeFileId": None}, {"episodeFileId": "abc"}):
+        session = RecordingSession()
+        upsert_episode(
+            session=session,
+            instance="inst",
+            row={"id": 503, "seriesId": 9, "seasonNumber": 1, "episodeNumber": 1, **value},
+            run_id=1,
+            sync_source="test",
+        )
+        _sql, params = session.statements[0]
+        assert params is not None and params["episode_file_id"] is None, value

@@ -318,14 +318,15 @@ def upsert_episode(session: Session, instance: str, row: dict[str, Any], run_id:
         text(
             """
             insert into warehouse.episode
-            (source_id, instance_name, series_source_id, season_number, episode_number, title, air_date, runtime_minutes, monitored, payload, sync_source, sync_run_id, seen_at, last_seen_at, deleted)
+            (source_id, instance_name, series_source_id, season_number, episode_number, title, air_date, runtime_minutes, monitored, episode_file_id, payload, sync_source, sync_run_id, seen_at, last_seen_at, deleted)
             values
-            (:source_id, :instance_name, :series_source_id, :season_number, :episode_number, :title, :air_date, :runtime_minutes, :monitored, cast(:payload as jsonb), :sync_source, :sync_run_id, now(), now(), false)
+            (:source_id, :instance_name, :series_source_id, :season_number, :episode_number, :title, :air_date, :runtime_minutes, :monitored, :episode_file_id, cast(:payload as jsonb), :sync_source, :sync_run_id, now(), now(), false)
             on conflict (source_id, instance_name) do update
             set title = excluded.title,
                 air_date = excluded.air_date,
                 runtime_minutes = excluded.runtime_minutes,
                 monitored = excluded.monitored,
+                episode_file_id = excluded.episode_file_id,
                 payload = excluded.payload,
                 sync_source = excluded.sync_source,
                 sync_run_id = excluded.sync_run_id,
@@ -343,11 +344,25 @@ def upsert_episode(session: Session, instance: str, row: dict[str, Any], run_id:
             "air_date": air_date,
             "runtime_minutes": row.get("runtime"),
             "monitored": bool(row.get("monitored", True)),
+            # The file THIS episode uses. One file can cover several episodes
+            # ("S02E01-E02"), which episode_file's single episode_source_id cannot
+            # express, so queries join on this instead.
+            "episode_file_id": _episode_file_id(row),
             "payload": _to_json(row),
             "sync_source": sync_source,
             "sync_run_id": run_id,
         },
     )
+
+
+def _episode_file_id(row: dict[str, Any]) -> int | None:
+    """The episode's own file id, or None. Sonarr reports 0 for "no file", which
+    would otherwise read as a real id that joins to nothing."""
+    try:
+        value = int(row.get("episodeFileId"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return value or None
 
 
 def _split_language_list(raw: Any) -> list[str]:
