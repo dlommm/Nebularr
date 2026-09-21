@@ -40,5 +40,21 @@ for path, (old_str, new_str) in replacements.items():
     print(f"updated {path}")
 EOF
 
+# package-lock.json carries the version too, in two places. This step has existed
+# since v2.0.0 but its result was never checked, and the lockfile sat at 2.8.0
+# across three releases because npm was absent or the write silently did nothing.
+# Verify rather than hope: check-version-sync.sh now gates it, and a release that
+# reaches CI with a stale lockfile fails there instead of shipping.
+if ! command -v npm >/dev/null 2>&1; then
+  echo "FAIL: npm not found; frontend/package-lock.json cannot be synced" >&2
+  exit 1
+fi
 (cd frontend && npm install --package-lock-only --silent)
+lock_hits="$(grep -cE "\"version\": \"${new_version}\"" frontend/package-lock.json || true)"
+if [[ "$lock_hits" != "2" ]]; then
+  echo "FAIL: frontend/package-lock.json has ${lock_hits} of 2 version strings at ${new_version}" >&2
+  exit 1
+fi
+echo "updated frontend/package-lock.json"
+
 echo "Done. Verify with ./scripts/check-version-sync.sh, then commit and tag v${new_version}."
