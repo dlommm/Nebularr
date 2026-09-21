@@ -4,6 +4,58 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.9.2] - 2026-09-20
+
+Two more reasons a completeness rule read the wrong state, plus the scope-staleness
+work. Migration 0014 runs automatically and needs no re-sync.
+
+### Fixed
+- **A file shared by several episodes no longer orphans all but one.** A double
+  episode ("S02E01-E02") is one file that Sonarr returns on both episode records,
+  but `warehouse.episode_file` is keyed on the file and carries a single
+  `episode_source_id` — so upserting it for E1 then E2 left one row linked to
+  whichever was written last. The other episode reported `hasFile: true` with no
+  file row and read as a *missing file*, which under series completeness
+  disqualified the whole show. `warehouse.episode` now carries `episode_file_id`
+  (migration **0014**, backfilled from the retained payload), and the rule
+  compiler, both library listings and both reporting queries join on it. Measured
+  on a real library: 131 orphaned episodes against 123 multi-episode files, and 7
+  of 340 sampled ended shows blocked solely by this — Mr. Robot, Heroes, Star Trek:
+  Voyager among them.
+- **Upgrades no longer leave a stale file row behind.** An upgrade arrives as a new
+  `episodeFile`/`movieFile` id, so upserting it alone left the row it replaced live
+  and the item presenting two files, one gone from disk — and conformance counts
+  every live row. Both the episode and movie webhook paths now tombstone the
+  superseded row (movies had the identical bug), keyed on a file actually written
+  rather than on absence, since `list_episodes` only requests `includeEpisodeFile`
+  where supported.
+- **The editor's live preview counted the wrong set.** It used the compiler's
+  default sense, so a retirement rule reported the shows that *fail* its spec —
+  the opposite of what it acts on. `primary_sense()` is now shared by the executor
+  and the preview. Previews and run details also state what the number counts,
+  since a completeness query returns shows rather than episodes.
+
+### Added
+- **Scope refresh on every incremental tick.** The incremental pass is
+  history-driven, and an Arr's history records grabs, imports and deletions — never
+  a monitor toggle. Unmonitoring a show in Sonarr produced no event, the series was
+  never refetched, and `warehouse.series.monitored` stayed wrong until the next full
+  sync; on a real library that left ~520 series stale, and `monitored` is the flag
+  automations scope on. One list call per instance now re-reads
+  `monitored`/`status`/`path`/genres. Upsert-only by design — a short list response
+  must never read as "these were deleted" — so removals stay the full/reconcile
+  pass's business. Disable with `INCREMENTAL_SCOPE_REFRESH=false`.
+- A separate opt-in **`full`** sync schedule, seeded *disabled* at weekly with its
+  own `FULL_SYNC_CRON`. Reconcile already performs the same full sync, so enabling
+  both runs two of them.
+
+### Changed
+- The seeded **reconcile** schedule is now **daily** (was weekly). It is a full sync
+  under another name, and was the only pass that noticed a monitor toggle — weekly
+  meant up to seven days of drift, and a restart across the scheduled minute bought
+  another seven, since a missed cron does not backfill. Existing installs keep
+  whatever is already in `app.sync_schedule`.
+
 ## [2.9.1] - 2026-09-20
 
 Fixes the resolution comparison that made 2.9.0's series-completeness rules
