@@ -13,6 +13,35 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-arradmin}
       # Change this before first start (scripts/one-click-all-in-one.sh generates one).
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arradmin}
+    # Stock Postgres ships a 128MB shared_buffers and a random_page_cost that
+    # assumes a spinning disk. On a real library (133k episodes / 111k files,
+    # ~850MB of hot tables) that measured a 10.9% cache hit ratio, because
+    # neither big table fits in the buffer pool. Every value below is an env
+    # override so a small box can stay small; the defaults suit ~8GB of RAM.
+    # See docs/DATABASE-TUNING.md for the per-RAM table.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-2GB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-6GB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-32MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-512MB}
+      # SSD/NVMe. Raise toward 4 only if the data volume is a spinning disk.
+      - -c
+      - random_page_cost=${POSTGRES_RANDOM_PAGE_COST:-1.1}
+      - -c
+      - effective_io_concurrency=${POSTGRES_EFFECTIVE_IO_CONCURRENCY:-200}
+      - -c
+      - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
+      - -c
+      - default_statistics_target=${POSTGRES_STATISTICS_TARGET:-200}
+    # Parallel workers exchange tuples through /dev/shm, which Docker caps at 64MB
+    # by default; too small and a parallel scan dies on "could not resize shared
+    # memory segment".
+    shm_size: ${POSTGRES_SHM_SIZE:-1gb}
     security_opt:
       - no-new-privileges:true
     volumes:
@@ -27,7 +56,7 @@ services:
     build:
       context: .
       args:
-        APP_VERSION: ${APP_VERSION:-2.9.2}
+        APP_VERSION: ${APP_VERSION:-2.9.3}
         GIT_SHA: ${APP_GIT_SHA:-release}
     user: "1001:1001"
     read_only: true

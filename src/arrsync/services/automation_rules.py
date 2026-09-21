@@ -23,6 +23,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from arrsync.services.warehouse_sql import EPISODE_FILE_JOIN
+
 _MAX_FOLDER_LEN = 512
 
 # Sonarr's series statuses, as written to warehouse.series.status by
@@ -568,19 +570,10 @@ _DUB_GATE_SERIES_JOIN = (
     ") dub on true"
 )
 
-# Joined on the episode's OWN file id, not on episode_file.episode_source_id.
-# One file can cover several episodes ("S02E01-E02") and episode_file is keyed on the
-# file, carrying a single episode_source_id — so the last episode upserted won it and
-# the others were orphaned: hasFile true, no file row, read as a missing file. Under
-# series completeness one orphan disqualified an entire show. The CASE keeps exactly
-# one arm live, falling back to the old link for rows with no known file id.
-_EPISODE_FILE_JOIN = (
-    "left join warehouse.episode_file ef on ef.instance_name = e.instance_name"
-    " and not ef.deleted"
-    " and (case when e.episode_file_id is not null"
-    " then ef.source_id = e.episode_file_id"
-    " else ef.episode_source_id = e.source_id end)"
-)
+# Joined on the episode's OWN file id, not on episode_file.episode_source_id —
+# see warehouse_sql.EPISODE_FILE_JOIN for why, and for why it is an OR of
+# equalities rather than the CASE that reads more directly.
+_EPISODE_FILE_JOIN = EPISODE_FILE_JOIN
 
 
 def _series_scope_fragments(
