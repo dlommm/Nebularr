@@ -51,6 +51,23 @@ class FakeHistoryClient:
         self.settings = None
         self.base_url = "http://fake:8989"
         self.api_key = "fake"
+        # Rows the scope-refresh pass reads. Empty by default so tests written
+        # before the refresh existed keep their record counts.
+        self.scope_rows: list[dict[str, Any]] = []
+        self.scope_error: Exception | None = None
+        self.scope_calls = 0
+
+    async def list_series(self) -> list[dict[str, Any]]:
+        self.scope_calls += 1
+        if self.scope_error is not None:
+            raise self.scope_error
+        return self.scope_rows
+
+    async def list_movies(self) -> list[dict[str, Any]]:
+        self.scope_calls += 1
+        if self.scope_error is not None:
+            raise self.scope_error
+        return self.scope_rows
 
     async def list_history_since(self, _since: str | None) -> list[dict[str, Any]]:
         return self.events
@@ -405,3 +422,108 @@ async def test_incremental_deleted_series_tombstones_its_episode_files() -> None
     ]
     assert file_sweeps, "episode_file rows of a deleted series must be tombstoned"
     assert file_sweeps[0] is not None and file_sweeps[0]["series_ids"] == [88]
+
+
+# --- scope refresh ---------------------------------------------------------
+# An Arr's history records grabs, imports and deletions — never a monitor toggle.
+# So unmonitoring a show in Sonarr produced no event, the series was never
+# refetched, and warehouse.series.monitored stayed wrong until the next full sync.
+# On a real library that left ~520 series with a stale flag, and monitored is the
+# flag automations scope on. These tests pin the pass that closes that window.
+
+
+class _Settings:
+    def __init__(self, *, incremental_scope_refresh: bool = True) -> None:
+        self.incremental_scope_refresh = incremental_scope_refresh
+        self.http_max_parallel_requests = 4
+
+
+def _series_rows(*ids: int) -> list[dict[str, Any]]:
+    return [{"id": i, "title": f"show {i}", "monitored": False, "status": "ended"} for i in ids]
+
+
+@pytest.mark.asyncio
+async def test_scope_refresh_upserts_series_when_history_is_empty() -> None:
+    """The drift case exactly: nothing in history, yet the flags must still move."""
+    session = RecordingSession(watermark=WATERMARK)
+    client = FakeSonarrClient([], {}, {})
+    client.settings = _Settings()  # type: ignore[assignment]
+    client.scope_rows = _series_rows(1, 2, 3)
+
+    records = await _service(session)._sync_incremental(
+        "sonarr", client, run_id=1, instance_name="default", trigger="test"
+    )
+
+    assert client.scope_calls == 1, "one list call per instance, not one per series"
+    assert records == 3
+    series_writes = [p for sql, p in session.statements if "insert into warehouse.series" in sql]
+    assert len(series_writes) == 3
+    assert {p["source_id"] for p in series_writes if p} == {1, 2, 3}
+
+
+@pytest.mark.asyncio
+async def test_scope_refresh_never_tombstones() -> None:
+    """Upsert-only by design: a list call that came back short (partial response, an
+    Arr mid-restart) must never be read as 'these items were deleted'. Removals stay
+    the full/reconcile pass's business, which has a mass-tombstone guard."""
+    session = RecordingSession(watermark=WATERMARK)
+    client = FakeSonarrClient([], {}, {})
+    client.settings = _Settings()  # type: ignore[assignment]
+    client.scope_rows = _series_rows(1)
+
+    await _service(session)._sync_incremental(
+        "sonarr", client, run_id=1, instance_name="default", trigger="test"
+    )
+
+    tombstones = [sql for sql, _ in session.statements if "set deleted = true" in sql]
+    assert tombstones == []
+
+
+@pytest.mark.asyncio
+async def test_scope_refresh_failure_does_not_lose_the_history_ingest() -> None:
+    """The refresh is an extra, not a precondition — a failed list call must not cost
+    the run its watermark, or an outage would replay history forever."""
+    session = RecordingSession(watermark=WATERMARK)
+    client = FakeSonarrClient([{"id": 42, "date": "2026-07-01T10:00:00Z"}], {}, {})
+    client.settings = _Settings()  # type: ignore[assignment]
+    client.scope_error = RuntimeError("sonarr unreachable")
+
+    records = await _service(session)._sync_incremental(
+        "sonarr", client, run_id=1, instance_name="default", trigger="test"
+    )
+
+    assert records == 0
+    watermark_writes = [p for sql, p in session.statements if "insert into app.sync_state" in sql]
+    assert watermark_writes, "watermark must still advance"
+    assert watermark_writes[-1]["history_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_scope_refresh_can_be_switched_off() -> None:
+    session = RecordingSession(watermark=WATERMARK)
+    client = FakeSonarrClient([], {}, {})
+    client.settings = _Settings(incremental_scope_refresh=False)  # type: ignore[assignment]
+    client.scope_rows = _series_rows(1, 2)
+
+    records = await _service(session)._sync_incremental(
+        "sonarr", client, run_id=1, instance_name="default", trigger="test"
+    )
+
+    assert client.scope_calls == 0
+    assert records == 0
+
+
+@pytest.mark.asyncio
+async def test_scope_refresh_handles_movies() -> None:
+    session = RecordingSession(watermark=WATERMARK)
+    client = FakeRadarrClient([], {})
+    client.settings = _Settings()  # type: ignore[assignment]
+    client.scope_rows = [{"id": 7, "title": "a film", "monitored": True}]
+
+    records = await _service(session)._sync_incremental(
+        "radarr", client, run_id=1, instance_name="default", trigger="test"
+    )
+
+    assert records == 1
+    movie_writes = [p for sql, p in session.statements if "insert into warehouse.movie" in sql]
+    assert len(movie_writes) == 1

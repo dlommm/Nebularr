@@ -30,6 +30,14 @@ const CRON_PRESETS: { label: string; cron: string }[] = [
 
 const SELECT_CLASS = "h-9 rounded-md border border-input bg-background px-2 text-sm";
 
+/** The unit the server counted in, singularised for a count of one. A completeness
+ *  rule counts shows, not episodes, so the number needs its noun to be read right. */
+function previewUnit(preview: AutomationValidateResponse | null, count: number): string {
+  const unit = preview?.preview_unit ?? "items";
+  if (count === 1) return unit === "series" ? "series" : unit.replace(/s$/, "");
+  return unit;
+}
+
 function actionOfType(actions: RuleAction[] | undefined, type: RuleAction["type"]): RuleAction | undefined {
   return (actions ?? []).find((action) => action.type === type);
 }
@@ -207,7 +215,10 @@ export function AutomationEditor({
             <>
               <Target className="size-3.5 shrink-0 text-ok" aria-hidden />
               <span className="text-muted-foreground">
-                Would act on {matched} item{matched === 1 ? "" : "s"} right now.
+                Would act on {matched} {previewUnit(preview, matched)} right now
+                {preview?.preview_sense === "conforming"
+                  ? " — the ones already fully in spec."
+                  : " — the ones that fall short."}
               </span>
             </>
           ) : (

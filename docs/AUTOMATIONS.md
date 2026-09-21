@@ -113,6 +113,43 @@ action (**Run now**) with the rest behind an overflow menu.
   reversible and stays one click.
 - Templates appear inside the sheet when creating, not permanently on the page.
 
+## Freshness
+
+Automations read the warehouse, so a rule is only as correct as the last sync that
+touched the rows it scopes on.
+
+- **Incremental (every 30 min by default)** is history-driven: it asks the Arr for
+  history since a watermark and refetches only the series/movies those events name.
+  An Arr's history records grabs, imports and deletions — **never a monitor
+  toggle** — so before the scope-refresh pass existed, unmonitoring a show in
+  Sonarr's UI produced no event, the series was never refetched, and
+  `warehouse.series.monitored` stayed wrong until the next full sync. On a real
+  library that left ~520 series with a stale flag, and `monitored` is the flag rules
+  scope on: a show stuck at a stale `monitored=false` is invisible to every rule
+  that sets `monitored_only`.
+- **Scope refresh** now runs on every incremental tick: one list call per instance
+  re-reads each series/movie's `monitored`, `status`, `path` and genres. Upsert-only
+  and deliberately so — a list call that came back short must never be read as
+  "these items were deleted", so removals stay the full/reconcile pass's business
+  (it has a mass-tombstone guard). Disable with `INCREMENTAL_SCOPE_REFRESH=false`.
+- **Reconcile** is a *full* sync under another name (same code path), seeded
+  **daily** at 04:00. It was weekly, which meant up to seven days of monitor drift —
+  and a container restart across the scheduled minute silently bought another seven,
+  since a missed cron does not backfill. Existing installs keep whatever is already
+  in `app.sync_schedule`; the new default only seeds new ones.
+- **Full** is a separate, opt-in schedule, seeded **disabled** at weekly. Reconcile
+  already performs the same full sync, so enabling both simply runs two of them. It
+  has its own cron (`FULL_SYNC_CRON`) so changing reconcile's cadence cannot move it.
+- **Webhooks** write the item they name, and now tombstone the file row an upgrade
+  replaced. An upgrade arrives as a *new* `episodeFile`/`movieFile` id, so upserting
+  it alone left the previous row live and the item presenting two files — one of
+  which is gone from disk. Conformance reads every live row, so the stale one counted
+  as real, and under series completeness one such row disqualified an entire show.
+  The tombstone is keyed on a file that was actually written: `list_episodes` only
+  requests `includeEpisodeFile` where supported and falls back without it, so an
+  absent file in the payload can mean "not included" rather than "none exists", and
+  acting on absence would delete live rows for files still on disk.
+
 ## Operations
 
 - Runs are recorded in `app.automation_run`; per-item outcomes live in `details`.

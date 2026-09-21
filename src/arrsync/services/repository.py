@@ -638,6 +638,66 @@ def tombstone_episode_files_for_series(
     )
 
 
+def tombstone_superseded_episode_files(
+    session: Session, instance_name: str, episode_source_id: int, keep_source_id: int
+) -> None:
+    """Tombstone the episode's other live file rows, keeping the one just written.
+
+    An upgrade gives the replacement a NEW episodeFile id, so upserting it alone
+    leaves the previous row live and the episode presenting two files — one of which
+    is gone from disk. Conformance reads every live row, so the stale one counts as
+    real, and under series completeness one such row disqualifies an entire show.
+
+    Deliberately keyed on a file we DID write: ``list_episodes`` only asks for
+    ``includeEpisodeFile`` when the instance supports it and falls back to a request
+    without it, so an absent ``episodeFile`` can mean "not included in this
+    response" rather than "no file exists". Tombstoning on absence would wipe live
+    rows for files that are still there. Genuine removals are covered by the
+    EpisodeFileDelete webhook and by the full/incremental reconcile passes.
+    """
+    session.execute(
+        text(
+            """
+            update warehouse.episode_file
+            set deleted = true
+            where instance_name = :instance_name
+              and episode_source_id = :episode_source_id
+              and source_id <> :keep_source_id
+              and not deleted
+            """
+        ),
+        {
+            "instance_name": instance_name,
+            "episode_source_id": episode_source_id,
+            "keep_source_id": keep_source_id,
+        },
+    )
+
+
+def tombstone_superseded_movie_files(
+    session: Session, instance_name: str, movie_source_id: int, keep_source_id: int
+) -> None:
+    """Movie counterpart of tombstone_superseded_episode_files — same hazard, same
+    reasoning about only acting on a file we actually wrote."""
+    session.execute(
+        text(
+            """
+            update warehouse.movie_file
+            set deleted = true
+            where instance_name = :instance_name
+              and movie_source_id = :movie_source_id
+              and source_id <> :keep_source_id
+              and not deleted
+            """
+        ),
+        {
+            "instance_name": instance_name,
+            "movie_source_id": movie_source_id,
+            "keep_source_id": keep_source_id,
+        },
+    )
+
+
 def mark_missing_children(
     session: Session,
     table: str,

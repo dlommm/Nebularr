@@ -222,3 +222,54 @@ def test_run_now_starts_background_task(client: TestClient) -> None:
     resp = client.post("/api/automations/5/run")
     assert resp.status_code == 200
     assert resp.json()["status"] == "started"
+
+
+def test_validate_previews_the_set_the_rule_actually_acts_on(client: TestClient) -> None:
+    """A retirement rule acts on the shows that PASS its spec. The preview used the
+    compiler's default sense, so it reported the ones that fail — the opposite — and
+    the editor's "would act on N items" was wrong for exactly the rules this feature
+    was built for."""
+    resp = client.post(
+        "/api/automations/validate",
+        json={
+            "template_key": "series-done-unmonitor",
+            "cron": "30 4 * * 6",
+            "params": {
+                "scope": {
+                    "media": "series",
+                    "series_status_any": ["ended"],
+                    "include_specials": False,
+                    "include_unmonitored_episodes": True,
+                },
+                "require": {"audio_language_any": ["english", "eng"], "resolution_min": 1080},
+                "actions": [
+                    {"type": "tag", "label": "retired-complete", "when": "conforming"},
+                    {"type": "set_monitored", "value": False, "when": "conforming"},
+                ],
+            },
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["preview_sense"] == "conforming"
+    # The completeness query returns series rows, so the number is a count of shows.
+    assert body["preview_unit"] == "series"
+
+
+def test_validate_reports_the_failing_set_for_an_audit_rule(client: TestClient) -> None:
+    resp = client.post(
+        "/api/automations/validate",
+        json={
+            "template_key": "series-spec-audit",
+            "cron": "0 8 * * 6",
+            "params": {
+                "scope": {"media": "series"},
+                "require": {"resolution_min": 1080},
+                "actions": [{"type": "tag", "label": "needs-fix"}],
+            },
+        },
+    )
+    body = resp.json()
+    assert body["preview_sense"] == "non_conforming"
+    assert body["preview_unit"] == "episodes"

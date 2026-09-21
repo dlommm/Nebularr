@@ -23,7 +23,9 @@ from arrsync.services.arr_client import ArrClient
 from arrsync.services.automation_rules import (
     RuleParams,
     compile_candidates,
+    counts_series,
     failure_reasons,
+    primary_sense,
     validate_params,
 )
 
@@ -249,22 +251,15 @@ class AutomationService:
                 ] or [-1]  # unmatched labels match nothing
 
             has_search = any(a.type.startswith("search_") for a in params.actions)
-            # Which set this run is *about*. Search actions are non-conforming by
-            # validation, so a rule whose every action is conforming (a
-            # ready-to-unmonitor tagger) has nothing to say about the failing set:
-            # counting that set as "matched" would report hundreds of matches for a
-            # run whose whole job was to tag eight finished shows.
-            primary_sense = (
-                "non_conforming"
-                if any(a.when == "non_conforming" for a in params.actions)
-                else "conforming"
-            )
+            # Shared with the editor's preview so the two can never disagree about
+            # which set a rule is about (see automation_rules.primary_sense).
+            sense = primary_sense(params)
             # Bound this instance's select by what's left of the run-wide budget, not
             # the original per-run allowance — budget_state is shared and depleted as
             # each instance actually fires searches, so a later instance in the same
             # run can't spend a pool an earlier instance already used.
             limit = max(0, budget_state["remaining"]) if has_search else self.SEARCHLESS_LIMIT
-            compiled = compile_candidates(params, entity, sense=primary_sense)
+            compiled = compile_candidates(params, entity, sense=sense)
             runtime: dict[str, Any] = {
                 "instance_name": name,
                 "cooldown_days": int(automation["cooldown_days"]),
@@ -311,6 +306,9 @@ class AutomationService:
             if has_search:
                 counters["skipped_budget"] += max(0, eligible - pre_prune_count)
             inst_details["matched"] = len(candidates)
+            inst_details["matched_unit"] = (
+                "series" if counts_series(params, entity) else f"{entity}s"
+            )
 
             # The tag/monitor reconcile target sets must never come from the
             # budget-truncated (or new_dub_only-pruned) search candidate list — tag
@@ -340,7 +338,7 @@ class AutomationService:
             # "What would I have to fix before this show could retire" — answered
             # from the rows already in hand, so it costs a run no extra query.
             reason_rows = row_sets.get("non_conforming")
-            if reason_rows is None and primary_sense == "non_conforming":
+            if reason_rows is None and sense == "non_conforming":
                 reason_rows = candidates
             if reason_rows:
                 inst_details.update(self._reason_summary(reason_rows, params, entity))

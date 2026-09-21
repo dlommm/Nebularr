@@ -26,7 +26,10 @@ function RunDetail({ runId }: { runId: number }): JSX.Element {
         Object.entries(entities).map(([entity, info]) => (
           <div key={`${instance}:${entity}`}>
             <p className="font-medium">
-              {instance} / {entity}: matched {info.matched ?? 0}
+              {instance} / {entity}: matched {info.matched ?? 0}{" "}
+              {/* A completeness rule's query returns SHOWS, so "288" under an entity
+                  named "episode" is 288 series. The run says which. */}
+              {info.matched_unit ?? ""}
               {typeof info.searched === "number" ? `, searched ${info.searched}` : ""}
             </p>
             {info.profile_warning ? (

@@ -243,4 +243,51 @@ describe("AutomationEditor", () => {
       { type: "tag", label: "ready-to-unmonitor", when: "conforming" },
     ]);
   });
+
+  it("says which set the preview counted, and in what unit", async () => {
+    // The preview used to count non-conforming items for every rule, so a
+    // retirement rule reported the shows that FAIL its spec. The copy now states
+    // the set explicitly, and a completeness rule counts shows, not episodes.
+    vi.mocked(api.validateAutomation).mockResolvedValueOnce({
+      valid: true,
+      next_fire_times: [],
+      match_preview: { default: 288 },
+      preview_sense: "conforming",
+      preview_unit: "series",
+    });
+    await renderEditor({
+      ...DRAFT,
+      params: {
+        scope: { media: "series", series_status_any: ["ended"] },
+        require: { resolution_min: 1080 },
+        actions: [{ type: "tag", label: "retired-complete", when: "conforming" }],
+      },
+    });
+
+    expect(
+      await screen.findByText(/would act on 288 series right now — the ones already fully in spec/i),
+    ).toBeInTheDocument();
+  });
+
+  it("describes a failing-set preview as the ones that fall short", async () => {
+    vi.mocked(api.validateAutomation).mockResolvedValueOnce({
+      valid: true,
+      next_fire_times: [],
+      match_preview: { default: 41 },
+      preview_sense: "non_conforming",
+      preview_unit: "episodes",
+    });
+    await renderEditor({
+      ...DRAFT,
+      params: {
+        scope: { media: "series" },
+        require: { resolution_min: 1080 },
+        actions: [{ type: "tag", label: "needs-fix" }],
+      },
+    });
+
+    expect(
+      await screen.findByText(/would act on 41 episodes right now — the ones that fall short/i),
+    ).toBeInTheDocument();
+  });
 });

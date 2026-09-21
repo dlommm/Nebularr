@@ -597,6 +597,9 @@ export type AutomationRunDetail = AutomationRunRow & {
           searched?: number;
           profile_warning?: string;
           would_do?: { source_id: number; title: string; actions: string[] }[];
+          /** What `matched` counts: "series" for a completeness rule (whose query
+           *  returns shows), else "episodes"/"movies". */
+          matched_unit?: string;
           /** Why items missed the spec: reason code -> item count. */
           failure_reasons?: Record<string, number>;
           /** Worst offenders, already bounded and sorted server-side. */
@@ -614,6 +617,12 @@ export type AutomationValidateResponse = {
   next_fire_times?: string[];
   match_preview?: Record<string, number> | null;
   preview_note?: string;
+  /** Which set the count describes: the items that pass the spec, or those that
+   *  fail it. A retirement rule acts on the passing set. */
+  preview_sense?: "non_conforming" | "conforming";
+  /** What the count counts — "series" for a completeness rule, whose query
+   *  returns shows rather than episodes. */
+  preview_unit?: string;
 };
 
 export type AutomationPayload = {

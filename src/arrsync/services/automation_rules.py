@@ -449,6 +449,33 @@ def validate_params(template_key: str, params: dict[str, Any]) -> RuleParams:
         raise ValueError(str(exc)) from exc
 
 
+def primary_sense(params: RuleParams) -> str:
+    """Which set the rule is *about* — the one its match count should report.
+
+    Search actions are non-conforming by validation, so a rule whose every action is
+    conforming (a ready-to-unmonitor tagger) has nothing to say about the failing
+    set: counting that set would report hundreds of matches for a run whose whole
+    job was to tag eight finished shows.
+
+    Shared by the executor and the editor's live preview deliberately. They had this
+    logic separately, the preview kept the default sense, and it therefore showed
+    the count of items that FAIL a retirement rule — the exact opposite of what the
+    rule acts on.
+    """
+    if any(action.when == "non_conforming" for action in params.actions):
+        return "non_conforming"
+    return "conforming"
+
+
+def counts_series(params: RuleParams, entity: str) -> bool:
+    """True when a match count is a number of shows rather than episodes.
+
+    The series-completeness query returns series rows, so "matched 288" under an
+    entity named 'episode' means 288 shows. Callers use this to say which.
+    """
+    return entity == "episode" and primary_sense(params) == "conforming"
+
+
 @dataclass(frozen=True)
 class CompiledQuery:
     select_sql: str

@@ -17,7 +17,13 @@ from sqlalchemy import text
 
 from arrsync.services import automation_store
 from arrsync.services import repository as repo
-from arrsync.services.automation_rules import TEMPLATES, compile_candidates, validate_params
+from arrsync.services.automation_rules import (
+    TEMPLATES,
+    compile_candidates,
+    counts_series,
+    primary_sense,
+    validate_params,
+)
 
 _SOURCES_FOR_MEDIA = {"movies": ["radarr"], "series": ["sonarr"], "both": ["radarr", "sonarr"]}
 _ENTITY_FOR_SOURCE = {"radarr": "movie", "sonarr": "episode"}
@@ -185,10 +191,19 @@ def build_automations_router(app_state: Any) -> APIRouter:
             }
         cooldown_days = _clamp(payload.get("cooldown_days", 7), 1, 90, 7)
         preview: dict[str, int] = {}
+        # What the counts are counting — "12 series" reads very differently from
+        # "12 episodes", and a series-completeness rule counts shows.
+        units: set[str] = set()
         try:
             with app_state.session_scope() as session:
                 for source in _SOURCES_FOR_MEDIA[params.scope.media]:
-                    compiled = compile_candidates(params, _ENTITY_FOR_SOURCE[source])
+                    entity = _ENTITY_FOR_SOURCE[source]
+                    # The set the rule actually acts on. Without the sense this
+                    # counted non-conforming items for every rule, so a retirement
+                    # rule reported the shows that FAIL its spec — the opposite of
+                    # what it does.
+                    compiled = compile_candidates(params, entity, sense=primary_sense(params))
+                    units.add("series" if counts_series(params, entity) else f"{entity}s")
                     for inst in repo.list_enabled_integrations(session, source):
                         name = str(inst["name"])
                         if params.scope.instances and name not in params.scope.instances:
@@ -201,7 +216,13 @@ def build_automations_router(app_state: Any) -> APIRouter:
         except Exception:
             return {"valid": True, "next_fire_times": fire_times, "match_preview": None,
                     "preview_note": "preview query failed; rule is still valid"}
-        return {"valid": True, "next_fire_times": fire_times, "match_preview": preview}
+        return {
+            "valid": True,
+            "next_fire_times": fire_times,
+            "match_preview": preview,
+            "preview_sense": primary_sense(params),
+            "preview_unit": units.pop() if len(units) == 1 else "items",
+        }
 
     @router.get("/api/automations/runs/{run_id}")
     def get_run(run_id: int) -> dict[str, Any]:

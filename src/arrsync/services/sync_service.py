@@ -712,6 +712,12 @@ class SyncService:
         await self._report_progress_async(
             run_id, source, "incremental", instance_name, 0, trigger, "fetching_history", summary_id=summary_id
         )
+        # Before the history ingest: scope fields drift independently of history, so
+        # this must happen even on a tick where history has nothing to say (which is
+        # most of them).
+        scope_rows = await self._refresh_scope_fields(
+            source, client, run_id, instance_name, trigger, summary_id
+        )
         since, _ = await self._run_db(repo.get_watermark_for_instance, source, instance_name)
         events = await client.list_history_since(since)
         log.debug(
@@ -742,7 +748,7 @@ class SyncService:
                     latest_time = max(latest_time, parsed) if latest_time else parsed
             latest_id = max(latest_id, event_id) if latest_id else event_id
 
-        records = 0
+        records = scope_rows
         if since is None:
             # First incremental run: only establish the watermark. Backfilling
             # everything history mentions is the full sync's job.
@@ -779,6 +785,81 @@ class SyncService:
             run_id, source, "incremental", instance_name, records, trigger, "finalizing", summary_id=summary_id
         )
         return records
+
+    def _write_scope_rows(
+        self, source: str, instance_name: str, rows: list[dict[str, Any]], run_id: int
+    ) -> int:
+        """Upsert parent rows only — no episodes, no files, no tombstones.
+
+        Upsert-only is the whole safety story here: a list call that came back short
+        (a partial response, an Arr mid-restart) must never be read as "these items
+        were deleted". Removals stay the exclusive business of the full/reconcile
+        pass, which has a mass-tombstone guard.
+        """
+        written = 0
+        with session_scope(self.session_factory) as session:
+            repo.acquire_source_write_lock(session, source, instance_name)
+            for row in rows:
+                if not row.get("id"):
+                    continue
+                if source == "sonarr":
+                    repo.upsert_series(session, instance_name, row, run_id, "incremental")
+                else:
+                    repo.upsert_movie(session, instance_name, row, run_id, "incremental")
+                written += 1
+        return written
+
+    async def _refresh_scope_fields(
+        self,
+        source: str,
+        client: ArrClient,
+        run_id: int,
+        instance_name: str,
+        trigger: str,
+        summary_id: int | None = None,
+    ) -> int:
+        """Re-read every series/movie so scope fields cannot go stale between full syncs.
+
+        The incremental pass is history-driven, and an Arr's history records grabs,
+        imports and deletions — never a monitor toggle. So unmonitoring a show in
+        Sonarr's UI produced no event, the series was never refetched, and
+        ``warehouse.series.monitored`` stayed wrong until the next full sync. On a
+        real library that left ~520 series with a stale monitored flag, which is the
+        flag automations scope on: a show stuck at a stale monitored=false is
+        invisible to every rule that sets monitored_only.
+
+        One list call per instance buys the fix — cheap next to a full sync, which
+        also walks every episode and file.
+        """
+        # Settings ride on the client here, as in _fetch_chunk_size — SyncService
+        # itself is constructed without them. Defaults on when absent (a test double
+        # with no settings should still exercise the refresh).
+        if not getattr(getattr(client, "settings", None), "incremental_scope_refresh", True):
+            return 0
+        await self._report_progress_async(
+            run_id, source, "incremental", instance_name, 0, trigger, "refreshing_scope",
+            summary_id=summary_id,
+        )
+        try:
+            rows = await (client.list_series() if source == "sonarr" else client.list_movies())
+        except Exception as exc:
+            # Never fail the run over this: the history ingest below is the part that
+            # must not be lost, and the next tick retries the refresh anyway.
+            log.warning(
+                "scope refresh fetch failed; continuing with history ingest",
+                extra={"source": source, "instance_name": instance_name, "error": str(exc)},
+            )
+            return 0
+        if not rows:
+            return 0
+        written = await asyncio.to_thread(
+            self._write_scope_rows, source, instance_name, rows, run_id
+        )
+        log.debug(
+            "scope refresh complete",
+            extra={"source": source, "instance_name": instance_name, "rows": written},
+        )
+        return written
 
     async def _ingest_sonarr_history_changes(
         self,
@@ -1099,8 +1180,16 @@ class SyncService:
                 repo.upsert_episode(session, instance_name, episode, run_id, mode)
                 ep_file = episode.get("episodeFile")
                 if ep_file and ep_file.get("id"):
+                    episode_id = int(episode["id"])
                     repo.upsert_episode_file(
-                        session, instance_name, int(episode["id"]), ep_file, run_id, mode
+                        session, instance_name, episode_id, ep_file, run_id, mode
+                    )
+                    # An upgrade arrives as a NEW episodeFile id, so the row it
+                    # replaced is still live until this runs. Unlike the incremental
+                    # sync path (_reconcile_incremental_sonarr), a webhook write has
+                    # no seen-ids pass to fall back on.
+                    repo.tombstone_superseded_episode_files(
+                        session, instance_name, episode_id, int(ep_file["id"])
                     )
 
     def _tombstone_webhook_series_delete(self, instance_name: str, series_ids: list[int]) -> None:
@@ -1134,8 +1223,13 @@ class SyncService:
                 repo.upsert_movie(session, instance_name, movie, run_id, mode)
                 movie_file = movie.get("movieFile")
                 if movie_file and movie_file.get("id"):
+                    movie_id = int(movie["id"])
                     repo.upsert_movie_file(
-                        session, instance_name, int(movie["id"]), movie_file, run_id, mode
+                        session, instance_name, movie_id, movie_file, run_id, mode
+                    )
+                    # Same upgrade hazard as the episode path above.
+                    repo.tombstone_superseded_movie_files(
+                        session, instance_name, movie_id, int(movie_file["id"])
                     )
             if deleted_movie_ids:
                 repo.mark_deleted_source_ids(session, "warehouse.movie", instance_name, deleted_movie_ids)

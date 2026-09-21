@@ -95,12 +95,14 @@ class SyncScheduler:
                 id="stats_snapshot",
                 replace_existing=True,
             )
-        # "full" is opt-in: it has no seeded default row, so it only fires when the
-        # operator saves an enabled full-sync schedule.
+        # "full" is opt-in: its row is seeded DISABLED, because reconcile already
+        # performs the same full sync — enabling both just runs two of them. It has
+        # its own cron setting so raising reconcile's cadence cannot silently change
+        # this one's.
         if "full" in jobs:
             self.scheduler.add_job(
                 self._run_full_tick,
-                self._cron_trigger("full", jobs, self.settings.full_reconcile_cron),
+                self._cron_trigger("full", jobs, self.settings.full_sync_cron),
                 id="full",
                 replace_existing=True,
             )
@@ -218,6 +220,7 @@ class SyncScheduler:
                     values
                       ('incremental', :incremental_cron, :tz, true, now()),
                       ('reconcile', :reconcile_cron, :tz, true, now()),
+                      ('full', :full_sync_cron, :tz, false, now()),
                       ('stats_snapshot', :stats_snapshot_cron, :tz, true, now()),
                       ('integrity_audit', :integrity_audit_cron, :tz, false, now()),
                       ('mal_ingest', :mal_ingest_cron, :tz, true, now()),
@@ -230,6 +233,7 @@ class SyncScheduler:
                 {
                     "incremental_cron": self.settings.incremental_cron,
                     "reconcile_cron": self.settings.full_reconcile_cron,
+                    "full_sync_cron": self.settings.full_sync_cron,
                     "stats_snapshot_cron": self.settings.stats_snapshot_cron,
                     "integrity_audit_cron": self.settings.integrity_audit_cron,
                     "mal_ingest_cron": self.settings.mal_ingest_cron,

@@ -488,3 +488,58 @@ def test_a_clean_row_reports_no_reasons() -> None:
 def test_missing_resolution_column_counts_as_below_floor() -> None:
     row = {"has_file": True, "video_resolution": None}
     assert failure_reasons(row, _require(resolution_min=1080)) == ["resolution"]
+
+
+# --- which set is a rule about ---------------------------------------------
+# primary_sense is shared by the executor and the editor's live preview on purpose:
+# they each had this logic, the preview kept the default sense, and it therefore
+# reported the count of items that FAIL a retirement rule — the opposite of what
+# the rule acts on.
+
+
+def test_primary_sense_is_conforming_only_when_nothing_targets_the_failing_set() -> None:
+    from arrsync.services.automation_rules import primary_sense
+
+    retire = validate_params(
+        "custom",
+        {
+            "scope": {"media": "series"},
+            "require": {"resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "ready", "when": "conforming"}],
+        },
+    )
+    assert primary_sense(retire) == "conforming"
+
+    both = validate_params(
+        "custom",
+        {
+            "scope": {"media": "series"},
+            "require": {"resolution_min": 1080},
+            "actions": [
+                {"type": "tag", "label": "ready", "when": "conforming"},
+                {"type": "tag", "label": "needs-fix"},
+            ],
+        },
+    )
+    # A rule carrying both is about the failing set for counting purposes: that is
+    # the set with a per-item story to tell.
+    assert primary_sense(both) == "non_conforming"
+
+    assert primary_sense(validate_params("custom", _minimal())) == "non_conforming"
+
+
+def test_counts_series_only_for_the_completeness_query() -> None:
+    from arrsync.services.automation_rules import counts_series
+
+    retire = validate_params(
+        "custom",
+        {
+            "scope": {"media": "series"},
+            "require": {"resolution_min": 1080},
+            "actions": [{"type": "tag", "label": "ready", "when": "conforming"}],
+        },
+    )
+    # The completeness query returns series rows, so its count is a number of shows.
+    assert counts_series(retire, "episode") is True
+    assert counts_series(retire, "movie") is False
+    assert counts_series(validate_params("custom", _minimal()), "episode") is False

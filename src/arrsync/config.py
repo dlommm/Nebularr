@@ -74,7 +74,22 @@ class Settings(BaseSettings):
     http_max_parallel_requests: int = 4
 
     incremental_cron: str = "*/30 * * * *"
-    full_reconcile_cron: str = "0 4 * * 0"
+    # Daily, not weekly. The reconcile pass is a full sync, and until the scope
+    # refresh below existed it was the ONLY thing that could notice a series being
+    # monitored or unmonitored in an Arr's UI (such a change produces no history
+    # event, so an incremental run never refetches that series). A weekly cadence
+    # meant up to seven days of drift, and a container restart over the scheduled
+    # minute silently bought another seven. Existing installs keep whatever is
+    # already in app.sync_schedule; this only seeds new ones.
+    full_reconcile_cron: str = "0 4 * * *"
+    # The opt-in, separate 'full' schedule. Seeded disabled: reconcile already
+    # performs the same full sync, so enabling both runs two of them.
+    full_sync_cron: str = "0 4 * * 0"
+    # Refresh series/movie rows (monitored, status, path, genres) on every
+    # incremental tick from one list call per instance. This is what closes the
+    # monitor-drift window from a reconcile cycle down to the incremental cadence.
+    # Set false to go back to history-only incrementals.
+    incremental_scope_refresh: bool = True
     stats_snapshot_cron: str = "10 3 * * *"
     integrity_audit_cron: str = "30 5 * * 0"
     scheduler_timezone: str = "UTC"

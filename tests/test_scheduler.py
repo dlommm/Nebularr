@@ -36,7 +36,11 @@ def _build_settings(**overrides: Any) -> Any:
     defaults = dict(
         scheduler_timezone="UTC",
         incremental_cron="*/30 * * * *",
-        full_reconcile_cron="0 4 * * 0",
+        # Daily, matching the shipped default: reconcile is a full sync, and it is
+        # the only pass that notices a monitor toggle made in an Arr's own UI.
+        full_reconcile_cron="0 4 * * *",
+        # The separate opt-in full schedule, seeded disabled.
+        full_sync_cron="0 4 * * 0",
         stats_snapshot_cron="10 3 * * *",
         integrity_audit_cron="30 5 * * 0",
         mal_ingest_cron="0 5 * * *",
@@ -331,5 +335,46 @@ async def test_no_automation_query_without_coro() -> None:
     scheduler.start()  # must not issue the app.automation select (FakeSession would raise)
     try:
         assert not any("app.automation" in sql for sql, _ in session.statements)
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_full_schedule_row_is_seeded_but_disabled() -> None:
+    """A weekly 'full' schedule now exists as a first-class, visible option — but
+    seeded disabled, because reconcile already performs the same full sync and
+    enabling both simply runs two of them. It carries its own cron setting so
+    changing reconcile's cadence cannot silently move this one."""
+    session = ScheduleFakeSession(schedule_rows=[{"mode": "incremental", "cron": "*/30 * * * *"}])
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()
+    try:
+        seed_sql, seed_params = next(
+            (sql, p) for sql, p in session.statements if "insert into app.sync_schedule" in sql
+        )
+        assert seed_params is not None
+        assert seed_params["full_sync_cron"] == "0 4 * * 0"
+        assert seed_params["reconcile_cron"] == "0 4 * * *", "reconcile seeds daily, not weekly"
+        assert "('full', :full_sync_cron, :tz, false, now())" in " ".join(seed_sql.split())
+        # Seeded but disabled means no job: only an enabled row registers one.
+        assert "full" not in {job.id for job in scheduler.scheduler.get_jobs()}
+    finally:
+        scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_enabled_full_row_uses_its_own_cron_not_reconciles() -> None:
+    session = ScheduleFakeSession(
+        schedule_rows=[
+            {"mode": "incremental", "cron": "*/30 * * * *"},
+            {"mode": "full", "cron": None},  # enabled row, no cron -> env default
+        ]
+    )
+    scheduler = _build_scheduler(session, _build_settings())
+    scheduler.start()
+    try:
+        full_job = next(job for job in scheduler.scheduler.get_jobs() if job.id == "full")
+        # full_sync_cron is weekly (day_of_week 6/sun); full_reconcile_cron is daily.
+        assert "day_of_week" in str(full_job.trigger)
     finally:
         scheduler.shutdown()
