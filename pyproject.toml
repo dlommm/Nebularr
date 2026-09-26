@@ -30,7 +30,7 @@ dev = [
   "pytest-cov>=5.0.0",
   # Lint/type toolchain pinned to the locally-verified bands: unpinned CI once
   # resolved ruff 0.16 / mypy 2.x and failed on rules this codebase never ran.
-  "ruff>=0.6.0,<0.16",
+  "ruff>=0.6.0,<0.17",
   "mypy>=1.11.1,<2",
 ]
 
