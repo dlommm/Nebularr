@@ -21,14 +21,14 @@ export function Pagination({
   const start = Math.min(offset + 1, total);
   const end = Math.min(offset + limit, total);
   return (
-    <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+    <div className="mt-4 flex flex-wrap items-center justify-end gap-2 text-[13px] text-muted-foreground">
       <span>
         {total === 0 ? "0 results" : `${start}-${end} of ${total}`}
       </span>
-      <Button type="button" variant="secondary" size="sm" disabled={offset <= 0} onClick={() => onChange(Math.max(0, offset - limit))}>
+      <Button type="button" variant="outline" size="sm" disabled={offset <= 0} onClick={() => onChange(Math.max(0, offset - limit))}>
         Prev
       </Button>
-      <Button type="button" variant="secondary" size="sm" disabled={offset + limit >= total} onClick={() => onChange(offset + limit)}>
+      <Button type="button" variant="outline" size="sm" disabled={offset + limit >= total} onClick={() => onChange(offset + limit)}>
         Next
       </Button>
     </div>
@@ -75,10 +75,10 @@ export function DiagnosticsPanel({
 }): JSX.Element | null {
   if (!message) return null;
   return (
-    <GlassCard className="mb-4 border-critical/40 bg-critical/5">
+    <GlassCard className="mb-4 border-critical/40 bg-transparent">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm text-critical">Diagnostics</CardTitle>
-        <Button type="button" variant="secondary" size="sm" onClick={clear}>
+        <Button type="button" variant="outline" size="sm" onClick={clear}>
           Dismiss
         </Button>
       </CardHeader>

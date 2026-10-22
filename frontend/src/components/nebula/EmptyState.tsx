@@ -16,7 +16,7 @@ export function EmptyState({
   children?: ReactNode;
 }): JSX.Element {
   return (
-    <div className={cn("flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 py-12 text-center", className)}>
+    <div className={cn("flex flex-col items-center justify-center gap-2 border-y border-dashed border-border py-12 text-center", className)}>
       {Icon ? <Icon className="size-8 text-muted-foreground/60" strokeWidth={1.25} aria-hidden /> : null}
       <p className="text-sm font-medium text-foreground">{title}</p>
       {description ? <p className="max-w-sm text-xs text-muted-foreground">{description}</p> : null}

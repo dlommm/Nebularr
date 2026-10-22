@@ -636,3 +636,80 @@ export type AutomationPayload = {
   budget_per_run?: number;
   cooldown_days?: number;
 };
+
+export type ArtworkMode = "cache" | "live";
+
+export type ArtworkPrefetchReport = {
+  reason: string;
+  mode: ArtworkMode;
+  started_at: string;
+  finished_at: string | null;
+  fetched: number;
+  already_cached: number;
+  unavailable: number;
+  pruned: number;
+  evicted: number;
+  interrupted: boolean;
+};
+
+export type ArtworkConfig = {
+  enabled: boolean;
+  mode: ArtworkMode;
+  remote_fallback: boolean;
+  /** 0 = no cap */
+  cache_max_mb: number;
+  cache: { files: number; bytes: number; by_cover: Record<string, { files: number; bytes: number }> };
+  prefetch_running: boolean;
+  last_prefetch: ArtworkPrefetchReport | null;
+};
+
+export type TimelineEvent = {
+  at: string;
+  /** incremental | full | reconcile | webhook | ingest | matcher | tag_sync | coverage_tag_sync */
+  kind: string;
+  status: string;
+  rows?: number;
+  duration_seconds?: number | null;
+  source?: string;
+};
+
+export type TimelineLane = {
+  key: string;
+  label: string;
+  /** sonarr | radarr | webhooks | mal */
+  kind: string;
+  events: TimelineEvent[];
+  last_at: string | null;
+  truncated?: boolean;
+};
+
+export type RunTimeline = { now: string; hours: number; lanes: TimelineLane[] };
+
+export type RecentImport = {
+  kind: "episode" | "movie";
+  instance_name: string;
+  item_id: number;
+  title: string;
+  year: number | null;
+  season_number: number | null;
+  episode_number: number | null;
+  episode_title: string | null;
+  quality: string | null;
+  size_bytes: number | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  path: string | null;
+  seen_at: string;
+  date_added: string | null;
+};
+
+export type LibraryTotals = {
+  shows: number;
+  episodes: number;
+  episodes_on_disk: number;
+  episodes_missing: number;
+  movies: number;
+  movies_on_disk: number;
+  movies_missing: number;
+  stored_bytes: number;
+};

@@ -23,7 +23,7 @@ export function ProgressBar({
       ) : null}
       <Progress
         value={pct}
-        className="h-2 w-full min-w-0 flex-col gap-0 [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-muted [&_[data-slot=progress-indicator]]:bg-primary"
+        className="h-[3px] w-full min-w-0 flex-col gap-0 [&_[data-slot=progress-track]]:h-[3px] [&_[data-slot=progress-track]]:bg-border [&_[data-slot=progress-indicator]]:bg-signal"
       />
     </div>
   );

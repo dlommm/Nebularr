@@ -11,6 +11,8 @@ export const SCHEDULE_MODE_LABELS: Record<string, string> = {
   mal_ingest: "MAL — Dub list + anime ingest",
   mal_matcher: "MAL — Warehouse link / match refresh",
   mal_tag_sync: "MAL — English dub tag sync (Sonarr & Radarr)",
+  coverage_tag_sync: "English-dub coverage tags (Sonarr & Radarr)",
+  artwork_prefetch: "Artwork — cache posters and fanart",
 };
 
 const SCHEDULE_VIEW_ORDER = [
@@ -21,6 +23,8 @@ const SCHEDULE_VIEW_ORDER = [
   "mal_ingest",
   "mal_matcher",
   "mal_tag_sync",
+  "coverage_tag_sync",
+  "artwork_prefetch",
   "full",
 ] as const;
 

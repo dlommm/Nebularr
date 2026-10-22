@@ -13,7 +13,7 @@ export function GlassCard({ className, glow, children, ...props }: GlassCardProp
   return (
     <Card
       className={cn(
-        "relative w-full min-w-0 overflow-hidden border-border bg-card shadow-[var(--shadow-card)]",
+        "relative w-full min-w-0 overflow-hidden border-border bg-card",
         className,
       )}
       {...props}

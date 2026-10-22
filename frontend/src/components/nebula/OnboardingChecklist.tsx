@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { CheckCircle2, Circle, X } from "lucide-react";
 import { api } from "../../api";
 import { useLocalStorageState } from "../../hooks";
-import { GlassCard, CardContent, CardHeader, CardTitle } from "./GlassCard";
 import { Button } from "@/components/ui/button";
 import { PATHS } from "../../routes/paths";
 
@@ -48,9 +47,11 @@ export function OnboardingChecklist(): JSX.Element | null {
   if (steps.every((step) => step.done)) return null;
 
   return (
-    <GlassCard>
-      <CardHeader className="flex-row items-center justify-between gap-2">
-        <CardTitle className="text-base">Get started</CardTitle>
+    <section aria-labelledby="get-started" className="panel px-6 pt-5 pb-3 sm:px-7">
+      <div className="flex items-center justify-between gap-2">
+        <h2 id="get-started" className="cond text-[30px] leading-none font-bold">
+          Get started <span className="text-muted-foreground">· {steps.filter((s) => s.done).length} of {steps.length}</span>
+        </h2>
         <Button
           type="button"
           variant="ghost"
@@ -60,12 +61,12 @@ export function OnboardingChecklist(): JSX.Element | null {
         >
           <X className="size-4" />
         </Button>
-      </CardHeader>
-      <CardContent>
-        <ul className="space-y-2">
+      </div>
+      <div>
+        <ul className="mt-3">
           {steps.map((step) => (
-            <li key={step.label} className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-sm">
+            <li key={step.label} className="flex min-h-14 items-center justify-between gap-3 border-t border-border py-2">
+              <span className="flex items-center gap-3 text-[15px]">
                 {step.done ? (
                   <CheckCircle2 className="size-4 text-ok" aria-hidden />
                 ) : (
@@ -76,14 +77,14 @@ export function OnboardingChecklist(): JSX.Element | null {
                 </span>
               </span>
               {!step.done ? (
-                <Button type="button" variant="secondary" size="sm" render={<Link to={step.to} />}>
+                <Button type="button" variant="outline" size="sm" render={<Link to={step.to} />}>
                   {step.cta}
                 </Button>
               ) : null}
             </li>
           ))}
         </ul>
-      </CardContent>
-    </GlassCard>
+      </div>
+    </section>
   );
 }

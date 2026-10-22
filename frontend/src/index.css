@@ -1,131 +1,142 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/archivo/wdth.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /* ————————————————————————————————————————————————————————————————
-   Nebularr design tokens — single source of truth.
-   Light theme on :root, dark theme on .dark (next-themes toggles the
-   class). Tailwind color utilities map to these via @theme inline.
+   Nebularr "Now Showing" tokens — single source of truth.
+   Dark (the default) is deep ink with warm off-white type; light is the
+   "Daylight" variant. Colour carries meaning: green/amber/red are status
+   only, --signal is the one cool accent, and artwork supplies the rest.
+   Tailwind colour utilities map to these via @theme inline.
    ———————————————————————————————————————————————————————————————— */
 
 :root {
   color-scheme: light;
 
-  --background: #f5f6fa;
-  --foreground: #191c28;
+  --background: #efebe3;
+  --foreground: #15181b;
 
-  --card: #ffffff;
-  --card-foreground: #191c28;
+  --card: #f9f7f2;
+  --card-foreground: #15181b;
 
-  --popover: #ffffff;
-  --popover-foreground: #191c28;
+  --popover: #fbfaf6;
+  --popover-foreground: #15181b;
 
-  --primary: #4f5ae8;
-  --primary-foreground: #ffffff;
+  --primary: #15181b;
+  --primary-foreground: #efebe3;
 
-  --secondary: #eceef5;
-  --secondary-foreground: #2c3040;
+  --secondary: #e6e1d7;
+  --secondary-foreground: #15181b;
 
-  --muted: #eef0f6;
-  --muted-foreground: #5e6577;
+  --muted: #e6e1d7;
+  --muted-foreground: #5c6066;
+  --subtle-foreground: #6b7076;
 
-  --accent: #e9ebf8;
-  --accent-foreground: #2c3040;
+  --accent: #e2ddd2;
+  --accent-foreground: #15181b;
 
-  --destructive: #d4383e;
+  --destructive: #c0391b;
   --destructive-foreground: #ffffff;
 
-  --border: rgba(20, 26, 48, 0.12);
-  --input: rgba(20, 26, 48, 0.16);
-  --ring: rgba(79, 90, 232, 0.55);
+  --border: #d5cfc4;
+  --input: #c9c2b5;
+  --ring: rgba(14, 110, 115, 0.55);
+  --rule-strong: #15181b;
 
-  --ok: #158a55;
-  --warn: #a16207;
-  --critical: #d4383e;
+  --signal: #0e6e73;
+  --ok: #1e8a4c;
+  --warn: #8a5200;
+  --critical: #b02f17;
 
-  --chart-1: #4f5ae8;
-  --chart-2: #0e93c4;
-  --chart-3: #8b5cf6;
-  --chart-4: #159a68;
-  --chart-5: #d97706;
+  --chart-1: #15181b;
+  --chart-2: #0e6e73;
+  --chart-3: #5e86a6;
+  --chart-4: #9db7b9;
+  --chart-5: #c9c2b5;
 
-  --sidebar: #fbfbfd;
-  --sidebar-foreground: #191c28;
-  --sidebar-primary: #4f5ae8;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eceef5;
-  --sidebar-accent-foreground: #191c28;
-  --sidebar-border: rgba(20, 26, 48, 0.1);
-  --sidebar-ring: rgba(79, 90, 232, 0.55);
+  --sidebar: #f9f7f2;
+  --sidebar-foreground: #15181b;
+  --sidebar-primary: #15181b;
+  --sidebar-primary-foreground: #efebe3;
+  --sidebar-accent: #e6e1d7;
+  --sidebar-accent-foreground: #15181b;
+  --sidebar-border: #d5cfc4;
+  --sidebar-ring: rgba(14, 110, 115, 0.55);
 
-  --radius: 0.625rem;
+  --radius: 0.1875rem;
 
-  --glass-bg: rgba(255, 255, 255, 0.78);
-  --glass-bg-strong: rgba(251, 251, 253, 0.92);
-  --shadow-card: 0 1px 2px rgba(16, 20, 40, 0.05), 0 4px 16px rgba(16, 20, 40, 0.05);
+  --well: #f9f7f2;
+  --scrim: 239, 235, 227;
+  --shadow-panel: 0 24px 50px -30px rgba(60, 50, 30, 0.35);
 }
 
 .dark {
   color-scheme: dark;
 
-  --background: #0a0c14;
-  --foreground: #e7eaf3;
+  --background: #0f1215;
+  --foreground: #ece6dc;
 
-  --card: #10131e;
-  --card-foreground: #e7eaf3;
+  --card: #12161a;
+  --card-foreground: #ece6dc;
 
-  --popover: #141828;
-  --popover-foreground: #e7eaf3;
+  --popover: #161b1f;
+  --popover-foreground: #ece6dc;
 
-  --primary: #6672f2;
-  --primary-foreground: #ffffff;
+  --primary: #ece6dc;
+  --primary-foreground: #0f1215;
 
-  --secondary: #1b2032;
-  --secondary-foreground: #ccd2e3;
+  --secondary: #1a2025;
+  --secondary-foreground: #ece6dc;
 
-  --muted: #181d2d;
-  --muted-foreground: #8f97ac;
+  --muted: #151a1e;
+  --muted-foreground: #a39d93;
+  --subtle-foreground: #7e8790;
 
-  --accent: #1d2338;
-  --accent-foreground: #e7eaf3;
+  --accent: #1a2025;
+  --accent-foreground: #ece6dc;
 
-  --destructive: #f26d76;
-  --destructive-foreground: #21060a;
+  --destructive: #ef6b5b;
+  --destructive-foreground: #0f1215;
 
-  --border: rgba(226, 232, 255, 0.09);
-  --input: rgba(226, 232, 255, 0.13);
-  --ring: rgba(102, 114, 242, 0.6);
+  --border: #2a3036;
+  --input: #3a4249;
+  --ring: rgba(143, 193, 227, 0.6);
+  --rule-strong: #3a4249;
 
-  --ok: #3fce8e;
-  --warn: #e5b04c;
-  --critical: #f2707c;
+  --signal: #8fc1e3;
+  --ok: #6fcf8e;
+  --warn: #e7b25a;
+  --critical: #ef6b5b;
 
-  --chart-1: #6672f2;
-  --chart-2: #43b8e8;
-  --chart-3: #a78bfa;
-  --chart-4: #3fce8e;
-  --chart-5: #e5b04c;
+  --chart-1: #ece6dc;
+  --chart-2: #8fc1e3;
+  --chart-3: #5e86a6;
+  --chart-4: #3a4e5e;
+  --chart-5: #262e35;
 
-  --sidebar: #0c0f1a;
-  --sidebar-foreground: #e7eaf3;
-  --sidebar-primary: #6672f2;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1b2032;
-  --sidebar-accent-foreground: #e7eaf3;
-  --sidebar-border: rgba(226, 232, 255, 0.08);
-  --sidebar-ring: rgba(102, 114, 242, 0.6);
+  --sidebar: #0b0e10;
+  --sidebar-foreground: #ece6dc;
+  --sidebar-primary: #ece6dc;
+  --sidebar-primary-foreground: #0f1215;
+  --sidebar-accent: #1a2025;
+  --sidebar-accent-foreground: #ece6dc;
+  --sidebar-border: #2a3036;
+  --sidebar-ring: rgba(143, 193, 227, 0.6);
 
-  --glass-bg: rgba(13, 16, 27, 0.72);
-  --glass-bg-strong: rgba(11, 13, 22, 0.88);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.22);
+  --well: #0b0e10;
+  --scrim: 15, 18, 21;
+  --shadow-panel: 0 30px 60px -30px rgba(0, 0, 0, 0.7);
 }
 
 @theme inline {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-heading: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Archivo Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-heading: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -139,6 +150,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -146,7 +158,10 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-rule-strong: var(--rule-strong);
+  --color-well: var(--well);
 
+  --color-signal: var(--signal);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-critical: var(--critical);
@@ -166,13 +181,55 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-sm: calc(var(--radius) * 0.7);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.4);
+  --radius-xl: calc(var(--radius) * 2);
+  --radius-2xl: calc(var(--radius) * 2.6);
+  --radius-3xl: calc(var(--radius) * 3.2);
+  --radius-4xl: calc(var(--radius) * 4);
+
+  --animate-rise: ns-rise 0.8s cubic-bezier(0.2, 0.7, 0.1, 1) both;
+  --animate-pop: ns-pop 0.45s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+  --animate-grow-y: ns-grow-y 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-grow-x: ns-grow-x 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-slow-zoom: ns-zoom 22s ease-out both;
+  --animate-beat: ns-beat 2.2s ease-out infinite;
+  --animate-pan: ns-pan 70s linear infinite alternate;
+  --animate-shimmer: ns-shimmer 1.5s linear infinite;
+}
+
+@keyframes ns-rise {
+  from { opacity: 0; transform: translateY(22px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ns-pop {
+  from { opacity: 0; transform: scale(0.45); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ns-grow-y {
+  from { transform: scaleY(0); }
+  to { transform: none; }
+}
+@keyframes ns-grow-x {
+  from { transform: scaleX(0); }
+  to { transform: none; }
+}
+@keyframes ns-zoom {
+  from { transform: scale(1.08); }
+  to { transform: none; }
+}
+@keyframes ns-beat {
+  from { transform: scale(1); opacity: 0.6; }
+  to { transform: scale(2.8); opacity: 0; }
+}
+@keyframes ns-pan {
+  from { transform: rotate(-8deg) translate(0, 0); }
+  to { transform: rotate(-8deg) translate(-6%, -8%); }
+}
+@keyframes ns-shimmer {
+  from { background-position: -160px 0; }
+  to { background-position: 160px 0; }
 }
 
 @layer base {
@@ -186,20 +243,8 @@
 
   body {
     @apply min-h-svh font-sans antialiased bg-background text-foreground;
-    font-feature-settings: "ss01", "cv05";
-  }
-
-  /* A `position: fixed` pseudo-element instead of `background-attachment:
-     fixed` on body — the latter forces the browser to repaint the whole
-     gradient on every scroll frame (visible jank, especially on mobile
-     Safari); a fixed layer composites once and stays put for free. */
-  .dark body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    background-image: radial-gradient(1100px 520px at 75% -12%, rgba(102, 114, 242, 0.07), transparent 62%);
-    pointer-events: none;
+    font-feature-settings: "tnum" 1;
+    font-stretch: 100%;
   }
 
   #root {
@@ -207,7 +252,7 @@
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--primary) 28%, transparent);
+    background: color-mix(in srgb, var(--signal) 30%, transparent);
   }
 
   .skip-to-main {
@@ -220,7 +265,7 @@
     color: var(--primary-foreground);
     text-decoration: none;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: var(--radius);
   }
   .skip-to-main:focus {
     left: 12px;
@@ -228,33 +273,57 @@
     outline: 2px solid var(--ring);
   }
 
-  /* Quiet, consistent scrollbars */
   * {
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent) transparent;
   }
 }
 
-/* Chrome panels (sidebar, sticky header, overlays) */
+/* Condensed uppercase display type — titles, big figures, section heads. */
+@utility cond {
+  font-stretch: 62%;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+/* Fanart/hero legibility: fades artwork into the page ground. */
+@utility scrim-bottom {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--scrim), 0.55) 0%,
+    rgba(var(--scrim), 0) 22%,
+    rgba(var(--scrim), 0) 42%,
+    rgba(var(--scrim), 0.92) 88%,
+    rgb(var(--scrim)) 100%
+  );
+}
+
+/* Raised panel: the one place the design allows a surface with depth. */
+@utility panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 2);
+  box-shadow: var(--shadow-panel);
+}
+
+/* Recessed well for dense instruments (sync lanes, logs). */
+@utility well {
+  background: var(--well);
+  border-radius: calc(var(--radius) * 2);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* Glass chrome kept for overlays (dialogs, sticky bars over artwork). */
 @utility glass-panel {
-  border-color: var(--border);
-  background: var(--glass-bg);
+  background: color-mix(in srgb, var(--background) 82%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
 
 @utility glass-panel-strong {
-  border-color: var(--border);
-  background: var(--glass-bg-strong);
+  background: color-mix(in srgb, var(--background) 92%, transparent);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-}
-
-/* Soft brand emphasis for the rare hero surface — intentionally subtle. */
-@utility nebula-glow {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent),
-    0 12px 40px -18px color-mix(in srgb, var(--primary) 45%, transparent);
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -266,9 +335,19 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Compact display density (toggled from the header; class set in AppLayout). */
 .density-compact [data-slot="table-cell"] {
-  padding: 4px 8px;
+  padding-block: 4px;
   font-size: 12px;
 }
 
@@ -281,3 +360,80 @@
   gap: 0.75rem;
   padding-block: 0.75rem;
 }
+
+/* ————— Sync lanes (components/ns/SyncLanes.tsx) ————— */
+.ns-track {
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent calc(12.5% - 1px),
+    color-mix(in srgb, var(--border) 55%, transparent) calc(12.5% - 1px),
+    color-mix(in srgb, var(--border) 55%, transparent) 12.5%
+  );
+}
+.ns-tick {
+  position: absolute;
+  bottom: 24%;
+  width: 3px;
+  height: 36%;
+  margin-left: -1.5px;
+  border-radius: 1px;
+  background: var(--muted-foreground);
+  transform-origin: bottom;
+  animation: ns-grow-y 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ns-tick.full {
+  bottom: 10%;
+  height: 76%;
+  width: 4px;
+  margin-left: -2px;
+  background: var(--foreground);
+}
+.ns-tick.ev {
+  bottom: 40%;
+  width: 1px;
+  height: 20%;
+  margin-left: 0;
+}
+.ns-tick.fail {
+  bottom: auto;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2.5px solid var(--critical);
+  border-radius: 9999px;
+  background: transparent;
+  animation: ns-pop 0.45s both;
+}
+.ns-silent {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  border-left: 2px dashed var(--warn);
+  font-size: 12px;
+  color: var(--warn);
+  white-space: nowrap;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0,
+    transparent 7px,
+    color-mix(in srgb, var(--warn) 9%, transparent) 7px,
+    color-mix(in srgb, var(--warn) 9%, transparent) 8px
+  );
+}
+
+/* ————— Episode quality grid (components/ns/SeasonGrid.tsx) ————— */
+.ns-cell {
+  box-sizing: border-box;
+  animation: ns-pop 0.4s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+.ns-q4 { background: var(--foreground); color: var(--background); }
+.ns-q3 { background: var(--signal); color: var(--background); }
+.ns-q2 { background: var(--chart-3); color: var(--foreground); }
+.ns-q1 { background: var(--chart-4); color: var(--foreground); }
+.ns-qm { border: 1px dashed var(--subtle-foreground); color: var(--muted-foreground); }
+.ns-qn { outline: 2px solid var(--signal); outline-offset: 2px; }

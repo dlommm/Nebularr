@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { PATHS } from "../routes/paths";
 
 const LEGACY_VIEW_MAP: Record<string, string> = {
-  overview: PATHS.dashboard,
+  overview: PATHS.home,
   reporting: PATHS.reporting,
   integrations: PATHS.integrations,
   schedules: PATHS.schedules,

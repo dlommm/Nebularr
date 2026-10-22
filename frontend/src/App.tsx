@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ActionErrorProvider } from "./context/ActionErrorContext";
 import { AppLayout } from "./layout/AppLayout";
+import { SetupShell } from "./layout/SetupShell";
 import { PageFallback } from "./components/PageFallback";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import { SessionExpiredDialog } from "./components/SessionExpiredDialog";
@@ -10,7 +11,6 @@ import { PATHS } from "./routes/paths";
 
 const SetupPage = lazy(() => import("./pages/SetupPage").then((m) => ({ default: m.SetupPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
-const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const ReportingPage = lazy(() => import("./pages/ReportingPage").then((m) => ({ default: m.ReportingPage })));
 const LibraryPage = lazy(() => import("./pages/LibraryPage").then((m) => ({ default: m.LibraryPage })));
 const SyncQueuePage = lazy(() => import("./pages/SyncQueuePage").then((m) => ({ default: m.SyncQueuePage })));
@@ -18,6 +18,7 @@ const MalPage = lazy(() => import("./pages/MalPage").then((m) => ({ default: m.M
 const AutomationsPage = lazy(() => import("./pages/AutomationsPage").then((m) => ({ default: m.AutomationsPage })));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const SchedulesPage = lazy(() => import("./pages/SchedulesPage").then((m) => ({ default: m.SchedulesPage })));
+const ArtworkPage = lazy(() => import("./pages/ArtworkPage").then((m) => ({ default: m.ArtworkPage })));
 const LogsPage = lazy(() => import("./pages/LogsPage").then((m) => ({ default: m.LogsPage })));
 const NotFoundPage = lazy(() => import("./components/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
@@ -79,7 +80,7 @@ export function App(): JSX.Element {
             }
           >
             <Route index element={<HomePage />} />
-            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="dashboard" element={<Navigate to={PATHS.home} replace />} />
             <Route path="reporting" element={<ReportingPage />} />
             <Route path="library" element={<LibraryPage />} />
             <Route path="sync" element={<SyncQueuePage />} />
@@ -88,9 +89,12 @@ export function App(): JSX.Element {
             <Route path="runs" element={<Navigate to={`${PATHS.sync}?tab=runs`} replace />} />
             <Route path="webhooks" element={<Navigate to={`${PATHS.sync}?tab=webhooks`} replace />} />
             <Route path="actions" element={<Navigate to={`${PATHS.sync}?tab=manual`} replace />} />
-            <Route path="integrations" element={<IntegrationsPage />} />
-            <Route path="schedules" element={<SchedulesPage />} />
-            <Route path="logs" element={<LogsPage />} />
+            <Route element={<SetupShell />}>
+              <Route path="integrations" element={<IntegrationsPage />} />
+              <Route path="artwork" element={<ArtworkPage />} />
+              <Route path="schedules" element={<SchedulesPage />} />
+              <Route path="logs" element={<LogsPage />} />
+            </Route>
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>

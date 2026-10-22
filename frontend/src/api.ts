@@ -39,11 +39,15 @@ import type {
   WorkStatusResponse,
   StuckStateResponse,
   ClearStuckResponse,
+  ArtworkConfig,
+  RecentImport,
+  RunTimeline,
+  LibraryTotals,
 } from "./types";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
-const AUTH_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/status"]);
+const AUTH_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/status", "/api/art/wall"]);
 
 /** Thrown by every failed request; carries the HTTP status (0 for a
     malformed/undecodable body on an otherwise-2xx response) and a
@@ -163,6 +167,15 @@ function withParams(path: string, params: Record<string, string | number | boole
 }
 
 export const api = {
+  runTimeline: (hours = 24) => requestJson<RunTimeline>(withParams("/api/ui/run-timeline", { hours })),
+  libraryTotals: () => requestJson<LibraryTotals>("/api/ui/library-totals"),
+  recentImports: (limit = 12) => requestJson<{ items: RecentImport[] }>(withParams("/api/ui/recent-imports", { limit })),
+  artWall: (count = 40) => requestJson<{ items: string[] }>(withParams("/api/art/wall", { count })),
+  artworkConfig: () => requestJson<ArtworkConfig>("/api/config/artwork"),
+  saveArtworkConfig: (payload: Partial<Pick<ArtworkConfig, "enabled" | "mode" | "remote_fallback" | "cache_max_mb">>) =>
+    requestJson<ArtworkConfig>("/api/config/artwork", "PUT", payload),
+  prefetchArtwork: () => requestJson<{ started: boolean }>("/api/config/artwork/prefetch", "POST"),
+  clearArtworkCache: () => requestJson<ArtworkConfig & { removed: number }>("/api/config/artwork/clear-cache", "POST"),
   healthz: () => requestJson<HealthzResponse>("/healthz"),
   status: () => requestJson<StatusResponse>("/api/status"),
   authStatus: () => requestJson<AuthStatusResponse>("/api/auth/status"),
