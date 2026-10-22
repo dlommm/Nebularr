@@ -31,6 +31,7 @@ class SyncScheduler:
         mal_tag_sync_coro: Callable[[], Awaitable[Any]] | None = None,
         coverage_tag_sync_coro: Callable[[], Awaitable[Any]] | None = None,
         automation_run_coro: Callable[[int], Awaitable[Any]] | None = None,
+        artwork_prefetch_coro: Callable[[], Awaitable[Any]] | None = None,
     ):
         self.settings = settings
         self.sync_service = sync_service
@@ -40,6 +41,7 @@ class SyncScheduler:
         self._mal_tag_sync_coro = mal_tag_sync_coro
         self._coverage_tag_sync_coro = coverage_tag_sync_coro
         self._automation_run_coro = automation_run_coro
+        self._artwork_prefetch_coro = artwork_prefetch_coro
         # Loop the AsyncIOScheduler binds to on its first (main-loop) start. reload()
         # is also called from sync endpoints (setup wizard, config) that FastAPI runs
         # in a threadpool worker where asyncio.get_running_loop() is unavailable, so it
@@ -145,6 +147,13 @@ class SyncScheduler:
                 id="coverage_tag_sync",
                 replace_existing=True,
             )
+        if self._artwork_prefetch_coro is not None and "artwork_prefetch" in jobs:
+            self.scheduler.add_job(
+                self._artwork_prefetch_coro,
+                self._cron_trigger("artwork_prefetch", jobs, self.settings.artwork_prefetch_cron),
+                id="artwork_prefetch",
+                replace_existing=True,
+            )
         if self._automation_run_coro is not None:
             for row in self._read_enabled_automations():
                 automation_id = int(row["id"])
@@ -226,7 +235,8 @@ class SyncScheduler:
                       ('mal_ingest', :mal_ingest_cron, :tz, true, now()),
                       ('mal_matcher', :mal_matcher_cron, :tz, true, now()),
                       ('mal_tag_sync', :mal_tag_sync_cron, :tz, true, now()),
-                      ('coverage_tag_sync', :coverage_tag_sync_cron, :tz, true, now())
+                      ('coverage_tag_sync', :coverage_tag_sync_cron, :tz, true, now()),
+                      ('artwork_prefetch', :artwork_prefetch_cron, :tz, true, now())
                     on conflict (mode) do nothing
                     """
                 ),
@@ -240,6 +250,7 @@ class SyncScheduler:
                     "mal_matcher_cron": self.settings.mal_matcher_cron,
                     "mal_tag_sync_cron": self.settings.mal_tag_sync_cron,
                     "coverage_tag_sync_cron": self.settings.coverage_tag_sync_cron,
+                    "artwork_prefetch_cron": self.settings.artwork_prefetch_cron,
                     "tz": self.settings.scheduler_timezone,
                 },
             )

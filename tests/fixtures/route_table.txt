@@ -1,5 +1,8 @@
 DELETE /api/automations/{automation_id}
 GET /
+GET /api/art/wall
+GET /api/art/wall/{token}
+GET /api/art/{kind}/{instance_name}/{item_id}/{cover}
 GET /api/auth/status
 GET /api/automations
 GET /api/automations/root-folders
@@ -7,6 +10,7 @@ GET /api/automations/runs/{run_id}
 GET /api/automations/templates
 GET /api/automations/{automation_id}/runs
 GET /api/config/alert-webhooks
+GET /api/config/artwork
 GET /api/config/integrations
 GET /api/config/logging
 GET /api/config/mal
@@ -58,6 +62,8 @@ POST /api/automations
 POST /api/automations/validate
 POST /api/automations/{automation_id}/run
 POST /api/config/alert-webhooks/test
+POST /api/config/artwork/clear-cache
+POST /api/config/artwork/prefetch
 POST /api/config/integrations/{source}/test
 POST /api/config/schedules/validate
 POST /api/mal/coverage-tag-sync
@@ -83,6 +89,7 @@ POST /hooks/{source}/{instance_name}
 PUT /api/auth/config
 PUT /api/automations/{automation_id}
 PUT /api/config/alert-webhooks
+PUT /api/config/artwork
 PUT /api/config/integrations/{source}
 PUT /api/config/logging
 PUT /api/config/mal

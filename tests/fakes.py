@@ -145,6 +145,7 @@ class FakeSettings:
     mydublist_confidence_tier: str = "normal"
     coverage_tagging_enabled: bool = False
     coverage_tag_sync_cron: str = "30 4 * * *"
+    artwork_prefetch_cron: str = "20 */6 * * *"
     automation_command_min_interval_seconds: float = 0.0
     automation_max_searches_per_day: int = 100
     http_timeout_seconds: float = 5.0
