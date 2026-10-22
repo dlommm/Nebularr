@@ -12,6 +12,10 @@ from arrsync.routers.shared import clamp_limit
 WEBHOOK_EVENT_CAP = 500
 
 
+def _first(rows: Any) -> dict[str, Any]:
+    return dict(next(iter(rows), None) or {})
+
+
 def build_overview_router(app_state: Any) -> APIRouter:
     router = APIRouter()
 
@@ -144,6 +148,66 @@ def build_overview_router(app_state: Any) -> APIRouter:
                 {"key": "mal", "label": "MyAnimeList", "kind": "mal", "events": mal_events, "last_at": last_mal}
             )
         return {"now": now, "hours": hours, "lanes": result}
+
+    @router.get("/api/ui/library-totals")
+    def library_totals() -> dict[str, Any]:
+        """The Overview's headline figures in one cheap pass per table. "Missing"
+        follows the coverage views: monitored, already aired (or available, for
+        movies), and no file per the Arr's own ``hasFile``."""
+        with app_state.session_scope() as session:
+            episodes = _first(session.execute(
+                text(
+                    """
+                    select
+                        count(*) as episodes,
+                        count(*) filter (where coalesce((payload->>'hasFile')::boolean, false)) as on_disk,
+                        count(*) filter (
+                            where monitored
+                              and air_date is not null
+                              and air_date <= now()
+                              and not coalesce((payload->>'hasFile')::boolean, false)
+                        ) as missing
+                    from warehouse.episode
+                    where not deleted
+                    """
+                )
+            ).mappings())
+            movies = _first(session.execute(
+                text(
+                    """
+                    select
+                        count(*) as movies,
+                        count(*) filter (where coalesce((payload->>'hasFile')::boolean, false)) as on_disk,
+                        count(*) filter (
+                            where monitored
+                              and coalesce((payload->>'isAvailable')::boolean, true)
+                              and not coalesce((payload->>'hasFile')::boolean, false)
+                        ) as missing
+                    from warehouse.movie
+                    where not deleted
+                    """
+                )
+            ).mappings())
+            shows = session.execute(text("select count(*) from warehouse.series where not deleted")).scalar_one()
+            stored = session.execute(
+                text(
+                    """
+                    select
+                        coalesce((select sum(size_bytes) from warehouse.episode_file where not deleted), 0)
+                      + coalesce((select sum(size_bytes) from warehouse.movie_file where not deleted), 0)
+                    """
+                )
+            ).scalar_one()
+        return {
+            "shows": int(shows or 0),
+            "episodes": int(episodes.get("episodes") or 0),
+            "episodes_on_disk": int(episodes.get("on_disk") or 0),
+            "episodes_missing": int(episodes.get("missing") or 0),
+            "movies": int(movies.get("movies") or 0),
+            "movies_on_disk": int(movies.get("on_disk") or 0),
+            "movies_missing": int(movies.get("missing") or 0),
+            "stored_bytes": int(stored or 0),
+        }
 
     @router.get("/api/ui/recent-imports")
     def recent_imports(limit: int = 12) -> dict[str, Any]:

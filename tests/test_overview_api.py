@@ -38,8 +38,16 @@ class OverviewSession:
             return FakeResult(self.tables.get("last_mal", [None])[0])
         if "from app.mal_job_run" in sql:
             return FakeResult(rows=self.tables.get("mal", []))
-        if "from warehouse.episode_file" in sql:
+        if "from warehouse.episode_file" in sql and "union all" in sql:
             return FakeResult(rows=self.tables.get("imports", []))
+        if "from warehouse.episode where not deleted" in sql:
+            return FakeResult(rows=self.tables.get("episode_totals", []))
+        if "from warehouse.movie where not deleted" in sql:
+            return FakeResult(rows=self.tables.get("movie_totals", []))
+        if "from warehouse.series where not deleted" in sql:
+            return FakeResult(self.tables.get("shows", [0])[0])
+        if "sum(size_bytes)" in sql:
+            return FakeResult(self.tables.get("stored", [0])[0])
         raise RuntimeError(f"unexpected SQL: {sql}")
 
     def commit(self) -> None:
@@ -123,3 +131,28 @@ def test_recent_imports_clamps_limit_and_returns_items() -> None:
     sql, params = session.statements[-1]
     assert params == {"limit": 60}
     assert "from warehouse.movie_file" in sql
+
+
+def test_library_totals_shapes_counts() -> None:
+    session = OverviewSession(
+        episode_totals=[{"episodes": 133412, "on_disk": 111076, "missing": 1906}],
+        movie_totals=[{"movies": 2341, "on_disk": 2298, "missing": 43}],
+        shows=[1284],
+        stored=[186_400_000_000_000],
+    )
+    body = _client(session).get("/api/ui/library-totals").json()
+    assert body == {
+        "shows": 1284,
+        "episodes": 133412,
+        "episodes_on_disk": 111076,
+        "episodes_missing": 1906,
+        "movies": 2341,
+        "movies_on_disk": 2298,
+        "movies_missing": 43,
+        "stored_bytes": 186_400_000_000_000,
+    }
+
+
+def test_library_totals_on_an_empty_warehouse() -> None:
+    body = _client(OverviewSession()).get("/api/ui/library-totals").json()
+    assert body["episodes"] == 0 and body["stored_bytes"] == 0
