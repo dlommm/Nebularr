@@ -36,7 +36,9 @@ GET /api/ui/events
 GET /api/ui/logs
 GET /api/ui/movies
 GET /api/ui/movies/export.csv
+GET /api/ui/recent-imports
 GET /api/ui/recent-runs
+GET /api/ui/run-timeline
 GET /api/ui/shows
 GET /api/ui/shows/{series_id}/episodes
 GET /api/ui/shows/{series_id}/episodes/export.csv

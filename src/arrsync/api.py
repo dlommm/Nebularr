@@ -19,6 +19,7 @@ from arrsync.routers.hooks import build_hooks_router
 from arrsync.routers.library import build_library_router
 from arrsync.routers.mal_routes import build_mal_router
 from arrsync.routers.operator import build_operator_router
+from arrsync.routers.overview import build_overview_router
 from arrsync.routers.reporting import build_reporting_router
 from arrsync.routers.setup import build_setup_router
 from arrsync.routers.sync_ops import build_sync_ops_router
@@ -41,6 +42,7 @@ def build_router(app_state: Any) -> APIRouter:
     router.include_router(build_automations_router(app_state))
     router.include_router(build_hooks_router(app_state))
     router.include_router(build_artwork_router(app_state))
+    router.include_router(build_overview_router(app_state))
     # Must stay last: contains the /{frontend_path:path} SPA catch-all.
     router.include_router(build_ui_shell_router(app_state))
     return router
