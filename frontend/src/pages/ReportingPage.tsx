@@ -14,9 +14,10 @@ import { ReportingDistributionPanel } from "./reporting/ReportingDistributionPan
 import { ReportingTablePanel } from "./reporting/ReportingTablePanel";
 import { ReportingTimeseriesPanel } from "./reporting/ReportingTimeseriesPanel";
 import { resetPanelOffset, tokenizeFilter } from "./reporting/reportingShared";
+import { PageHead } from "@/components/ns/Page";
 
 export function ReportingPage(): JSX.Element {
-  usePageTitle("Reporting");
+  usePageTitle("Reports");
   const [reportingDashboardKey, setReportingDashboardKey] = useLocalStorageState<string>(
     "nebularr.reporting.dashboard",
     "overview",
@@ -152,7 +153,7 @@ export function ReportingPage(): JSX.Element {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               {batch.map((p) => (
                 <div
-                  className="rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-card)]"
+                  className="rounded-md border border-border bg-card px-4 py-3"
                   key={p.id}
                 >
                   <div className="truncate text-xs text-muted-foreground" title={p.title}>
@@ -216,8 +217,10 @@ export function ReportingPage(): JSX.Element {
   };
 
   return (
+    <div className="pb-16">
+      <PageHead title="Reports" lead="Straight from the warehouse. Every panel can be exported as CSV." />
     <div className="grid grid-cols-12 gap-4">
-      <div className="col-span-12 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
+      <div className="col-span-12 rounded-md border border-border bg-card p-4">
         {reportingDashboards.isError ? (
           <div className="mb-3">
             <QueryErrorNotice
@@ -236,7 +239,7 @@ export function ReportingPage(): JSX.Element {
                 aria-selected={reportingDashboardKey === dash.key}
                 className={
                   reportingDashboardKey === dash.key
-                    ? "rounded-md bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
+                    ? "rounded-md bg-signal/10 px-3 py-1.5 text-sm font-medium text-signal"
                     : "rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                 }
                 onClick={() => setReportingDashboardKey(dash.key)}
@@ -377,11 +380,12 @@ export function ReportingPage(): JSX.Element {
       {renderReportingPanelNodes()}
 
       {reportingDashboard.isLoading ? (
-        <div className="col-span-12 flex items-center gap-2 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+        <div className="col-span-12 flex items-center gap-2 rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
           <span className="size-2 animate-pulse rounded-full bg-primary" />
           <span>Loading dashboard…</span>
         </div>
       ) : null}
+    </div>
     </div>
   );
 }

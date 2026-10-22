@@ -520,8 +520,8 @@ export function LibraryPage(): JSX.Element {
                             <StatusBadge status={row.status} className="text-xs" />
                           </span>
                         </span>
-                        <span className="hidden text-sm text-muted-foreground sm:block">{row.season_count} seasons</span>
-                        <span className="text-right text-sm text-muted-foreground sm:text-left">{row.episode_count} episodes</span>
+                        <span className="hidden text-sm text-muted-foreground sm:block">{plural(row.season_count, "season")}</span>
+                        <span className="text-right text-sm text-muted-foreground sm:text-left">{plural(row.episode_count, "episode")}</span>
                         <span className="hidden text-right font-mono text-xs text-subtle-foreground sm:block">{fmtDate(row.last_seen_at)}</span>
                       </button>
                       {selected ? (
@@ -533,7 +533,7 @@ export function LibraryPage(): JSX.Element {
                               <div className="min-w-0">
                                 <h2 className="cond text-[clamp(48px,7vw,88px)] leading-[0.84] font-[760]">{row.title}</h2>
                                 <p className="mt-3 text-sm text-foreground/80">
-                                  {row.season_count} seasons · {row.status} · {row.instance_name}
+                                  {plural(row.season_count, "season")} · {row.status} · {row.instance_name}
                                   {row.path ? <span className="ml-2 font-mono text-xs">{row.path}</span> : null}
                                 </p>
                               </div>
@@ -761,4 +761,8 @@ function qualityBadge(quality: string): string {
   if (q.includes("1080")) return "HD";
   if (q.includes("720")) return "720";
   return "SD";
+}
+
+function plural(n: number, word: string): string {
+  return `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 }

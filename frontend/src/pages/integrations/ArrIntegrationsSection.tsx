@@ -93,7 +93,7 @@ export function ArrIntegrationsSection({
         const key = `${row.source}:${row.name}`;
         const draft = drafts[key] ?? { ...row, api_key: "" };
         return (
-          <div className="rounded-xl border border-border bg-muted/40 p-4" key={key}>
+          <div className="rounded-md border border-border bg-transparent p-4" key={key}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">
                 {row.source}/{row.name}

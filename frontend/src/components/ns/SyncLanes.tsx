@@ -77,7 +77,7 @@ export function SyncLanes({ timeline, size = "lg" }: { timeline: RunTimeline; si
     const first = new Date(startMs);
     first.setMinutes(0, 0, 0);
     first.setHours(first.getHours() + (step - (first.getHours() % step)));
-    for (let t = first.getTime(); t < now.getTime() - 3_600_000; t += step * 3_600_000) {
+    for (let t = first.getTime(); t < now.getTime() - step * 0.8 * 3_600_000; t += step * 3_600_000) {
       marks.push({ left: ((t - startMs) / windowMs) * 100, label: clock(new Date(t).toISOString()) });
     }
     return marks;

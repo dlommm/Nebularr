@@ -614,6 +614,79 @@ const SETUP_INCOMPLETE = {
   bootstrap_token_required: true,
 };
 
+
+// ————— Now Showing endpoints (Overview, Library, Artwork, sign-in) —————
+
+function runTimeline(scenario) {
+  const now = Date.now();
+  const at = (hoursAgo) => new Date(now - hoursAgo * 3_600_000).toISOString();
+  const every = (step, offset, kind, failRecent = 0) => {
+    const events = [];
+    for (let h = offset; h < 24; h += step) {
+      events.push({ at: at(h), kind, status: h < failRecent ? "failed" : "success", rows: Math.round(40 + ((h * 37) % 300)), duration_seconds: 12 + (h % 9) });
+    }
+    return events.reverse();
+  };
+  const sonarr = every(0.5, 0.07, "incremental").concat([{ at: at(11.9), kind: "full", status: "success", rows: 133412, duration_seconds: 381 }]);
+  sonarr.sort((a, b) => a.at.localeCompare(b.at));
+  const anime = scenario === "degraded" ? every(1, 9.3, "incremental") : every(1, 0.6, "incremental");
+  const radarr = every(0.5, 0.18, "incremental", scenario === "degraded" ? 2 : 0);
+  const hooks = Array.from({ length: scenario === "empty" ? 0 : 53 }, (_, i) => ({
+    at: at(((i * 7919) % 2400) / 100),
+    kind: "webhook",
+    status: i < 3 ? "queued" : "done",
+    source: i % 3 ? "sonarr" : "radarr",
+  })).sort((a, b) => a.at.localeCompare(b.at));
+  return {
+    now: new Date(now).toISOString(),
+    hours: 24,
+    lanes: [
+      { key: "sonarr:primary", label: "primary", kind: "sonarr", events: scenario === "empty" ? [] : sonarr, last_at: at(0.07) },
+      { key: "sonarr:anime", label: "anime", kind: "sonarr", events: scenario === "empty" ? [] : anime, last_at: at(scenario === "degraded" ? 9.3 : 0.6) },
+      { key: "radarr:primary", label: "movies", kind: "radarr", events: scenario === "empty" ? [] : radarr, last_at: at(0.18) },
+      { key: "webhooks", label: "Webhooks", kind: "webhooks", events: hooks, last_at: hooks.length ? hooks[hooks.length - 1].at : null },
+      { key: "mal", label: "MyAnimeList", kind: "mal", events: [0.9, 6.9, 12.9, 18.9].map((h) => ({ at: at(h), kind: "ingest", status: "success", duration_seconds: 161 })), last_at: at(0.9) },
+    ],
+  };
+}
+
+const IMPORT_TITLES = [
+  ["episode", "primary", 501, "Halcyon Station", 2019, 6, 10, "The Long Way Down", "Bluray-2160p", 15_250_000_000],
+  ["movie", "primary", 9001, "The Quiet Orchard", 2024, null, null, null, "Remux-2160p", 66_350_000_000],
+  ["episode", "anime", 777, "Koya no Kitsune", 2025, 1, 7, "Ashes on the Shrine Road", "WEBDL-1080p", 1_500_000_000],
+  ["episode", "primary", 502, "Ferryman's Daughter", 2022, 2, 4, "Low Water", "WEBDL-1080p", 3_330_000_000],
+  ["movie", "primary", 9002, "Low Tide at Marrow Bay", 2023, null, null, null, "Bluray-2160p", 24_270_000_000],
+  ["episode", "primary", 503, "Saltmarsh", 2021, 3, 6, "Brackish", "WEBDL-1080p", 2_100_000_000],
+  ["episode", "primary", 504, "Glass Harbour", 2018, 5, 1, "Return", "HDTV-720p", 1_100_000_000],
+  ["movie", "primary", 9003, "Ironwood", 2021, null, null, null, "Bluray-2160p", 52_500_000_000],
+];
+
+function recentImports(scenario) {
+  if (scenario === "empty") return { items: [] };
+  return {
+    items: IMPORT_TITLES.map(([kind, inst, id, title, year, s, e, et, quality, size], i) => ({
+      kind, instance_name: inst, item_id: id, title, year, season_number: s, episode_number: e, episode_title: et,
+      quality, size_bytes: size, video_codec: quality.includes("2160") ? "HEVC" : "x264", audio_codec: "EAC3",
+      path: kind === "movie" ? `/movies/${title} (${year})/${title}.mkv` : `/tv/${title} (${year})/Season ${String(s).padStart(2, "0")}/${title}.S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}.mkv`,
+      seen_at: ago(240 + i * 5400), date_added: ago(240 + i * 5400),
+    })),
+  };
+}
+
+function libraryTotals(scenario) {
+  if (scenario === "empty") return { shows: 0, episodes: 0, episodes_on_disk: 0, episodes_missing: 0, movies: 0, movies_on_disk: 0, movies_missing: 0, stored_bytes: 0 };
+  return { shows: 1284, episodes: 133412, episodes_on_disk: 111076, episodes_missing: 1906, movies: 2341, movies_on_disk: 2298, movies_missing: 43, stored_bytes: 204_950_000_000_000 };
+}
+
+function artworkConfig(scenario) {
+  return {
+    enabled: true, mode: "cache", remote_fallback: false, cache_max_mb: 0,
+    cache: scenario === "empty" ? { files: 0, bytes: 0, by_cover: {} } : { files: 7250, bytes: 3_190_000_000, by_cover: { poster: { files: 3625, bytes: 290_000_000 }, fanart: { files: 3625, bytes: 2_900_000_000 } } },
+    prefetch_running: false,
+    last_prefetch: scenario === "empty" ? null : { reason: "cron", mode: "cache", started_at: ago(7200), finished_at: ago(7080), fetched: 14, already_cached: 7236, unavailable: 3, pruned: 2, evicted: 0, interrupted: false },
+  };
+}
+
 function json(body, statusCode = 200) {
   return { status: statusCode, contentType: "application/json", body: JSON.stringify(body) };
 }
@@ -641,6 +714,13 @@ export function routeResponse(pathname, search, ctx) {
     return json(item ? { running: true, ...item } : { running: false });
   }
   if (pathname === "/api/ui/recent-runs") return json(recentRuns(scenario));
+  if (pathname === "/api/ui/run-timeline") return json(runTimeline(scenario));
+  if (pathname === "/api/ui/recent-imports") return json(recentImports(scenario));
+  if (pathname === "/api/ui/library-totals") return json(libraryTotals(scenario));
+  if (pathname === "/api/config/artwork") return json(artworkConfig(scenario));
+  // No real artwork in the harness: every image 404s, so pages show their title cards.
+  if (pathname === "/api/art/wall") return json({ items: [] });
+  if (pathname.startsWith("/api/art/")) return { status: 404, contentType: "application/json", body: "{}" };
   if (pathname === "/api/ui/webhook-queue") return json(webhookQueue(scenario));
   if (pathname === "/api/ui/webhook-jobs") return json(webhookJobs(scenario));
   if (pathname === "/api/config/integrations") return json(integrations(scenario));

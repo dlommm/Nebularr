@@ -103,7 +103,7 @@ export function MultiSelectFilter({ options, selected, onChange, label, classNam
           </span>
           <button
             type="button"
-            className="rounded-md px-1.5 py-0.5 font-medium text-primary hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+            className="rounded-md px-1.5 py-0.5 font-medium text-signal hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
             disabled={selected.length === 0}
             onClick={() => onChange([])}
           >

@@ -102,7 +102,7 @@ export function AutomationRunHistory({ automation }: { automation: AutomationRow
         <p className="text-sm text-muted-foreground">No runs yet.</p>
       ) : null}
       {(runs.data?.runs ?? []).map((run) => (
-        <div key={run.id} className="rounded-lg border border-border bg-muted/40 p-3">
+        <div key={run.id} className="rounded-lg border border-border bg-transparent p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <StatusBadge status={run.status} />
             <span>{fmtDate(run.started_at)}</span>

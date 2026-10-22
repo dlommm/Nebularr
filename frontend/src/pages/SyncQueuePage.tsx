@@ -24,6 +24,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Activity, Inbox, ListOrdered, Wrench, Zap } from "lucide-react";
+import { PageHead, SectionHead } from "@/components/ns/Page";
+import { SyncLanes } from "@/components/ns/SyncLanes";
 const TAB_VALUES = ["overview", "runs", "webhooks", "manual"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
@@ -60,6 +62,11 @@ export function SyncQueuePage(): JSX.Element {
   // While the SSE stream is connected, events drive cache invalidation and
   // polling relaxes to a slow safety net; on disconnect the old cadence returns.
   const { connected: sseConnected } = useServerEventsStatus();
+  const timeline = useQuery({
+    queryKey: queryKeys.runTimeline,
+    queryFn: () => api.runTimeline(24),
+    refetchInterval: pollInterval(sseConnected, 30_000, 90_000),
+  });
   const runs = useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.recentRuns,
@@ -155,6 +162,14 @@ export function SyncQueuePage(): JSX.Element {
   }, [syncProgress.data]);
 
   return (
+    <div className="pb-16">
+      <PageHead title="Sync & Queue" lead="Every warehouse run, every webhook from Sonarr and Radarr, and the controls to run them by hand." />
+      {timeline.data ? (
+        <section aria-labelledby="sync-lanes" className="mb-12">
+          <SectionHead id="sync-lanes" title="The last 24 hours" aside="short tick = incremental · tall = full · ring = failed" />
+          <SyncLanes timeline={timeline.data} />
+        </section>
+      ) : null}
     <div className="space-y-6">
       <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <GlassCard className="min-w-0" size="sm">
@@ -262,7 +277,7 @@ export function SyncQueuePage(): JSX.Element {
                 ) : (
                   <p className="text-sm text-muted-foreground">No sync is currently running.</p>
                 )}
-                <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <div className="rounded-lg border border-border bg-transparent px-3 py-2 text-xs text-muted-foreground">
                   MAL fetched: <strong>{status.data?.mal_sync?.fetched_success_count ?? 0}</strong> /{" "}
                   <strong>{status.data?.mal_sync?.dubbed_total ?? 0}</strong> · pending{" "}
                   <strong>{status.data?.mal_sync?.pending_fetch_count ?? 0}</strong>
@@ -296,7 +311,7 @@ export function SyncQueuePage(): JSX.Element {
               <CardContent>
                 <ul className="space-y-2 text-sm">
                   {(webhookQueue.data ?? []).map((row) => (
-                    <li key={row.status} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                    <li key={row.status} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-transparent px-3 py-2">
                       <span className="text-muted-foreground">{row.status}</span>
                       <span className="font-mono tabular-nums font-medium">{row.count}</span>
                     </li>
@@ -640,7 +655,7 @@ export function SyncQueuePage(): JSX.Element {
                   {integrityResults ? (
                     <ul className="space-y-1 text-xs">
                       {integrityResults.map((result) => (
-                        <li key={`${result.source}-${result.instance_name}`} className="rounded border border-border bg-muted/40 px-2 py-1">
+                        <li key={`${result.source}-${result.instance_name}`} className="rounded border border-border bg-transparent px-2 py-1">
                           <span className="font-medium">
                             {result.source}/{result.instance_name}:
                           </span>{" "}
@@ -742,7 +757,7 @@ export function SyncQueuePage(): JSX.Element {
                     </li>
                   </ul>
                   {stuckState.data?.job_locks?.length ? (
-                    <ul className="max-h-24 overflow-y-auto rounded border border-border bg-muted/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                    <ul className="max-h-24 overflow-y-auto rounded border border-border bg-transparent px-2 py-1 font-mono text-[10px] text-muted-foreground">
                       {stuckState.data.job_locks.map((l) => (
                         <li key={l.lock_name} className="truncate">
                           {l.lock_name}
@@ -860,7 +875,7 @@ export function SyncQueuePage(): JSX.Element {
             <CardContent>
               <p className="text-sm text-muted-foreground">
                 Ingest, matching, tag sync, job history, and unmatched dubbed anime now live on the{" "}
-                <Link to={PATHS.mal} className="text-primary hover:underline">
+                <Link to={PATHS.mal} className="text-signal hover:underline">
                   MyAnimeList page
                 </Link>
                 .
@@ -877,6 +892,7 @@ export function SyncQueuePage(): JSX.Element {
       />
       {confirmDialog}
       {syncActionsConfirmDialog}
+    </div>
     </div>
   );
 }

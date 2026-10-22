@@ -56,7 +56,7 @@ export function AutomationList({
   return (
     <div className="grid gap-3">
       {automations.map((row) => (
-        <div key={row.id} className="rounded-xl border border-border bg-muted/40 p-4">
+        <div key={row.id} className="rounded-md border border-border bg-transparent p-4">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

@@ -35,7 +35,7 @@ function ReportingTimeseriesPanelImpl({ panel }: ReportingTimeseriesPanelProps):
     looksLikeBytes ? fmtSize(value) : value.toLocaleString();
 
   return (
-    <div className="col-span-12 min-w-0 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
+    <div className="col-span-12 min-w-0 rounded-md border border-border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-foreground">{panel.title}</h3>
         <span className="text-xs text-muted-foreground">{data.length} points</span>
@@ -45,7 +45,7 @@ function ReportingTimeseriesPanelImpl({ panel }: ReportingTimeseriesPanelProps):
           No snapshots yet — the daily stats job (or the first successful full sync) populates this chart.
         </div>
       ) : (
-        <div className="h-72 w-full rounded-xl border border-border bg-muted/30 px-1 py-2">
+        <div className="h-72 w-full rounded-md border border-border bg-muted/30 px-1 py-2">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />

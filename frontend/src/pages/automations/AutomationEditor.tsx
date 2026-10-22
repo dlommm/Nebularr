@@ -197,7 +197,7 @@ export function AutomationEditor({
       {/* The rule as a sentence, so the model ("things that fail the
           requirements get the actions") never has to be reassembled from the
           controls below. */}
-      <div className="rounded-lg border border-border bg-muted/40 p-3">
+      <div className="rounded-lg border border-border bg-transparent p-3">
         <p className="text-sm leading-relaxed">{summarizeAutomation(draft)}</p>
         {limits ? <p className="mt-1 text-xs text-muted-foreground">{limits}</p> : null}
         <p className="mt-2 flex items-center gap-1.5 text-xs" aria-live="polite">

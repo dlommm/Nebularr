@@ -50,7 +50,8 @@ describe("AutomationList", () => {
   it("renders the row with its dry-run badge and fires onRun", () => {
     const props = renderList();
     expect(screen.getByText("dub hunt")).toBeInTheDocument();
-    expect(screen.getByText(/dry run/i)).toBeInTheDocument();
+    // The mode badge and the humanised last-run status ("dry run") both say it.
+    expect(screen.getAllByText(/dry run/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/12 matched/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /run now/i }));
     expect(props.onRun).toHaveBeenCalledWith(ROW);

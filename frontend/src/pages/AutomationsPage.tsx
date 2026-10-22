@@ -17,6 +17,7 @@ import { AutomationEditor, type AutomationDraft } from "./automations/Automation
 import { AutomationList } from "./automations/AutomationList";
 import { AutomationRunHistory } from "./automations/AutomationRunHistory";
 import { TemplatePicker } from "./automations/TemplatePicker";
+import { PageHead } from "@/components/ns/Page";
 
 /**
  * The sheet is the one place where a single automation is worked on, so the
@@ -31,7 +32,7 @@ type SheetState =
   | { kind: "history"; row: AutomationRow };
 
 export function AutomationsPage(): JSX.Element {
-  usePageTitle("Automations");
+  usePageTitle("Rules");
   const queryClient = useQueryClient();
   const { runAction } = useActionError();
   const { requestConfirm, confirmDialog } = useConfirmDialog();
@@ -163,6 +164,8 @@ export function AutomationsPage(): JSX.Element {
   };
 
   return (
+    <div className="pb-16">
+      <PageHead title="Rules" lead="Rules search, tag or retire. New rules start as dry runs and change nothing until you go live." />
     <div className="space-y-6">
       <GlassCard>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -265,6 +268,7 @@ export function AutomationsPage(): JSX.Element {
       </Sheet>
 
       {confirmDialog}
+    </div>
     </div>
   );
 }

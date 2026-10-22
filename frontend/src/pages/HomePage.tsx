@@ -11,7 +11,7 @@ import { OnboardingChecklist } from "../components/nebula/OnboardingChecklist";
 import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Fanart, Poster } from "@/components/ns/Artwork";
 import { Figure, Figures, SectionHead, StatusDot } from "@/components/ns/Page";
-import { actionLinkClass } from "@/lib/ns";
+import { actionLinkClass, fmtBigBytes } from "@/lib/ns";
 import { SyncLanes } from "@/components/ns/SyncLanes";
 import { dayOrClock, relTime } from "@/lib/time";
 import type { RecentImport, RunTimeline, StatusResponse } from "@/types";
@@ -264,7 +264,7 @@ export function HomePage(): JSX.Element {
               tone={t && t.episodes_missing > 0 ? "warn" : undefined}
               style={{ animationDelay: "240ms" }}
             />
-            <Figure value={t ? fmtSize(t.stored_bytes) : "—"} label="stored" style={{ animationDelay: "300ms" }} />
+            <Figure value={t ? fmtBigBytes(t.stored_bytes) : "—"} label="stored" style={{ animationDelay: "300ms" }} />
           </Figures>
         </section>
 

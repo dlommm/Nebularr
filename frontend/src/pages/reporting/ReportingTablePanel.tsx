@@ -110,7 +110,7 @@ function ReportingTablePanelImpl({
   const capped = unlimited && total > MAX_UNLIMITED_ROWS;
 
   return (
-    <div className="col-span-12 min-w-0 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
+    <div className="col-span-12 min-w-0 rounded-md border border-border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-foreground">{panel.title}</h3>
         <div className="flex flex-wrap items-center gap-2">
@@ -185,7 +185,7 @@ function ReportingTablePanelImpl({
         </div>
       </div>
       {capped ? (
-        <div className="mb-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="mb-2 rounded-md border border-border bg-transparent px-3 py-1.5 text-xs text-muted-foreground">
           Showing the first {MAX_UNLIMITED_ROWS.toLocaleString()} of {total.toLocaleString()} rows — use “Export CSV
           (full)” for the complete dataset.
         </div>

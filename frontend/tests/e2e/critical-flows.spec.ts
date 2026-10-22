@@ -83,7 +83,7 @@ test("fresh install walks the setup wizard and lands in the shell", async ({ pag
 
   // The wizard auto-logs-in with the new password and lands in the app shell.
   await expect(page.getByText("Nebularr").first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("link", { name: /^home$/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^overview$/i }).first()).toBeVisible();
 });
 
 test("authenticated navigation renders the key views", async ({ page, baseURL }) => {
@@ -110,7 +110,7 @@ test("authenticated navigation renders the key views", async ({ page, baseURL })
   await expect(page.getByText("On-demand sync")).toBeVisible();
 
   await page.goto(`${root}/reporting`);
-  await expect(page.getByText("Overview").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reports" })).toBeVisible();
 });
 
 test("healthz reports ok with auth enabled", async ({ request, baseURL }) => {

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { relTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { fmtBigBytes } from "@/lib/ns";
 import type { ArtworkConfig, ArtworkMode } from "@/types";
 
 const CAP_OPTIONS: { mb: number; label: string }[] = [
@@ -94,7 +95,7 @@ export function ArtworkPage(): JSX.Element {
     if (mode === "live" && c.cache.files > 0) {
       requestConfirm({
         title: "Load artwork live?",
-        description: `This frees ${fmtSize(c.cache.bytes)} by deleting the cache (a small poster sample stays for the sign-in page). Pages will load art from Sonarr and Radarr every time, which is slower.`,
+        description: `This frees ${fmtBigBytes(c.cache.bytes)} by deleting the cache (a small poster sample stays for the sign-in page). Pages will load art from Sonarr and Radarr every time, which is slower.`,
         confirmLabel: "Switch to live",
         onConfirm: () => save({ mode }, "mode"),
       });
@@ -176,7 +177,7 @@ export function ArtworkPage(): JSX.Element {
         />
         <Figures>
           <Figure value={c.cache.files.toLocaleString()} label="images cached" size="md" />
-          <Figure value={fmtSize(c.cache.bytes)} label="on disk" size="md" />
+          <Figure value={fmtBigBytes(c.cache.bytes)} label="on disk" size="md" />
           <Figure value={posters.toLocaleString()} label="posters" size="md" />
           <Figure value={fanart.toLocaleString()} label="fanart" size="md" />
         </Figures>
@@ -229,7 +230,7 @@ export function ArtworkPage(): JSX.Element {
             onClick={() =>
               requestConfirm({
                 title: "Clear the artwork cache?",
-                description: `Deletes ${c.cache.files.toLocaleString()} images (${fmtSize(c.cache.bytes)}). They are fetched again as needed.`,
+                description: `Deletes ${c.cache.files.toLocaleString()} images (${fmtBigBytes(c.cache.bytes)}). They are fetched again as needed.`,
                 confirmLabel: "Clear cache",
                 destructive: true,
                 onConfirm: () =>

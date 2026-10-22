@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { MalJobRunRow } from "../types";
 import { PATHS } from "../routes/paths";
+import { PageHead } from "@/components/ns/Page";
 
 const JOB_TYPES = ["all", "ingest", "ingest_backlog", "matcher", "tag_sync", "coverage_tag_sync"] as const;
 type JobTypeFilter = (typeof JOB_TYPES)[number];
@@ -40,7 +41,7 @@ function detailsSummary(details: Record<string, unknown>): string {
 }
 
 export function MalPage(): JSX.Element {
-  usePageTitle("MyAnimeList");
+  usePageTitle("Anime");
   const queryClient = useQueryClient();
   const { setError } = useActionError();
   const { requestConfirm, confirmDialog } = useConfirmDialog();
@@ -165,11 +166,13 @@ export function MalPage(): JSX.Element {
     : [];
 
   return (
+    <div className="pb-16">
+      <PageHead title="Anime" lead="MyAnimeList matching and English-dub coverage, tagged back to Sonarr and Radarr." />
     <div className="space-y-6">
       {!malConfig.data?.client_id_configured && !malConfig.data?.env_fallback_configured ? (
         <p className="rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
           No MAL client ID configured — ingest runs will fail. Set one under{" "}
-          <Link to={PATHS.integrations} className="text-primary hover:underline">
+          <Link to={PATHS.integrations} className="text-signal hover:underline">
             Integrations → MyAnimeList
           </Link>
           .
@@ -365,7 +368,7 @@ export function MalPage(): JSX.Element {
             </p>
           ) : null}
           {malPipelineResult ? (
-            <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+            <div className="space-y-2 rounded-lg border border-border bg-transparent p-3">
               <p className="text-sm font-medium">{malPipelineResult.label}</p>
               {flatResultEntries.length > 0 ? (
                 <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
@@ -501,7 +504,7 @@ export function MalPage(): JSX.Element {
                           href={`https://myanimelist.net/anime/${row.mal_id}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-primary hover:underline"
+                          className="text-signal hover:underline"
                         >
                           {row.mal_id}
                         </a>
@@ -533,11 +536,11 @@ export function MalPage(): JSX.Element {
 
       <p className="text-xs text-muted-foreground">
         MAL data reset and stuck-state controls live under{" "}
-        <Link to={`${PATHS.sync}?tab=manual`} className="text-primary hover:underline">
+        <Link to={`${PATHS.sync}?tab=manual`} className="text-signal hover:underline">
           Sync &amp; Queue → Manual
         </Link>
         . Feature toggles and the client ID live under{" "}
-        <Link to={PATHS.integrations} className="text-primary hover:underline">
+        <Link to={PATHS.integrations} className="text-signal hover:underline">
           Integrations → MyAnimeList
         </Link>
         .
@@ -548,12 +551,12 @@ export function MalPage(): JSX.Element {
           href="https://github.com/MAL-Dubs/MAL-Dubs"
           target="_blank"
           rel="noreferrer"
-          className="text-primary hover:underline"
+          className="text-signal hover:underline"
         >
           MAL-Dubs
         </a>{" "}
         ·{" "}
-        <a href="https://mydublist.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+        <a href="https://mydublist.com" target="_blank" rel="noreferrer" className="text-signal hover:underline">
           MyDubList
         </a>{" "}
         by Joelis57 (
@@ -561,13 +564,14 @@ export function MalPage(): JSX.Element {
           href="https://creativecommons.org/licenses/by/4.0/"
           target="_blank"
           rel="noreferrer"
-          className="text-primary hover:underline"
+          className="text-signal hover:underline"
         >
           CC BY 4.0
         </a>
         ).
       </p>
       {confirmDialog}
+    </div>
     </div>
   );
 }

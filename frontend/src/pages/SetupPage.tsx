@@ -254,10 +254,10 @@ export function SetupPage(): JSX.Element {
   if (wizardStep === 0) {
     stepBody = (
       <div className="space-y-4">
-        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)]">
+        <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:p-6">
             <img
-              className="h-12 w-12 shrink-0 rounded-xl"
+              className="h-12 w-12 shrink-0 rounded-md"
               src={nebularrIcon}
               alt=""
             />
@@ -275,7 +275,7 @@ export function SetupPage(): JSX.Element {
           </div>
         </div>
         {setupStatus.data?.bootstrap_token_required ? (
-          <div className="space-y-2 rounded-xl border border-warn/40 bg-warn/10 p-4">
+          <div className="space-y-2 rounded-md border border-warn/40 bg-warn/10 p-4">
             <Label htmlFor="setup-bootstrap-token" className="text-sm font-medium">
               Setup token required
             </Label>
@@ -293,7 +293,7 @@ export function SetupPage(): JSX.Element {
             />
           </div>
         ) : null}
-        <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+        <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
           <div className="flex flex-col gap-3 sm:flex-row">
             <Input
               aria-label="Host"
@@ -344,14 +344,14 @@ export function SetupPage(): JSX.Element {
               {wizardBusy ? "Connecting…" : "Wait for Postgres & run migrations"}
             </Button>
           )}
-          {dbNotice ? <p className="text-sm text-primary">{dbNotice}</p> : null}
+          {dbNotice ? <p className="text-sm text-signal">{dbNotice}</p> : null}
         </div>
       </div>
     );
   }
   if (wizardStep === 1) {
     stepBody = (
-      <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
         <p className="font-medium">Sonarr</p>
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <div className="flex items-center gap-2">
@@ -398,7 +398,7 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 2) {
     stepBody = (
-      <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
         <p className="font-medium">Radarr</p>
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <div className="flex items-center gap-2">
@@ -445,7 +445,7 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 3) {
     stepBody = (
-      <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
         <p className="font-medium">Webhook and Schedule</p>
         <Input
           aria-label="Webhook shared secret"
@@ -480,7 +480,7 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 4) {
     stepBody = (
-      <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
         <p className="font-medium">Admin password</p>
         <p className="text-sm text-muted-foreground">
           Protect this server with a password. Every API endpoint — including ones that can change integrations or
@@ -527,7 +527,7 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 5) {
     stepBody = (
-      <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
         <p className="font-medium">Initial Full Sync</p>
         <p className="text-sm text-muted-foreground">
           Do you want to run initial full sync now? If yes, Nebularr will process one system at a time to avoid overload.
@@ -571,7 +571,7 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 6) {
     stepBody = (
-      <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
+      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
         <p className="font-medium">Review</p>
         <p className="text-sm text-muted-foreground">Confirm details and complete setup.</p>
         <div className="space-y-1 text-sm text-muted-foreground">
@@ -617,7 +617,7 @@ export function SetupPage(): JSX.Element {
                 className={cn(
                   "rounded-full border px-2.5 py-1 text-[11px] font-medium",
                   index === wizardStep
-                    ? "border-primary/50 bg-primary/10 text-primary"
+                    ? "border-signal/50 bg-signal/10 text-signal"
                     : index < wizardStep
                       ? "border-ok/35 text-ok"
                       : "border-border text-muted-foreground",

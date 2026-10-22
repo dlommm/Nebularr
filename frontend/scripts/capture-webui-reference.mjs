@@ -54,7 +54,6 @@ const density = process.env.WEBUI_CAPTURE_DENSITY === "compact" ? "compact" : "c
     `needsData` captures are skipped in the empty scenario. */
 const captures = [
   { name: "home", path: "/", waitFor: "main h1, main h2" },
-  { name: "dashboard", path: "/dashboard", waitFor: "#main-content [data-slot=card]" },
   { name: "library", path: "/library", waitFor: "#main-content [role=tablist]" },
   {
     name: "library-episodes",
@@ -89,9 +88,9 @@ const captures = [
       await page.waitForTimeout(300);
     },
   },
-  { name: "reporting", path: "/reporting", waitFor: "text=Episode Quality Distribution" },
+  { name: "reporting", path: "/reporting", waitFor: "main h1" },
   { name: "reporting-storage", path: "/reporting?dash=storage-growth", waitFor: "text=Library Size Over Time" },
-  { name: "sync-overview", path: "/sync", waitFor: "#main-content [data-slot=card]" },
+  { name: "sync-overview", path: "/sync", waitFor: "text=The last 24 hours" },
   { name: "sync-runs", path: "/sync?tab=runs", waitFor: "text=Run history" },
   { name: "sync-webhooks", path: "/sync?tab=webhooks", waitFor: "text=Webhook jobs" },
   { name: "sync-manual", path: "/sync?tab=manual", waitFor: "text=On-demand sync" },
@@ -126,7 +125,8 @@ const captures = [
   { name: "logs", path: "/logs", waitFor: "#main-content [data-slot=card], #main-content section" },
   { name: "setup", path: "/setup", waitFor: "text=Setup", ctx: { setupIncomplete: true } },
   { name: "login", path: "/login", waitFor: "input[type=password]", ctx: { loggedOut: true } },
-  { name: "not-found", path: "/does-not-exist", waitFor: "text=Not found" },
+  { name: "artwork", path: "/artwork", waitFor: "text=How to load it" },
+  { name: "not-found", path: "/does-not-exist", waitFor: "text=Not here" },
 ];
 
 function outPath(scenario, theme, viewport, name) {

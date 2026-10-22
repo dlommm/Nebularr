@@ -1,23 +1,17 @@
 import { Link } from "react-router-dom";
 import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { GlassCard } from "@/components/nebula/GlassCard";
-import { Button } from "@/components/ui/button";
-import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHead } from "@/components/ns/Page";
+import { actionLinkClass } from "@/lib/ns";
 
 export function NotFoundPage(): JSX.Element {
   usePageTitle("Not found");
   return (
-    <GlassCard>
-      <CardHeader>
-        <CardTitle>Page not found</CardTitle>
-        <CardDescription>This path is not part of the Nebularr control plane.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Button variant="secondary" render={<Link to={PATHS.home} />}>
-          Go to home
-        </Button>
-      </CardContent>
-    </GlassCard>
+    <div className="pb-16">
+      <PageHead title="Not here" lead="This address isn’t part of Nebularr. It may have moved in the redesign." />
+      <Link to={PATHS.home} className={actionLinkClass}>
+        Back to the overview
+      </Link>
+    </div>
   );
 }
