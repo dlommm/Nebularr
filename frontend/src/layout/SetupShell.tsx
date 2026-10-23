@@ -2,9 +2,11 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { PageHead } from "@/components/ns/Page";
 import { PATHS, pathTitle } from "../routes/paths";
 import { cn } from "@/lib/utils";
+import { useReadinessSteps } from "../hooks/useReadinessSteps";
+import { INTEGRATION_SECTIONS, sectionAnchor } from "../pages/integrations/sections";
 
 const SECTIONS = [
-  { to: PATHS.integrations, label: "Integrations", hint: "Sonarr, Radarr, MyAnimeList, sign-in, alerts" },
+  { to: PATHS.integrations, label: "Integrations", hint: "Connections, sign-in, alerts" },
   { to: PATHS.artwork, label: "Artwork", hint: "Posters and fanart, cache" },
   { to: PATHS.schedules, label: "Schedules", hint: "When jobs run, retention" },
   { to: PATHS.logs, label: "Logs", hint: "Live application log" },
@@ -14,14 +16,29 @@ const SECTIONS = [
     configuration screens. */
 export function SetupShell(): JSX.Element {
   const location = useLocation();
+  const { steps, loading } = useReadinessSteps();
+  const done = steps.filter((step) => step.done).length;
   return (
     <div className="pb-16">
-      <PageHead title="Setup" lead={`${pathTitle(location.pathname)} — how Nebularr connects, what it keeps, and when it runs.`} />
+      <PageHead
+        title="Setup"
+        lead={`${pathTitle(location.pathname)} — how Nebularr connects, what it keeps, and when it runs.`}
+        aside={
+          loading ? null : (
+            <p className="text-base text-muted-foreground">
+              <span className={cn("cond text-[40px] leading-none font-[640]", done === steps.length ? "text-ok" : "text-foreground")}>
+                {done} of {steps.length}
+              </span>{" "}
+              readiness checks done
+            </p>
+          )
+        }
+      />
       <div className="flex flex-wrap items-start gap-x-12 gap-y-6">
         <nav aria-label="Setup sections" className="flex w-full flex-row flex-wrap gap-x-6 md:w-52 md:flex-col">
           {SECTIONS.map((section) => (
+            <div key={section.to} className="contents md:block">
             <NavLink
-              key={section.to}
               to={section.to}
               className={({ isActive }) =>
                 cn(
@@ -40,6 +57,21 @@ export function SetupShell(): JSX.Element {
                 </>
               )}
             </NavLink>
+            {section.to === PATHS.integrations && location.pathname === PATHS.integrations ? (
+              <ul className="hidden pb-2 pl-5 md:block">
+                {INTEGRATION_SECTIONS.map((sub) => (
+                  <li key={sub.title}>
+                    <a
+                      href={`#${sectionAnchor(sub.title)}`}
+                      className="flex min-h-9 items-center text-[13px] text-muted-foreground hover:text-foreground"
+                    >
+                      {sub.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            </div>
           ))}
         </nav>
         <div className="min-w-0 flex-[999_1_640px]">

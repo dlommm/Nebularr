@@ -20,13 +20,13 @@ export function IntegrationsPage(): JSX.Element {
   const alertWebhookConfig = useQuery({ queryKey: queryKeys.alertWebhookConfig, queryFn: api.alertWebhookConfig });
 
   return (
-    <div className="space-y-6">
-      <AuthSection authStatus={authStatus} />
+    <div>
       <ArrIntegrationsSection integrations={integrations} />
       <MalSection malConfig={malConfig} />
-      <LoggingSection loggingConfig={loggingConfig} />
-      <WebhookSecretSection webhookConfig={webhookConfig} />
       <AlertsSection alertWebhookConfig={alertWebhookConfig} />
+      <AuthSection authStatus={authStatus} />
+      <WebhookSecretSection webhookConfig={webhookConfig} />
+      <LoggingSection loggingConfig={loggingConfig} />
     </div>
   );
 }

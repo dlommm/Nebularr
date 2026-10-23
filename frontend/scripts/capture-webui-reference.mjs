@@ -119,7 +119,7 @@ const captures = [
       await page.waitForTimeout(500);
     },
   },
-  { name: "mal", path: "/mal", waitFor: "#main-content [data-slot=card]" },
+  { name: "mal", path: "/mal", waitFor: "text=Batch controls" },
   { name: "integrations", path: "/integrations", waitFor: "#main-content [data-slot=card], #main-content section" },
   { name: "schedules", path: "/schedules", waitFor: "#main-content [data-slot=card], #main-content section" },
   { name: "logs", path: "/logs", waitFor: "#main-content [data-slot=card], #main-content section" },

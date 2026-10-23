@@ -1,11 +1,11 @@
-import { GlassCard } from "@/components/nebula/GlassCard";
-import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { sectionAnchor } from "./sections";
 
-export const SELECT_CLASS = "h-9 rounded-md border border-input bg-background px-2 text-sm";
+export const SELECT_CLASS = "min-h-10 rounded-sm border border-border bg-muted px-2.5 text-sm text-foreground";
 export const TEXTAREA_CLASS =
-  "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+  "w-full rounded-sm border border-border bg-muted px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
-/** Shared card shell for every Integrations page section. */
+/** Shared shell for every Integrations page section: a condensed heading on a
+    hairline, no card. */
 export function SectionCard({
   title,
   description,
@@ -15,13 +15,14 @@ export function SectionCard({
   description?: string;
   children: React.ReactNode;
 }): JSX.Element {
+  const id = sectionAnchor(title);
   return (
-    <GlassCard glow="none">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description ? <CardDescription>{description}</CardDescription> : null}
-      </CardHeader>
-      <CardContent className="space-y-4">{children}</CardContent>
-    </GlassCard>
+    <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-24 border-t border-border pt-6 pb-10 first:border-t-0 first:pt-0">
+      <h2 id={`${id}-title`} className="cond text-[30px] leading-none font-bold">
+        {title}
+      </h2>
+      {description ? <p className="mt-2.5 max-w-2xl text-[13px] leading-relaxed text-muted-foreground">{description}</p> : null}
+      <div className="mt-5 space-y-4">{children}</div>
+    </section>
   );
 }

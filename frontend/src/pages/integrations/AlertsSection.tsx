@@ -274,7 +274,7 @@ export function AlertsSection({
         Discord, Slack, and ntfy URLs get native formatting automatically (use <code className="rounded bg-muted px-1">ntfy://host/topic</code>{" "}
         for self-hosted ntfy); other URLs receive a generic JSON payload.
       </p>
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
+      <div className="space-y-3 border-t border-border pt-5">
         <div className="flex items-center gap-2">
           <Checkbox
             id="alert-email-enabled"

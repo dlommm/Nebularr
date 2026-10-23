@@ -43,20 +43,32 @@ const LOG_LEVEL_TEXT: Record<string, string> = {
   critical: "text-critical",
 };
 
+/** "14:52:07" for an ISO timestamp; anything unparseable is shown as-is. */
+function logClock(ts: unknown): string {
+  const raw = String(ts ?? "");
+  const d = new Date(raw);
+  if (!raw || Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
 export function LogViewerRow({ entry }: { entry: Record<string, unknown> }): JSX.Element {
   const lvl = String(entry.level ?? "?");
   const levelClass = LOG_LEVEL_TEXT[lvl.toLowerCase()] ?? "text-muted-foreground";
   const extra = formatLogExtras(entry);
   return (
-    <div className="border-b border-border px-1 py-1.5 text-foreground last:border-b-0">
-      <div className="flex flex-wrap items-baseline gap-2">
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{String(entry.ts ?? "")}</span>
-        <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${levelClass}`}>{lvl}</span>
-        <span className="min-w-0 break-all text-[11px] text-primary">{String(entry.logger ?? "")}</span>
-        <span className="min-w-[200px] flex-1 break-words">{String(entry.message ?? "")}</span>
+    <div className="px-4 py-0.5 leading-[1.75] text-foreground transition-colors hover:bg-muted/50">
+      <div className="grid grid-cols-[auto_4.5rem_minmax(0,1fr)] gap-x-4 sm:grid-cols-[auto_4.5rem_minmax(0,12rem)_minmax(0,1fr)]">
+        <span className="tabular-nums whitespace-nowrap text-subtle-foreground" title={String(entry.ts ?? "")}>
+          {logClock(entry.ts)}
+        </span>
+        <span className={`font-medium uppercase ${levelClass}`}>{lvl}</span>
+        <span className="hidden truncate text-subtle-foreground sm:block" title={String(entry.logger ?? "")}>
+          {String(entry.logger ?? "")}
+        </span>
+        <span className="min-w-0 break-words">{String(entry.message ?? "")}</span>
       </div>
       {extra ? (
-        <pre className="mt-1.5 whitespace-pre-wrap rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
+        <pre className="my-1 ml-0 whitespace-pre-wrap border-l border-border pl-3 text-[11px] text-muted-foreground sm:ml-[calc(4.5rem+1rem)]">
           {extra}
         </pre>
       ) : null}

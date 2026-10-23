@@ -197,6 +197,7 @@
   --animate-beat: ns-beat 2.2s ease-out infinite;
   --animate-pan: ns-pan 70s linear infinite alternate;
   --animate-shimmer: ns-shimmer 1.5s linear infinite;
+  --animate-flow: ns-flow 2.4s linear infinite;
 }
 
 @keyframes ns-rise {
@@ -226,6 +227,10 @@
 @keyframes ns-pan {
   from { transform: rotate(-8deg) translate(0, 0); }
   to { transform: rotate(-8deg) translate(-6%, -8%); }
+}
+@keyframes ns-flow {
+  from { left: -30%; }
+  to { left: 100%; }
 }
 @keyframes ns-shimmer {
   from { background-position: -160px 0; }
