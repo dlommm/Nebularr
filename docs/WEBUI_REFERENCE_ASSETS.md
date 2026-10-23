@@ -4,25 +4,25 @@ These assets are generated from the current React WebUI routes/components, using
 
 ## 1:1 Page Images
 
-Stored in `docs/reference/webui-pages/`:
+Stored in `docs/reference/webui-pages/` (dark theme, 1720×1080, healthy scenario):
 
-- `home.png`
-- `dashboard.png`
-- `reporting.png`
-- `library.png`
-- `sync-overview.png`
-- `sync-runs.png`
-- `sync-webhooks.png`
-- `sync-manual.png`
-- `integrations.png`
-- `schedules.png`
-- `logs.png`
-- `setup.png`
+- Overview: `home.png`
+- Library: `library.png`, `library-episodes.png` (a show expanded), `library-all-episodes.png`, `library-movies.png`, `library-detail.png`, `library-compare.png`
+- Sync & Queue: `sync-overview.png`, `sync-runs.png`, `sync-webhooks.png`, `sync-manual.png`
+- Reports: `reporting.png`, `reporting-storage.png`
+- Rules: `automations.png`, `automations-editor.png`, `automations-run-detail.png`
+- Anime: `mal.png`
+- Setup: `integrations.png`, `artwork.png`, `schedules.png`, `logs.png`
+- Sign-in and first run: `login.png`, `setup.png`
 - `not-found.png`
-- `library-episodes.png`, `library-all-episodes.png`, `library-movies.png`, `library-detail.png`, `library-compare.png`
-- `reporting-storage.png`
-- `automations.png`, `automations-editor.png`, `automations-run-detail.png`
-- `mal.png`, `login.png`
+
+Phone shots (390×844, viewport only) are in `phone/`: `home.png`, `library-episodes.png`, `sync-overview.png`:
+
+```bash
+WEBUI_CAPTURE_VIEWPORTS=mobile WEBUI_CAPTURE_FULL_PAGE=0 \
+WEBUI_CAPTURE_ONLY=home,library-episodes,sync-overview \
+WEBUI_CAPTURE_OUTPUT_DIR=../docs/reference/webui-pages/phone npm run capture:reference
+```
 
 ## Sample Data
 
@@ -37,8 +37,8 @@ The `webui-api-mock.json` payloads follow current frontend endpoint/type contrac
 From `frontend/`:
 
 ```bash
-npm run dev -- --host 127.0.0.1 --port 4173
-npm run capture:reference
+npm run build && npx vite preview --port 4173
+npm run capture:reference   # in a second shell
 ```
 
 Capture script location:
@@ -54,5 +54,6 @@ Optional environment variables:
 - `WEBUI_CAPTURE_SCENARIOS` — any of `healthy` (default), `degraded` (critical health, backlog, dead letters, failed runs), `empty` (nothing synced yet).
 - `WEBUI_CAPTURE_ONLY` — comma list of capture names.
 - `WEBUI_CAPTURE_DENSITY=compact` — capture compact density.
+- `WEBUI_CAPTURE_FULL_PAGE=0` — capture the viewport only (use for phone shots; fixed bars otherwise land mid-page in a full-page image).
 
-With more than one theme/viewport/scenario, files are written to `<output>/<scenario>/<theme>/<viewport>/<name>.png`. Fixtures mirror `frontend/src/types.ts` and the backend handlers; update them when an API contract changes. See `docs/DESIGN_LANGUAGE.md` for the review checklist.
+With more than one theme/viewport/scenario, files are written to `<output>/<scenario>/<theme>/<viewport>/<name>.png`. Fixtures mirror `frontend/src/types.ts` and the backend handlers; update them when an API contract changes.

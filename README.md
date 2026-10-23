@@ -20,7 +20,7 @@ Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into 
 - Exposes:
   - `/healthz` with app version and git SHA.
   - `/metrics` (Prometheus text format).
-  - Web UI at `/` for operational visibility.
+  - Web UI at `/` for operational visibility, with posters and fanart cached from your own Sonarr/Radarr.
 
 ## Architecture and HTTP API
 
@@ -255,87 +255,101 @@ For **Docker Hub** releases, prefer **`./scripts/docker-release-build.sh --push`
 - `docs/WEBUI_AGENT_WORKFLOW.md`: task tracker + quality guardian gates and completion criteria.
 - `docs/WEBUI_REFERENCE_ASSETS.md`: generated 1:1 page screenshots + sample API/demo data.
 
-## WebUI page references (top-down)
+## Web UI
 
-Screenshots are generated from the current React app render and stored in `docs/reference/webui-pages/`.
+The interface is called **Now Showing**. It's built around your own library: condensed
+display type, big figures on hairlines, rows instead of cards, and colour used only
+for status. Posters and fanart come from **your** Sonarr and Radarr. Nebularr fetches
+them server-side with the stored API key and caches them on the runtime volume, so
+the browser never talks to the Arrs. TheTVDB/TMDB fallback is off unless you turn it
+on under **Setup → Artwork**.
 
-### 1) Setup
+Navigation: **Overview · Library · Sync · Reports · Rules · Anime · Setup**, with a
+tab bar on phones.
 
-Initial first-run flow for database/bootstrap, integration credentials, webhook secret, and initial scheduler defaults.
+The screenshots below are renders of the real app against mocked sample data
+(regenerate with `npm run capture:reference`; see
+[`docs/WEBUI_REFERENCE_ASSETS.md`](docs/WEBUI_REFERENCE_ASSETS.md)).
 
-![WebUI Setup page](docs/reference/webui-pages/setup.png)
+### Overview
 
-### 2) Home
+The latest import as full-bleed fanart, a plain-English status sentence, recent
+arrivals, a 24-hour sync lane per source (tick per run, ring for a failure, empty lane
+when a source goes quiet), library totals, and anything waiting on you.
 
-Landing page that orients operators and links quickly to the main operational views.
+![Overview](docs/reference/webui-pages/home.png)
 
-![WebUI Home page](docs/reference/webui-pages/home.png)
+<p>
+  <img src="docs/reference/webui-pages/phone/home.png" alt="Overview on a phone" width="260">
+  &nbsp;
+  <img src="docs/reference/webui-pages/phone/library-episodes.png" alt="A show on a phone" width="260">
+  &nbsp;
+  <img src="docs/reference/webui-pages/phone/sync-overview.png" alt="Sync on a phone" width="260">
+</p>
 
-### 3) Dashboard
+### Library
 
-Mission-control summary with health state, sync telemetry, queue pressure, and fast action buttons for sync operations.
+Shows as poster rows. Open one to get its fanart, a season grid with one cell per
+episode coloured by quality (missing episodes outlined), and the selected episode's
+file details. Movies are a poster grid; every view filters, sorts and exports to CSV.
 
-![WebUI Dashboard page](docs/reference/webui-pages/dashboard.png)
+![Library, a show expanded](docs/reference/webui-pages/library-episodes.png)
 
-### 4) Reporting
+![Library, movies](docs/reference/webui-pages/library-movies.png)
 
-Analytics-focused view for dashboard panels, distribution/table outputs, and export-oriented review.
+### Sync & Queue
 
-![WebUI Reporting page](docs/reference/webui-pages/reporting.png)
+What's holding the sync lock right now, the sync lanes, webhook queue figures and
+recent runs. Separate tabs cover full run history, the webhook job queue (with
+requeue), and running syncs, audits and resets by hand.
 
-### 5) Library
+![Sync & Queue](docs/reference/webui-pages/sync-overview.png)
 
-Search, browse, and inspect synced show/movie/episode rows with paging, sorting, and export workflows.
+![Sync & Queue, run by hand](docs/reference/webui-pages/sync-manual.png)
 
-![WebUI Library page](docs/reference/webui-pages/library.png)
+### Reports
 
-### 6) Sync & Queue (Overview)
+Server-defined dashboards straight from the warehouse: big-figure summaries,
+quality bands, trends and tables. Every panel exports as CSV.
 
-Live progress snapshot for active sync runs plus high-level queue status and quick controls.
+![Reports](docs/reference/webui-pages/reporting.png)
 
-![WebUI Sync overview tab](docs/reference/webui-pages/sync-overview.png)
+### Rules
 
-### 7) Sync & Queue (Runs)
+Automations that search, tag or retire. The rule list sits beside its editor; every
+new rule starts as a dry run and changes nothing until you take it live (which asks
+first).
 
-Historical run table showing source/mode/status timing and row/write outcomes for recent jobs.
+![Rules, editing a rule](docs/reference/webui-pages/automations-editor.png)
 
-![WebUI Sync runs tab](docs/reference/webui-pages/sync-runs.png)
+### Anime
 
-### 8) Sync & Queue (Webhooks)
+MyAnimeList as a pipeline: fetch → match to your library → tag in Sonarr and
+Radarr, each stage with its count, last run and its own run button. Unmatched dubbed
+titles and job history sit underneath.
 
-Webhook queue/dead-letter visibility with per-job status, attempts, and error detail context.
+![Anime](docs/reference/webui-pages/mal.png)
 
-![WebUI Sync webhooks tab](docs/reference/webui-pages/sync-webhooks.png)
+### Setup
 
-### 9) Sync & Queue (Manual)
+Integrations (Sonarr/Radarr, MyAnimeList, alerts, sign-in, webhook secret, logging),
+Artwork, Schedules and Logs, with a readiness count in the header.
 
-Operator actions for incremental/full sync triggers, replay/reset controls, and MAL pipeline execution.
+![Setup, integrations](docs/reference/webui-pages/integrations.png)
 
-![WebUI Sync manual tab](docs/reference/webui-pages/sync-manual.png)
+![Setup, artwork](docs/reference/webui-pages/artwork.png)
 
-### 10) Integrations
+![Setup, logs](docs/reference/webui-pages/logs.png)
 
-Configuration surface for Sonarr/Radarr/MAL/logging/webhook settings and related connectivity state.
+### Sign-in and first run
 
-![WebUI Integrations page](docs/reference/webui-pages/integrations.png)
+The sign-in screen shows a different set of your cached posters on each visit. On a
+new install the first-run wizard connects Postgres, the Arrs, the webhook secret,
+schedules and the admin password.
 
-### 11) Schedules
+![Sign-in](docs/reference/webui-pages/login.png)
 
-Cron/timezone controls for incremental and reconcile cadence management.
-
-![WebUI Schedules page](docs/reference/webui-pages/schedules.png)
-
-### 12) Logs
-
-In-app log stream for quick troubleshooting across sync, webhook, and runtime behaviors.
-
-![WebUI Logs page](docs/reference/webui-pages/logs.png)
-
-### 13) Not Found route
-
-Fallback route shown when navigating to an unknown path.
-
-![WebUI Not Found page](docs/reference/webui-pages/not-found.png)
+![First-run setup](docs/reference/webui-pages/setup.png)
 
 ## GitHub wiki (optional)
 

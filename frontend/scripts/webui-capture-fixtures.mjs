@@ -699,7 +699,7 @@ function json(body, statusCode = 200) {
 export function routeResponse(pathname, search, ctx) {
   const { scenario } = ctx;
   if (pathname === "/healthz") {
-    return json({ status: "ok", version: "2.9.3", git_sha: "987cb823e9a3", time: ago(0), encryption: "ok", auth: "enabled" });
+    return json({ status: "ok", version: "2.10.0", git_sha: "b31efea4c2d1", time: ago(0), encryption: "ok", auth: "enabled" });
   }
   if (pathname === "/api/ui/events") return { status: 204, contentType: "text/plain", body: "" };
   if (pathname === "/api/auth/status") {

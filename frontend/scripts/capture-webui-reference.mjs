@@ -15,6 +15,8 @@
 //   WEBUI_CAPTURE_SCENARIOS   healthy,degraded,empty          (default healthy)
 //   WEBUI_CAPTURE_ONLY        comma list of capture names to restrict to
 //   WEBUI_CAPTURE_DENSITY     compact to capture compact density
+//   WEBUI_CAPTURE_FULL_PAGE   0 to capture only the viewport (phone shots: fixed
+//                             bars otherwise land mid-page in a full-page image)
 //
 // With more than one theme/viewport/scenario, files land in
 // <output>/<scenario>/<theme>/<viewport>/<name>.png; a single combination
@@ -49,6 +51,7 @@ const viewports = list(process.env.WEBUI_CAPTURE_VIEWPORTS, "reference");
 const scenarios = list(process.env.WEBUI_CAPTURE_SCENARIOS, "healthy");
 const only = process.env.WEBUI_CAPTURE_ONLY ? new Set(list(process.env.WEBUI_CAPTURE_ONLY, "")) : null;
 const density = process.env.WEBUI_CAPTURE_DENSITY === "compact" ? "compact" : "comfortable";
+const fullPage = process.env.WEBUI_CAPTURE_FULL_PAGE !== "0";
 
 /** `name` is the PNG basename; `ctx` flags flip fixture behavior per capture;
     `needsData` captures are skipped in the empty scenario. */
@@ -159,7 +162,7 @@ async function captureOne(browser, { scenario, theme, viewport, capture }) {
     await page.waitForTimeout(400);
     const file = outPath(scenario, theme, viewport, capture.name);
     await mkdir(dirname(file), { recursive: true });
-    await page.screenshot({ path: file, fullPage: true });
+    await page.screenshot({ path: file, fullPage });
     return null;
   } catch (err) {
     return `${scenario}/${theme}/${viewport}/${capture.name}: ${err instanceof Error ? err.message.split("\n")[0] : err}`;
