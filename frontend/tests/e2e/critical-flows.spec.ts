@@ -78,7 +78,8 @@ test("fresh install walks the setup wizard and lands in the shell", async ({ pag
 
   // Step 6: initial sync — nothing to sync; continue to review and complete.
   await page.getByRole("button", { name: "Next" }).click();
-  await expect(page.getByText("Authentication: enabled")).toBeVisible();
+  // The review is a term/value list; scope to the Authentication row.
+  await expect(page.locator("dl > div", { hasText: "Authentication" })).toContainText("enabled");
   await page.getByRole("button", { name: "Complete setup" }).click();
 
   // The wizard auto-logs-in with the new password and lands in the app shell.
@@ -140,21 +141,17 @@ test("automations: create from template in dry-run", async ({ page, baseURL }) =
   ]);
 
   await page.goto(`${root}/automations`);
-  await expect(page.getByText("Templates")).toBeVisible();
-
-  // Each template card is a direct child of the gallery's CSS grid container
-  // (`.grid > div`), so scoping on that relationship (rather than a bare `div`
-  // hasText match, which also matches the enclosing GlassCard — itself a flex
-  // column containing every card) narrows the locator to the one card.
-  const card = page.locator(".grid > div", { hasText: "Missing-content hunter" });
-  await card.getByRole("button", { name: /use template/i }).click();
+  // Templates open in the panel beside the rule list.
+  await page.getByRole("button", { name: /^new rule$/i }).click();
+  await expect(page.getByText(/pick a starting point/i)).toBeVisible();
+  await page.getByRole("button", { name: /missing-content hunter/i }).click();
 
   // Exact match: "Name" is a substring of several other field labels on this
   // form (e.g. "Quality name any-of (e.g. WEBDL-1080p)").
   const nameField = page.getByLabel("Name", { exact: true });
   await expect(nameField).toBeVisible();
   await nameField.fill("e2e missing hunter");
-  await page.getByRole("button", { name: /create automation/i }).click();
+  await page.getByRole("button", { name: /create rule/i }).click();
 
   await expect(page.getByText("e2e missing hunter")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/dry run/i).first()).toBeVisible();

@@ -6,14 +6,11 @@ import { errText } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
 import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
-import nebularrIcon from "@/assets/nebularr-icon.svg?url";
 
 type WizardForm = {
   pgHost: string;
@@ -254,29 +251,16 @@ export function SetupPage(): JSX.Element {
   if (wizardStep === 0) {
     stepBody = (
       <div className="space-y-4">
-        <div className="overflow-hidden rounded-2xl border border-border bg-card">
-          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:p-6">
-            <img
-              className="h-12 w-12 shrink-0 rounded-md"
-              src={nebularrIcon}
-              alt=""
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold tracking-tight">Nebularr</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                This step <strong>connects</strong> to a server that is already listening. For Docker Compose with the
-                bundled <span className="font-mono text-xs">postgres</span> service, start that container first (with
-                your <span className="font-mono text-xs">POSTGRES_*</span> values); the official image needs those at
-                first boot to initialize data, and Nebularr cannot securely start sibling containers from the browser.
-                Then enter the same database name, user, and password here. Nebularr waits for Postgres, runs Alembic
-                migrations, then continues with integrations below.
-              </p>
-            </div>
-          </div>
-        </div>
+        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          This step <strong className="text-foreground">connects</strong> to a server that is already listening. For Docker Compose with
+          the bundled <span className="font-mono text-xs">postgres</span> service, start that container first (with your{" "}
+          <span className="font-mono text-xs">POSTGRES_*</span> values); the official image needs those at first boot to initialize data,
+          and Nebularr cannot securely start sibling containers from the browser. Then enter the same database name, user, and password
+          here. Nebularr waits for Postgres, runs Alembic migrations, then continues with integrations below.
+        </p>
         {setupStatus.data?.bootstrap_token_required ? (
-          <div className="space-y-2 rounded-md border border-warn/40 bg-warn/10 p-4">
-            <Label htmlFor="setup-bootstrap-token" className="text-sm font-medium">
+          <div className="space-y-2 border-y border-warn/40 py-4">
+            <Label htmlFor="setup-bootstrap-token" className="text-sm font-medium text-warn">
               Setup token required
             </Label>
             <p className="text-xs text-muted-foreground">
@@ -293,54 +277,66 @@ export function SetupPage(): JSX.Element {
             />
           </div>
         ) : null}
-        <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-          <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="space-y-4">
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <Field label="Host">
             <Input
-              aria-label="Host"
-              placeholder="Host (e.g. postgres)"
-              value={wizardForm.pgHost}
-              onChange={(event) => setWizardForm({ ...wizardForm, pgHost: event.target.value })}
-            />
+                aria-label="Host"
+                placeholder="Host (e.g. postgres)"
+                value={wizardForm.pgHost}
+                onChange={(event) => setWizardForm({ ...wizardForm, pgHost: event.target.value })}
+              />
+            </Field>
+            <Field label="Port">
             <Input
-              aria-label="Port"
-              type="number"
-              placeholder="Port"
-              value={wizardForm.pgPort}
-              onChange={(event) => setWizardForm({ ...wizardForm, pgPort: event.target.value })}
-            />
+                aria-label="Port"
+                type="number"
+                placeholder="Port"
+                value={wizardForm.pgPort}
+                onChange={(event) => setWizardForm({ ...wizardForm, pgPort: event.target.value })}
+              />
+            </Field>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <Field label="Database name">
             <Input
-              aria-label="Database name"
-              placeholder="Database name"
-              value={wizardForm.pgDatabase}
-              onChange={(event) => setWizardForm({ ...wizardForm, pgDatabase: event.target.value })}
-            />
+                aria-label="Database name"
+                placeholder="Database name"
+                value={wizardForm.pgDatabase}
+                onChange={(event) => setWizardForm({ ...wizardForm, pgDatabase: event.target.value })}
+              />
+            </Field>
+            <Field label="Username">
             <Input
-              aria-label="Username"
-              placeholder="Username (superuser)"
-              value={wizardForm.pgUsername}
-              onChange={(event) => setWizardForm({ ...wizardForm, pgUsername: event.target.value })}
-            />
+                aria-label="Username"
+                placeholder="Username (superuser)"
+                value={wizardForm.pgUsername}
+                onChange={(event) => setWizardForm({ ...wizardForm, pgUsername: event.target.value })}
+              />
+            </Field>
           </div>
+          <Field label="Password">
           <Input
-            aria-label="Password"
-            type="password"
-            placeholder="Password"
-            value={wizardForm.pgPassword}
-            onChange={(event) => setWizardForm({ ...wizardForm, pgPassword: event.target.value })}
-          />
+              aria-label="Password"
+              type="password"
+              placeholder="Password"
+              value={wizardForm.pgPassword}
+              onChange={(event) => setWizardForm({ ...wizardForm, pgPassword: event.target.value })}
+            />
+          </Field>
+          <Field label="arrapp role password (optional)">
           <Input
-            aria-label="arrapp role password (optional)"
-            type="password"
-            placeholder="Optional: arrapp role password (recommended for least privilege)"
-            value={wizardForm.arrappPassword}
-            onChange={(event) => setWizardForm({ ...wizardForm, arrappPassword: event.target.value })}
-          />
+              aria-label="arrapp role password (optional)"
+              type="password"
+              placeholder="Optional: arrapp role password (recommended for least privilege)"
+              value={wizardForm.arrappPassword}
+              onChange={(event) => setWizardForm({ ...wizardForm, arrappPassword: event.target.value })}
+            />
+          </Field>
           {engineReady ? (
-            <p className="text-sm text-ok">Database is connected and migrations are ready.</p>
+            <p className="flex min-h-11 items-center text-sm text-ok">Database is connected and migrations are ready.</p>
           ) : (
-            <Button type="button" disabled={wizardBusy} onClick={() => void runInitializePostgres()}>
+            <Button type="button" className="min-h-11" disabled={wizardBusy} onClick={() => void runInitializePostgres()}>
               {wizardBusy ? "Connecting…" : "Wait for Postgres & run migrations"}
             </Button>
           )}
@@ -351,20 +347,19 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 1) {
     stepBody = (
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-        <p className="font-medium">Sonarr</p>
+      <div className="space-y-4">
         <div className="flex flex-wrap gap-x-6 gap-y-2">
-          <div className="flex items-center gap-2">
+          <div className="flex min-h-11 items-center gap-2.5">
             <Checkbox
               id="setup-sonarr-skip"
               checked={wizardForm.sonarrSkip}
               onCheckedChange={(checked) => setWizardForm({ ...wizardForm, sonarrSkip: checked === true })}
             />
-            <Label htmlFor="setup-sonarr-skip" className="text-sm text-muted-foreground">
+            <Label htmlFor="setup-sonarr-skip" className="text-sm font-normal">
               skip this for now
             </Label>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-h-11 items-center gap-2.5">
             <Checkbox
               id="setup-sonarr-enabled"
               checked={wizardForm.sonarrEnabled}
@@ -375,43 +370,46 @@ export function SetupPage(): JSX.Element {
             </Label>
           </div>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <Field label="Sonarr base URL">
           <Input
-            aria-label="Sonarr base URL"
-            disabled={wizardForm.sonarrSkip}
-            placeholder="Sonarr base URL"
-            value={wizardForm.sonarrBaseUrl}
-            onChange={(event) => setWizardForm({ ...wizardForm, sonarrBaseUrl: event.target.value })}
-          />
+              aria-label="Sonarr base URL"
+              disabled={wizardForm.sonarrSkip}
+              placeholder="Sonarr base URL"
+              value={wizardForm.sonarrBaseUrl}
+              onChange={(event) => setWizardForm({ ...wizardForm, sonarrBaseUrl: event.target.value })}
+            />
+          </Field>
+          <Field label="Sonarr API key">
           <Input
-            aria-label="Sonarr API key"
-            type="password"
-            autoComplete="off"
-            disabled={wizardForm.sonarrSkip}
-            placeholder="Sonarr API key"
-            value={wizardForm.sonarrApiKey}
-            onChange={(event) => setWizardForm({ ...wizardForm, sonarrApiKey: event.target.value })}
-          />
+              aria-label="Sonarr API key"
+              type="password"
+              autoComplete="off"
+              disabled={wizardForm.sonarrSkip}
+              placeholder="Sonarr API key"
+              value={wizardForm.sonarrApiKey}
+              onChange={(event) => setWizardForm({ ...wizardForm, sonarrApiKey: event.target.value })}
+            />
+          </Field>
         </div>
       </div>
     );
   }
   if (wizardStep === 2) {
     stepBody = (
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-        <p className="font-medium">Radarr</p>
+      <div className="space-y-4">
         <div className="flex flex-wrap gap-x-6 gap-y-2">
-          <div className="flex items-center gap-2">
+          <div className="flex min-h-11 items-center gap-2.5">
             <Checkbox
               id="setup-radarr-skip"
               checked={wizardForm.radarrSkip}
               onCheckedChange={(checked) => setWizardForm({ ...wizardForm, radarrSkip: checked === true })}
             />
-            <Label htmlFor="setup-radarr-skip" className="text-sm text-muted-foreground">
+            <Label htmlFor="setup-radarr-skip" className="text-sm font-normal">
               skip this for now
             </Label>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-h-11 items-center gap-2.5">
             <Checkbox
               id="setup-radarr-enabled"
               checked={wizardForm.radarrEnabled}
@@ -422,89 +420,103 @@ export function SetupPage(): JSX.Element {
             </Label>
           </div>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <Field label="Radarr base URL">
           <Input
-            aria-label="Radarr base URL"
-            disabled={wizardForm.radarrSkip}
-            placeholder="Radarr base URL"
-            value={wizardForm.radarrBaseUrl}
-            onChange={(event) => setWizardForm({ ...wizardForm, radarrBaseUrl: event.target.value })}
-          />
+              aria-label="Radarr base URL"
+              disabled={wizardForm.radarrSkip}
+              placeholder="Radarr base URL"
+              value={wizardForm.radarrBaseUrl}
+              onChange={(event) => setWizardForm({ ...wizardForm, radarrBaseUrl: event.target.value })}
+            />
+          </Field>
+          <Field label="Radarr API key">
           <Input
-            aria-label="Radarr API key"
-            type="password"
-            autoComplete="off"
-            disabled={wizardForm.radarrSkip}
-            placeholder="Radarr API key"
-            value={wizardForm.radarrApiKey}
-            onChange={(event) => setWizardForm({ ...wizardForm, radarrApiKey: event.target.value })}
-          />
+              aria-label="Radarr API key"
+              type="password"
+              autoComplete="off"
+              disabled={wizardForm.radarrSkip}
+              placeholder="Radarr API key"
+              value={wizardForm.radarrApiKey}
+              onChange={(event) => setWizardForm({ ...wizardForm, radarrApiKey: event.target.value })}
+            />
+          </Field>
         </div>
       </div>
     );
   }
   if (wizardStep === 3) {
     stepBody = (
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-        <p className="font-medium">Webhook and Schedule</p>
+      <div className="space-y-4">
+        <Field label="Webhook shared secret">
         <Input
-          aria-label="Webhook shared secret"
-          type="password"
-          autoComplete="off"
-          placeholder="Webhook shared secret (optional now)"
-          value={wizardForm.webhookSecret}
-          onChange={(event) => setWizardForm({ ...wizardForm, webhookSecret: event.target.value })}
-        />
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Input
-            aria-label="Incremental cron"
-            placeholder="Incremental cron (optional)"
-            value={wizardForm.incrementalCron}
-            onChange={(event) => setWizardForm({ ...wizardForm, incrementalCron: event.target.value })}
+            aria-label="Webhook shared secret"
+            type="password"
+            autoComplete="off"
+            placeholder="Webhook shared secret (optional now)"
+            value={wizardForm.webhookSecret}
+            onChange={(event) => setWizardForm({ ...wizardForm, webhookSecret: event.target.value })}
           />
+        </Field>
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <Field label="Incremental cron">
           <Input
-            aria-label="Reconcile cron"
-            placeholder="Reconcile cron (optional)"
-            value={wizardForm.reconcileCron}
-            onChange={(event) => setWizardForm({ ...wizardForm, reconcileCron: event.target.value })}
-          />
+              aria-label="Incremental cron"
+              placeholder="Incremental cron (optional)"
+              value={wizardForm.incrementalCron}
+              onChange={(event) => setWizardForm({ ...wizardForm, incrementalCron: event.target.value })}
+            />
+          </Field>
+          <Field label="Reconcile cron">
           <Input
-            aria-label="Timezone"
-            placeholder="Timezone (IANA)"
-            value={wizardForm.timezone}
-            onChange={(event) => setWizardForm({ ...wizardForm, timezone: event.target.value })}
-          />
+              aria-label="Reconcile cron"
+              placeholder="Reconcile cron (optional)"
+              value={wizardForm.reconcileCron}
+              onChange={(event) => setWizardForm({ ...wizardForm, reconcileCron: event.target.value })}
+            />
+          </Field>
+          <Field label="Timezone">
+          <Input
+              aria-label="Timezone"
+              placeholder="Timezone (IANA)"
+              value={wizardForm.timezone}
+              onChange={(event) => setWizardForm({ ...wizardForm, timezone: event.target.value })}
+            />
+          </Field>
         </div>
       </div>
     );
   }
   if (wizardStep === 4) {
     stepBody = (
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-        <p className="font-medium">Admin password</p>
+      <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Protect this server with a password. Every API endpoint — including ones that can change integrations or
           wipe data — is otherwise open to anyone who can reach this machine on the network.
         </p>
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <Field label="Admin password">
           <Input
-            aria-label="Admin password"
-            type="password"
-            autoComplete="new-password"
-            disabled={wizardForm.allowNoAuth}
-            placeholder="Admin password (min 8 characters)"
-            value={wizardForm.adminPassword}
-            onChange={(event) => setWizardForm({ ...wizardForm, adminPassword: event.target.value })}
-          />
+              aria-label="Admin password"
+              type="password"
+              autoComplete="new-password"
+              disabled={wizardForm.allowNoAuth}
+              placeholder="Admin password (min 8 characters)"
+              value={wizardForm.adminPassword}
+              onChange={(event) => setWizardForm({ ...wizardForm, adminPassword: event.target.value })}
+            />
+          </Field>
+          <Field label="Confirm admin password">
           <Input
-            aria-label="Confirm admin password"
-            type="password"
-            autoComplete="new-password"
-            disabled={wizardForm.allowNoAuth}
-            placeholder="Confirm password"
-            value={wizardForm.adminPasswordConfirm}
-            onChange={(event) => setWizardForm({ ...wizardForm, adminPasswordConfirm: event.target.value })}
-          />
+              aria-label="Confirm admin password"
+              type="password"
+              autoComplete="new-password"
+              disabled={wizardForm.allowNoAuth}
+              placeholder="Confirm password"
+              value={wizardForm.adminPasswordConfirm}
+              onChange={(event) => setWizardForm({ ...wizardForm, adminPasswordConfirm: event.target.value })}
+            />
+          </Field>
         </div>
         {passwordTooShort ? (
           <p className="text-sm text-muted-foreground">Password must be at least 8 characters.</p>
@@ -512,7 +524,7 @@ export function SetupPage(): JSX.Element {
         {!passwordTooShort && wizardForm.adminPassword && passwordMismatch ? (
           <p className="text-sm text-muted-foreground">Passwords do not match.</p>
         ) : null}
-        <div className="flex items-center gap-2">
+        <div className="flex min-h-11 items-center gap-2.5">
           <Checkbox
             id="setup-allow-no-auth"
             checked={wizardForm.allowNoAuth}
@@ -527,12 +539,11 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 5) {
     stepBody = (
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-        <p className="font-medium">Initial Full Sync</p>
+      <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Do you want to run initial full sync now? If yes, Nebularr will process one system at a time to avoid overload.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex min-h-11 items-center gap-2.5">
           <Checkbox
             id="setup-run-initial-sync"
             checked={wizardRunInitialSync}
@@ -543,7 +554,7 @@ export function SetupPage(): JSX.Element {
           </Label>
         </div>
         <div className="flex flex-wrap gap-x-6 gap-y-2">
-          <div className="flex items-center gap-2">
+          <div className="flex min-h-11 items-center gap-2.5">
             <Checkbox
               id="setup-sync-sonarr"
               disabled={!wizardRunInitialSync || wizardForm.sonarrSkip}
@@ -554,7 +565,7 @@ export function SetupPage(): JSX.Element {
               sonarr
             </Label>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-h-11 items-center gap-2.5">
             <Checkbox
               id="setup-sync-radarr"
               disabled={!wizardRunInitialSync || wizardForm.radarrSkip}
@@ -571,19 +582,25 @@ export function SetupPage(): JSX.Element {
   }
   if (wizardStep === 6) {
     stepBody = (
-      <div className="space-y-3 rounded-md border border-border bg-transparent p-4">
-        <p className="font-medium">Review</p>
+      <div className="space-y-4">
         <p className="text-sm text-muted-foreground">Confirm details and complete setup.</p>
-        <div className="space-y-1 text-sm text-muted-foreground">
-          <p>PostgreSQL: {engineReady ? "connected" : "not connected"}</p>
-          <p>Sonarr: {wizardForm.sonarrSkip ? "skipped" : wizardForm.sonarrBaseUrl || "configured later"}</p>
-          <p>Radarr: {wizardForm.radarrSkip ? "skipped" : wizardForm.radarrBaseUrl || "configured later"}</p>
-          <p>Webhook Secret: {wizardForm.webhookSecret ? "set" : "not set"}</p>
-          <p>
-            Authentication: {wizardForm.allowNoAuth || !wizardForm.adminPassword ? "disabled (not recommended)" : "enabled"}
-          </p>
-          <p>Initial Sync: {wizardRunInitialSync ? "enabled (sequential)" : "not requested"}</p>
-        </div>
+        <dl className="border-b border-border text-sm">
+          {(
+            [
+              ["PostgreSQL", engineReady ? "connected" : "not connected"],
+              ["Sonarr", wizardForm.sonarrSkip ? "skipped" : wizardForm.sonarrBaseUrl || "configured later"],
+              ["Radarr", wizardForm.radarrSkip ? "skipped" : wizardForm.radarrBaseUrl || "configured later"],
+              ["Webhook Secret", wizardForm.webhookSecret ? "set" : "not set"],
+              ["Authentication", wizardForm.allowNoAuth || !wizardForm.adminPassword ? "disabled (not recommended)" : "enabled"],
+              ["Initial Sync", wizardRunInitialSync ? "enabled (sequential)" : "not requested"],
+            ] as const
+          ).map(([term, value]) => (
+            <div key={term} className="flex flex-wrap justify-between gap-x-6 gap-y-1 border-t border-border py-3">
+              <dt className="text-muted-foreground">{term}</dt>
+              <dd className="font-mono text-xs">{value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
     );
   }
@@ -597,46 +614,66 @@ export function SetupPage(): JSX.Element {
   }
 
   return (
-    <main className="min-h-svh bg-background px-4 py-10">
-      <GlassCard className="mx-auto w-full max-w-3xl">
-        <CardHeader>
-          <CardTitle className="text-xl">First-time setup</CardTitle>
-          <p className="text-sm text-muted-foreground">
+    <main className="min-h-svh bg-background px-4 pt-10 pb-16 sm:px-10">
+      <div className="mx-auto grid w-full max-w-[1360px] gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+        <header className="lg:sticky lg:top-10 lg:self-start">
+          <p className="flex items-baseline gap-2.5">
+            <span className="cond text-[26px] leading-none font-[800]">Nebularr</span>
+            <span className="font-mono text-[11px] text-subtle-foreground">setup</span>
+          </p>
+          <h1 className="cond mt-8 animate-rise text-[clamp(52px,5.4vw,80px)] leading-[0.84] font-[760]">
+            <span className="whitespace-nowrap">First-time</span> setup
+          </h1>
+          <p className="mt-4 text-[15px] text-muted-foreground">
             Step {wizardStep + 1} of {totalSteps} — {stepTitles[wizardStep]}
           </p>
-          <Progress
-            value={((wizardStep + 1) / totalSteps) * 100}
-            className="mt-3 h-2 w-full max-w-md flex-col gap-0 [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-muted [&_[data-slot=progress-indicator]]:bg-primary"
-          />
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex flex-wrap gap-2">
+          <div
+            role="progressbar"
+            aria-label="Setup progress"
+            aria-valuemin={1}
+            aria-valuemax={totalSteps}
+            aria-valuenow={wizardStep + 1}
+            className="mt-4 h-[3px] w-full bg-border"
+          >
+            <span
+              className="block h-full bg-signal transition-[width] duration-500"
+              style={{ width: `${((wizardStep + 1) / totalSteps) * 100}%` }}
+            />
+          </div>
+          <ol className="mt-6 hidden border-b border-border lg:block">
             {stepTitles.map((title, index) => (
-              <span
+              <li
                 key={title}
+                aria-current={index === wizardStep ? "step" : undefined}
                 className={cn(
-                  "rounded-full border px-2.5 py-1 text-[11px] font-medium",
-                  index === wizardStep
-                    ? "border-signal/50 bg-signal/10 text-signal"
-                    : index < wizardStep
-                      ? "border-ok/35 text-ok"
-                      : "border-border text-muted-foreground",
+                  "flex min-h-11 items-center gap-3 border-t border-border text-[15px]",
+                  index === wizardStep ? "text-foreground" : index < wizardStep ? "text-muted-foreground" : "text-subtle-foreground",
                 )}
               >
-                {index + 1}. {title}
-              </span>
+                <span className="w-5 font-mono text-xs tabular-nums">{index + 1}</span>
+                <span className="flex-1">{title}</span>
+                {index < wizardStep ? <span className="size-2 rounded-full bg-ok" aria-label="done" /> : null}
+                {index === wizardStep ? <span aria-hidden className="size-2 bg-foreground" /> : null}
+              </li>
             ))}
-          </div>
-          {stepBody}
+          </ol>
+        </header>
+
+        <section aria-labelledby="setup-step-title" className="min-w-0 lg:pt-[7.5rem]">
+          <h2 id="setup-step-title" key={wizardStep} className="cond animate-rise text-[44px] leading-[0.9] font-[760]">
+            {stepTitles[wizardStep]}
+          </h2>
+          <div className="mt-6">{stepBody}</div>
           {pageError ? (
-            <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+            <div role="alert" className="mt-6 border-y border-critical/40 py-3 text-sm text-critical">
               {pageError}
             </div>
           ) : null}
-          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+          <div className="mt-8 flex flex-wrap gap-2.5 border-t border-border pt-5">
             <Button
               type="button"
-              variant="secondary"
+              variant="outline"
+              className="min-h-11"
               disabled={wizardBusy || wizardStep === 0}
               onClick={() => setWizardStep((prev) => Math.max(0, prev - 1))}
             >
@@ -645,13 +682,14 @@ export function SetupPage(): JSX.Element {
             {!isLastStep ? (
               <Button
                 type="button"
+                className="min-h-11"
                 disabled={wizardBusy || databaseStepBlocksNext || databaseBlocksNonDbSteps || securityStepBlocksNext}
                 onClick={() => setWizardStep((prev) => Math.min(totalSteps - 1, prev + 1))}
               >
                 Next
               </Button>
             ) : (
-              <Button type="button" disabled={wizardBusy || !engineReady} onClick={() => void submitWizard()}>
+              <Button type="button" className="min-h-11" disabled={wizardBusy || !engineReady} onClick={() => void submitWizard()}>
                 {wizardBusy ? "Saving…" : "Complete setup"}
               </Button>
             )}
@@ -660,16 +698,26 @@ export function SetupPage(): JSX.Element {
                 to click through every integration step first. */}
             <Button
               type="button"
-              variant="secondary"
-              className="ml-auto"
+              variant="ghost"
+              className="ml-auto min-h-11"
               disabled={wizardBusy || !engineReady}
               onClick={() => void skipWizard()}
             >
               Skip for now
             </Button>
           </div>
-        </CardContent>
-      </GlassCard>
+        </section>
+      </div>
     </main>
+  );
+}
+
+/** A visible caption above a wizard input. */
+function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <label className="grid w-full gap-1.5 text-[11px] text-subtle-foreground">
+      <span aria-hidden>{label}</span>
+      {children}
+    </label>
   );
 }
