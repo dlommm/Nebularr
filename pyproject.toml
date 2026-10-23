@@ -11,7 +11,9 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
-  "sqlalchemy>=2.0.30",
+  # 2.1 changed Result typing (bare scalar_one() no longer infers) and is an
+  # unverified minor for the runtime too; move deliberately, not via resolve.
+  "sqlalchemy>=2.0.30,<2.1",
   "psycopg[binary]>=3.2.0",
   "alembic>=1.13.2",
   "httpx>=0.27.0",
