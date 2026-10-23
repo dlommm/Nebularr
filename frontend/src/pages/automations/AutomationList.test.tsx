@@ -43,7 +43,7 @@ describe("AutomationList", () => {
   it("shows an empty state that offers the primary action", () => {
     const props = renderList({ automations: [] });
     expect(screen.getByText(/no automations yet/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /new rule/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create your first rule/i }));
     expect(props.onCreate).toHaveBeenCalled();
   });
 

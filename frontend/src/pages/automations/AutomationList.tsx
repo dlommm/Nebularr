@@ -50,7 +50,7 @@ export function AutomationList({
         description="Automations converge your library toward what you actually want — English dubs, a resolution floor, no missing episodes — on a schedule you set."
       >
         <Button type="button" size="sm" onClick={onCreate}>
-          New rule
+          Create your first rule
         </Button>
       </EmptyState>
     );
