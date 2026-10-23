@@ -5,7 +5,6 @@ import { pollInterval, useServerEventsStatus } from "@/hooks/useServerEvents";
 import { queryKeys } from "@/lib/queryKeys";
 import type { WorkMalItem, WorkStatusItem, WorkWarehouseItem } from "@/types";
 import { ProgressBar } from "./ProgressBar";
-import { GlassCard, CardContent, CardDescription, CardHeader, CardTitle } from "./GlassCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -77,12 +76,12 @@ export function WorkStatusPanel({
     description ?? `Warehouse syncs, MAL pipelines, and setup-wizard imports. ${pollingCopy} ETA uses recent run history when available.`;
 
   return (
-    <GlassCard className={className}>
-      <CardHeader className={dense ? "pb-2" : undefined}>
-        <CardTitle className="text-base">{title}</CardTitle>
-        <CardDescription>{effectiveDescription}</CardDescription>
-      </CardHeader>
-      <CardContent className={cn("space-y-4", dense ? "pt-0" : undefined)}>
+    <section className={cn("min-w-0", className)} aria-label={title}>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+        <h2 className={cn("cond leading-none font-bold", dense ? "text-[22px]" : "text-[30px]")}>{title}</h2>
+        {dense ? null : <p className="text-[13px] text-subtle-foreground">{effectiveDescription}</p>}
+      </div>
+      <div className="border-b border-border">
         {q.isLoading && !q.data ? (
           <div className="space-y-2">
             <Skeleton className="h-16 w-full" />
@@ -93,7 +92,7 @@ export function WorkStatusPanel({
           <p className="text-sm text-critical">Could not load work status: {errText(q.error)}</p>
         ) : null}
         {!q.isLoading && items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Idle — no warehouse sync, MAL job, or setup import running.</p>
+          <p className="border-t border-border py-4 text-sm text-muted-foreground">Idle — no warehouse sync, MAL job, or setup import running.</p>
         ) : null}
         {items.map((item, idx) => {
           const key =
@@ -107,11 +106,11 @@ export function WorkStatusPanel({
             return (
               <div
                 key={key}
-                className="space-y-2 rounded-xl border border-border bg-muted/40 px-3 py-3"
+                className="space-y-2 border-t border-border py-4"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                  <span className="font-medium text-foreground/95">{warehouseTitle(item)}</span>
-                  <span className="text-xs text-muted-foreground">run #{item.run_id}</span>
+                  <span className="text-[15px] text-foreground">{warehouseTitle(item)}</span>
+                  <span className="font-mono text-xs text-subtle-foreground">run #{item.run_id}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">{warehouseSubtitle(item)}</p>
                 <ProgressBar value={pct} label="Estimated completion (from past runs)" />
@@ -128,11 +127,11 @@ export function WorkStatusPanel({
             return (
               <div
                 key={key}
-                className="space-y-2 rounded-xl border border-border bg-muted/40 px-3 py-3"
+                className="space-y-2 border-t border-border py-4"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                  <span className="font-medium text-foreground/95">MAL {item.job_type}</span>
-                  <span className="text-xs text-muted-foreground">run #{item.run_id}</span>
+                  <span className="text-[15px] text-foreground">MAL {item.job_type}</span>
+                  <span className="font-mono text-xs text-subtle-foreground">run #{item.run_id}</span>
                 </div>
                 {extra ? <p className="text-xs text-muted-foreground">{extra}</p> : null}
                 <ProgressBar value={pct} label="Estimated completion (from past jobs)" />
@@ -147,10 +146,10 @@ export function WorkStatusPanel({
           return (
             <div
               key={key}
-              className="space-y-2 rounded-xl border border-warn/25 bg-warn/5 px-3 py-3"
+              className="space-y-2 border-t border-warn/40 py-4"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                <span className="font-medium text-foreground/95">{item.stage}</span>
+                <span className="text-[15px] text-foreground">{item.stage}</span>
                 <span className="text-xs text-muted-foreground">setup</span>
               </div>
               <p className="text-xs text-muted-foreground">{item.stage_note}</p>
@@ -161,7 +160,7 @@ export function WorkStatusPanel({
             </div>
           );
         })}
-      </CardContent>
-    </GlassCard>
+      </div>
+    </section>
   );
 }

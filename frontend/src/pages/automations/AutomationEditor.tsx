@@ -56,14 +56,14 @@ function Section({
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <details open={defaultOpen} className="group rounded-lg border border-border bg-muted/30">
-      <summary className="cursor-pointer list-none px-3 py-2 [&::-webkit-details-marker]:hidden">
-        <span className="flex items-baseline justify-between gap-2">
-          <span className="text-sm font-medium">{title}</span>
-          <span className="truncate text-xs text-muted-foreground">{summary}</span>
+    <details open={defaultOpen} className="group border-t border-border">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center py-3 [&::-webkit-details-marker]:hidden">
+        <span className="flex w-full items-baseline justify-between gap-3">
+          <span className="cond text-[22px] leading-none font-bold">{title}</span>
+          <span className="truncate text-[13px] text-muted-foreground">{summary}</span>
         </span>
       </summary>
-      <div className="grid gap-3 border-t border-border p-3">{children}</div>
+      <div className="grid gap-4 pb-5">{children}</div>
     </details>
   );
 }
@@ -197,7 +197,7 @@ export function AutomationEditor({
       {/* The rule as a sentence, so the model ("things that fail the
           requirements get the actions") never has to be reassembled from the
           controls below. */}
-      <div className="rounded-lg border border-border bg-muted/40 p-3">
+      <div className="rounded-lg border border-border bg-transparent p-3">
         <p className="text-sm leading-relaxed">{summarizeAutomation(draft)}</p>
         {limits ? <p className="mt-1 text-xs text-muted-foreground">{limits}</p> : null}
         <p className="mt-2 flex items-center gap-1.5 text-xs" aria-live="polite">

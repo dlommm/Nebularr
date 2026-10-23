@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 
 function pillClass(s: HealthState | undefined): string {
   const v = s ?? "ok";
-  if (v === "ok") return "border-ok/30 bg-ok/10 text-ok";
-  if (v === "warning") return "border-warn/30 bg-warn/10 text-warn";
-  return "border-critical/30 bg-critical/10 text-critical";
+  if (v === "ok") return "text-ok";
+  if (v === "warning") return "text-warn";
+  return "text-critical";
 }
 
 type HealthPillsRowProps = {
@@ -23,7 +23,7 @@ export function HealthPillsRow({ dimensions, reasonMap, className, size = "sm" }
   if (!keys.length) return null;
   const text = size === "sm" ? "text-[10px] sm:text-[11px]" : "text-xs";
   return (
-    <div className={cn("flex flex-wrap items-center gap-1.5", className)} role="group" aria-label="Health by subsystem">
+    <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-1", className)} role="group" aria-label="Health by subsystem">
       {keys.map((k) => {
         const st = dimensions[k]!;
         const titleParts = [DIM_LABELS[k], st];
@@ -34,7 +34,7 @@ export function HealthPillsRow({ dimensions, reasonMap, className, size = "sm" }
             key={k}
             title={titleParts.join(" — ")}
             className={cn(
-              "inline-flex items-center rounded-full border px-2 py-0.5 font-medium",
+              "inline-flex items-center gap-1.5 before:size-1.5 before:rounded-full before:bg-current",
               text,
               pillClass(st),
             )}

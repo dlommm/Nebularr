@@ -598,6 +598,7 @@ def build_config_router(app_state: Any) -> APIRouter:
                 "mal_matcher",
                 "mal_tag_sync",
                 "coverage_tag_sync",
+                "artwork_prefetch",
             }
         )
         if mode not in allowed_modes:

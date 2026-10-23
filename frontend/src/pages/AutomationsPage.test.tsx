@@ -154,12 +154,12 @@ describe("AutomationsPage", () => {
     expect(screen.getByRole("button", { name: /save changes/i })).toBeEnabled();
   });
 
-  it("opens the template picker in the sheet instead of stacking it on the page", async () => {
+  it("opens the template picker in the side panel instead of stacking it on the page", async () => {
     renderPage();
     // Nothing template-ish is mounted until the user asks to create one.
     expect(screen.queryByText(/pick a starting point/i)).toBeNull();
 
-    await userEvent.click(await screen.findByRole("button", { name: /new automation/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^new rule$/i }));
 
     expect(await screen.findByText(/pick a starting point/i)).toBeInTheDocument();
   });

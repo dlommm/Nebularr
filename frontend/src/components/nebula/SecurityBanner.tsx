@@ -29,7 +29,7 @@ export function SecurityBanner(): JSX.Element | null {
   return (
     <div
       role="alert"
-      className="mb-4 flex items-start gap-3 rounded-lg border border-warn/35 bg-warn/10 px-4 py-3 text-sm text-foreground"
+      className="mb-2 flex items-start gap-3 border-y border-warn/40 py-3 text-sm text-foreground"
     >
       <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
       <div className="flex-1">
@@ -39,7 +39,7 @@ export function SecurityBanner(): JSX.Element | null {
         {!authStatus.data.enabled ? (
           <p className="mt-1">
             <Link to={PATHS.integrations} className="font-medium underline underline-offset-2">
-              Set an admin password in Integrations → Authentication
+              Set an admin password in Setup → Integrations → Sign-in
             </Link>
           </p>
         ) : null}

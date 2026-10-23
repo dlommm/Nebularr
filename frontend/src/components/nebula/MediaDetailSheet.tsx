@@ -48,7 +48,7 @@ export function MediaDetailSheet({
         <div className="mb-3 flex flex-wrap items-center gap-1.5">
           {typeof status === "string" && status ? <StatusBadge status={status} className="text-[0.6rem]" /> : null}
           {row.monitored ? (
-            <span className="text-[0.6rem] font-medium uppercase text-primary">monitored</span>
+            <span className="text-[0.6rem] font-medium uppercase text-signal">monitored</span>
           ) : null}
         </div>
         <div className="space-y-4">

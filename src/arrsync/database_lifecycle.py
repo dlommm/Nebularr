@@ -25,6 +25,8 @@ from arrsync.validation import validate_settings
 
 log = logging.getLogger(__name__)
 
+ARTWORK_WARMUP_DELAY_SECONDS = 90.0
+
 
 def build_sqlalchemy_url(
     *,
@@ -221,6 +223,21 @@ async def finalize_application_services(app_state: Any) -> None:
                 except Exception:
                     log.exception("realtime webhook drain failed", extra={"webhook_source": source})
 
+    async def _artwork_warmup_background() -> None:
+        # Let startup syncs and the first page loads go first, then fill the
+        # artwork cache; the cron schedule keeps it topped up after that.
+        try:
+            await asyncio.wait_for(app_state.stop_event.wait(), timeout=ARTWORK_WARMUP_DELAY_SECONDS)
+            return
+        except TimeoutError:
+            pass
+        try:
+            await app_state.artwork_service.prefetch(reason="startup")
+        except Exception:
+            log.exception("artwork warm-up failed")
+
+    if getattr(app_state, "artwork_service", None) is not None:
+        app_state.artwork_warmup_task = asyncio.create_task(_artwork_warmup_background())
     app_state.request_webhook_drain = request_webhook_drain
     app_state.webhook_drain_task = asyncio.create_task(_drain_webhooks_background())
     app_state.capability_task = asyncio.create_task(_detect_capabilities_background())

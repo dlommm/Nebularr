@@ -3,6 +3,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { fmtSize } from "../../hooks";
 import type { ReportingPanel } from "../../types";
 import { chartColor } from "./reportingShared";
+import { SectionHead } from "@/components/ns/Page";
 
 type ReportingTimeseriesPanelProps = {
   panel: ReportingPanel;
@@ -35,25 +36,24 @@ function ReportingTimeseriesPanelImpl({ panel }: ReportingTimeseriesPanelProps):
     looksLikeBytes ? fmtSize(value) : value.toLocaleString();
 
   return (
-    <div className="col-span-12 min-w-0 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground">{panel.title}</h3>
-        <span className="text-xs text-muted-foreground">{data.length} points</span>
-      </div>
+    <section className="col-span-12 min-w-0" aria-label={panel.title}>
+      <SectionHead title={panel.title} aside={`${data.length} points`} />
       {data.length === 0 ? (
-        <div className="py-10 text-center text-sm text-muted-foreground">
+        <div className="border-y border-border py-10 text-sm text-muted-foreground">
           No snapshots yet — the daily stats job (or the first successful full sync) populates this chart.
         </div>
       ) : (
-        <div className="h-72 w-full rounded-xl border border-border bg-muted/30 px-1 py-2">
+        <div className="mt-4 h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
-              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="ts" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} />
+              <CartesianGrid stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="ts" stroke="var(--subtle-foreground)" fontSize={11} fontFamily="var(--font-mono)" tickLine={false} axisLine={false} />
               <YAxis
-                stroke="var(--muted-foreground)"
+                stroke="var(--subtle-foreground)"
                 fontSize={11}
+                fontFamily="var(--font-mono)"
                 tickLine={false}
+                axisLine={false}
                 width={70}
                 tickFormatter={(value: number) => formatValue(value)}
               />
@@ -61,7 +61,7 @@ function ReportingTimeseriesPanelImpl({ panel }: ReportingTimeseriesPanelProps):
                 contentStyle={{
                   background: "var(--popover)",
                   border: "1px solid var(--border)",
-                  borderRadius: 8,
+                  borderRadius: 4,
                 }}
                 labelStyle={{ color: "var(--popover-foreground)" }}
                 itemStyle={{ color: "var(--popover-foreground)" }}
@@ -75,15 +75,15 @@ function ReportingTimeseriesPanelImpl({ panel }: ReportingTimeseriesPanelProps):
                   stackId="total"
                   stroke={chartColor(idx)}
                   fill={chartColor(idx)}
-                  fillOpacity={0.25}
-                  strokeWidth={2}
+                  fillOpacity={0.12}
+                  strokeWidth={2.5}
                 />
               ))}
             </AreaChart>
           </ResponsiveContainer>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

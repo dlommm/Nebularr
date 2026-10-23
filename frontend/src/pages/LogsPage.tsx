@@ -5,7 +5,7 @@ import { api } from "../api";
 import { errText } from "../hooks";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { LogViewerRow } from "../components/ui";
-import { GlassCard, CardContent, CardHeader, CardTitle, CardDescription } from "../components/nebula/GlassCard";
+import { SectionCard } from "./integrations/shared";
 import type { UiLogEntry } from "../types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -88,92 +88,90 @@ export function LogsPage(): JSX.Element {
   };
 
   return (
-    <GlassCard>
-      <CardHeader>
-        <CardTitle className="text-lg">Application logs</CardTitle>
-        <CardDescription>
-          In-memory lines on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"}) at the effective level
-          below. The buffer attaches to the root logger, so you should see the same <strong className="text-foreground/90">application
-          and library</strong> log lines (for example <code className="rounded bg-muted px-1">httpx</code>,{" "}
-          <code className="rounded bg-muted px-1">sqlalchemy</code>, <code className="rounded bg-muted px-1">arrsync</code>) that
-          appear in the process stdout. <strong className="text-foreground/90">Uvicorn access logs</strong> may still be stdout-only
-          if their loggers do not propagate. Tune level under Integrations → application logging.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Checkbox id="logs-pause" checked={logsPaused} onCheckedChange={(c) => setLogsPaused(c === true)} />
-            <Label htmlFor="logs-pause" className="text-sm text-muted-foreground">
-              Pause live updates
-            </Label>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            Level
-            <select
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground"
-              value={minLevel}
-              onChange={(event) => setMinLevel(event.target.value)}
-              aria-label="Minimum log level"
-            >
-              <option value="all">All</option>
-              <option value="debug">Debug+</option>
-              <option value="info">Info+</option>
-              <option value="warning">Warning+</option>
-              <option value="error">Error+</option>
-              <option value="critical">Critical</option>
-            </select>
-          </label>
+    <SectionCard title="Application logs">
+      <p className="-mt-2 max-w-3xl text-[13px] leading-relaxed text-muted-foreground">
+        In-memory lines on this instance (up to {uiLogs.data?.capacity?.toLocaleString() ?? "…"}) at the effective level. The buffer
+        attaches to the root logger, so you see the same application and library lines (<code className="font-mono text-xs">httpx</code>,{" "}
+        <code className="font-mono text-xs">sqlalchemy</code>, <code className="font-mono text-xs">arrsync</code>) as the process stdout.
+        Uvicorn access logs may stay stdout-only if their loggers do not propagate. Tune the level under Integrations → Logging.
+      </p>
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+        <label className="grid min-w-56 flex-[1_1_260px] gap-1 text-[11px] text-subtle-foreground">
+          Filter lines
           <Input
+            type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Filter lines…"
-            className="h-9 w-56"
+            placeholder="e.g. radarr, webhook, timeout"
+            className="h-11"
             aria-label="Filter log lines"
           />
-          <Button type="button" variant="secondary" size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ui-logs"] })}>
+        </label>
+        <label className="grid gap-1 text-[11px] text-subtle-foreground">
+          Minimum level
+          <select
+            className="min-h-11 rounded-sm border border-border bg-muted px-2.5 text-sm text-foreground"
+            value={minLevel}
+            onChange={(event) => setMinLevel(event.target.value)}
+            aria-label="Minimum log level"
+          >
+            <option value="all">All</option>
+            <option value="debug">Debug and above</option>
+            <option value="info">Info and above</option>
+            <option value="warning">Warning and above</option>
+            <option value="error">Error and above</option>
+            <option value="critical">Critical</option>
+          </select>
+        </label>
+        <div className="flex min-h-11 items-center gap-2">
+          <Checkbox id="logs-pause" checked={logsPaused} onCheckedChange={(c) => setLogsPaused(c === true)} />
+          <Label htmlFor="logs-pause" className="text-sm font-normal">
+            Pause live updates
+          </Label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" className="min-h-11" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ui-logs"] })}>
             Refresh
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={downloadLogs} disabled={filtered.length === 0}>
+          <Button type="button" variant="outline" className="min-h-11" onClick={downloadLogs} disabled={filtered.length === 0}>
             Download
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => void copyLogs()} disabled={filtered.length === 0}>
+          <Button type="button" variant="ghost" className="min-h-11" onClick={() => void copyLogs()} disabled={filtered.length === 0}>
             Copy
           </Button>
-          <span className="text-xs text-muted-foreground">
-            {filterActive
-              ? `${filtered.length} of ${items.length} line${items.length === 1 ? "" : "s"}`
-              : `${items.length} line${items.length === 1 ? "" : "s"}`}
-          </span>
         </div>
-        {uiLogs.isError ? (
-          <p className="text-sm text-critical">Could not load logs: {errText(uiLogs.error)}</p>
+      </div>
+      {uiLogs.isError ? <p className="text-sm text-critical">Could not load logs: {errText(uiLogs.error)}</p> : null}
+      <div
+        ref={logsScrollRef}
+        onScroll={onLogsScroll}
+        role="log"
+        aria-label="Application log"
+        className="well max-h-[min(70vh,720px)] overflow-y-auto py-3 font-mono text-[12.5px]"
+      >
+        {uiLogs.isLoading && items.length === 0 ? <p className="m-0 px-4 py-2 text-sm text-muted-foreground">Loading…</p> : null}
+        {items.length === 0 && !uiLogs.isLoading ? (
+          <p className="m-0 px-4 py-2 text-sm text-muted-foreground">
+            No log lines in the ring buffer yet.
+            {eff
+              ? ` Effective level is ${eff} (set under Integrations → Logging). Only messages at that level and above are shown.`
+              : null}
+          </p>
         ) : null}
-        <div
-          ref={logsScrollRef}
-          onScroll={onLogsScroll}
-          className="max-h-[min(70vh,720px)] overflow-y-auto rounded-[10px] border border-border bg-card p-2 font-mono text-xs"
-        >
-          {uiLogs.isLoading && items.length === 0 ? (
-            <p className="m-0 px-1 py-2 text-sm text-muted-foreground">Loading…</p>
-          ) : null}
-          {items.length === 0 && !uiLogs.isLoading ? (
-            <p className="m-0 px-1 py-2 text-sm text-muted-foreground">
-              No log lines in the ring buffer yet.
-              {eff
-                ? ` Effective level is ${eff} (set under Integrations → application logging). Only messages at that level and above are shown.`
-                : null}
-            </p>
-          ) : null}
-          {items.length > 0 && filtered.length === 0 ? (
-            <p className="m-0 px-1 py-2 text-sm text-muted-foreground">No lines match the current filter.</p>
-          ) : null}
-          {filtered.map((entry, idx) => (
-            <LogViewerRow key={`${String(entry.ts)}-${idx}`} entry={entry} />
-          ))}
-          <div ref={logsEndRef} />
-        </div>
-      </CardContent>
-    </GlassCard>
+        {items.length > 0 && filtered.length === 0 ? (
+          <p className="m-0 px-4 py-2 text-sm text-muted-foreground">No lines match the current filter.</p>
+        ) : null}
+        {filtered.map((entry, idx) => (
+          <LogViewerRow key={`${String(entry.ts)}-${idx}`} entry={entry} />
+        ))}
+        <div ref={logsEndRef} />
+      </div>
+      <p className="text-[13px] text-subtle-foreground">
+        {filterActive
+          ? `Showing ${filtered.length} of ${items.length} line${items.length === 1 ? "" : "s"}`
+          : `Showing ${items.length} line${items.length === 1 ? "" : "s"}`}
+        {logsPaused ? " · paused" : " · following"}
+      </p>
+    </SectionCard>
   );
 }

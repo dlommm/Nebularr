@@ -47,6 +47,7 @@ def _build_settings(**overrides: Any) -> Any:
         mal_matcher_cron="30 5 * * *",
         mal_tag_sync_cron="0 6 * * *",
         coverage_tag_sync_cron="30 6 * * *",
+        artwork_prefetch_cron="20 */6 * * *",
         mal_ingest_enabled=False,
         mal_matcher_enabled=False,
         mal_tagging_enabled=False,
@@ -251,6 +252,31 @@ async def test_coverage_tag_sync_skipped_when_flag_disabled() -> None:
         assert "coverage_tag_sync" not in job_ids
     finally:
         scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_artwork_prefetch_registered_only_with_row_and_coro() -> None:
+    async def artwork_prefetch() -> None:
+        return None
+
+    rows = [{"mode": "artwork_prefetch", "cron": "20 */6 * * *"}]
+    scheduler = _build_scheduler(
+        ScheduleFakeSession(schedule_rows=rows), _build_settings(), artwork_prefetch_coro=artwork_prefetch
+    )
+    scheduler.start()
+    try:
+        assert "artwork_prefetch" in {job.id for job in scheduler.scheduler.get_jobs()}
+    finally:
+        scheduler.shutdown()
+
+    disabled = _build_scheduler(
+        ScheduleFakeSession(schedule_rows=[]), _build_settings(), artwork_prefetch_coro=artwork_prefetch
+    )
+    disabled.start()
+    try:
+        assert "artwork_prefetch" not in {job.id for job in disabled.scheduler.get_jobs()}
+    finally:
+        disabled.shutdown()
 
 
 @pytest.mark.asyncio

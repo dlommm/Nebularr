@@ -139,7 +139,7 @@ export function AuthSection({ authStatus }: { authStatus: UseQueryResult<AuthSta
         ) : null}
       </div>
       {issuedApiToken ? (
-        <div className="rounded-lg border border-warn/35 bg-warn/10 px-4 py-3 text-sm">
+        <div className="border-y border-warn/40 py-3 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-muted-foreground">
               Copy this token now — it is shown only once. Send it as <code>Authorization: Bearer …</code>

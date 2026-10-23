@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+A new Web UI, "Now Showing": your library's own artwork, condensed display type, and
+colour that only ever means status. Migrations **0016** (artwork schedule) and
+**0017** (two small indexes) run automatically.
+
+### Added
+
+- **Artwork from Sonarr and Radarr.** Posters and fanart are fetched server-side with
+  the integration's API key (the browser never talks to the Arrs), validated, and
+  cached under the runtime volume. The cache warms in the background after start-up,
+  every six hours (`artwork_prefetch` schedule) and as you browse; replaced art is
+  picked up by the Arr's `lastWrite`, and art for removed items is pruned.
+- **Setup → Artwork**: turn artwork off, choose *cache* (fastest) or *live* (no disk;
+  every image fetched on demand), allow TheTVDB/TMDB as a fallback (off by default;
+  your API keys are never sent there), cap the cache size, fetch everything now, or
+  clear the cache.
+- **Sign-in poster wall**: a different random set of your posters on every visit.
+  Served only from files already cached; the endpoint never fetches anything.
+- **Overview** (replaces Home and Dashboard; `/dashboard` redirects): the latest
+  import as full-bleed fanart, a plain-English status sentence, recently arrived
+  posters, 24-hour sync lanes per source, library totals and "Waiting on you".
+- API: `/api/art/*`, `/api/config/artwork*`, `/api/ui/run-timeline`,
+  `/api/ui/recent-imports`, `/api/ui/library-totals`.
+
+### Changed
+
+- New top navigation (Overview, Library, Sync, Reports, Rules, Anime, Setup) with a
+  phone tab bar; Integrations, Artwork, Schedules and Logs live under Setup.
+- Library: poster rows; a show expands to its fanart, an episode-by-quality grid and
+  an episode panel; movies are a poster grid.
+- Dark theme is the redesigned default; light theme is the matching "Daylight".
+
 ## [2.9.3] - 2026-09-21
 
 A hotfix for v2.9.2. The multi-episode orphan fix shipped a join the planner cannot

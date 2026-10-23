@@ -8,13 +8,13 @@ import { useDraftSync } from "../../hooks/useDraftSync";
 import { queryKeys } from "../../lib/queryKeys";
 import type { IntegrationRow } from "../../types";
 import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionCard } from "./shared";
+import { cn } from "@/lib/utils";
 
 type IntegrationDraft = IntegrationRow & { api_key: string };
 
@@ -37,6 +37,7 @@ export function ArrIntegrationsSection({
   const [integrationTests, setIntegrationTests] = useState<
     Record<string, { status: "testing" | "ok" | "error"; detail?: string }>
   >({});
+  const [editing, setEditing] = useState<string | null>(null);
 
   const saveIntegration = async (source: string, name: string): Promise<void> => {
     const key = `${source}:${name}`;
@@ -84,97 +85,129 @@ export function ArrIntegrationsSection({
   };
 
   return (
-    <SectionCard title="Integrations" description="Sonarr and Radarr connections used for library sync and tagging.">
+    <SectionCard
+      title="Sonarr and Radarr"
+      description="Connections used for library sync and tagging. Test one any time; a sync also checks it before it starts."
+    >
       {integrations.isLoading ? <Skeleton className="h-32 w-full" /> : null}
       {integrations.isError ? (
         <QueryErrorNotice label="integrations" retry={() => void integrations.refetch()} error={integrations.error} />
       ) : null}
-      {(integrations.data ?? []).map((row) => {
-        const key = `${row.source}:${row.name}`;
-        const draft = drafts[key] ?? { ...row, api_key: "" };
-        return (
-          <div className="rounded-xl border border-border bg-muted/40 p-4" key={key}>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">
-                {row.source}/{row.name}
-              </span>
-              <Badge variant={row.api_key_set ? "outline" : "destructive"}>
-                {row.api_key_set ? "API key set" : "API key missing"}
-              </Badge>
-              <Badge variant="outline">{row.enabled ? "enabled" : "disabled"}</Badge>
-              <span className="ml-auto text-xs text-muted-foreground">Updated {fmtDate(row.updated_at)}</span>
-            </div>
-            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-              <div className="grid w-full gap-1.5">
-                <Label htmlFor={`integration-url-${key}`} className="text-xs text-muted-foreground">
-                  Base URL
-                </Label>
-                <Input
-                  id={`integration-url-${key}`}
-                  value={draft.base_url}
-                  onChange={(event) => setDraft(key, { base_url: event.target.value })}
-                />
+      <ul className="border-b border-border">
+        {(integrations.data ?? []).map((row) => {
+          const key = `${row.source}:${row.name}`;
+          const draft = drafts[key] ?? { ...row, api_key: "" };
+          const test = integrationTests[key];
+          const open = editing === key;
+          return (
+            <li key={key} className="border-t border-border">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-2 py-4 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <div className="truncate text-base">{row.name}</div>
+                  <div className="text-[13px] text-subtle-foreground">
+                    {row.source === "radarr" ? "Radarr · movies" : "Sonarr · TV"}
+                    {row.enabled ? "" : " · disabled"}
+                  </div>
+                </div>
+                <div className="hidden min-w-0 truncate font-mono text-xs text-muted-foreground md:block" title={row.base_url}>
+                  {row.base_url || "no URL"}
+                </div>
+                <div className="hidden min-w-0 md:block">
+                  {test && test.status !== "testing" ? (
+                    <span className={cn("text-[13px]", test.status === "ok" ? "text-ok" : "text-critical")} title={test.detail}>
+                      {test.status === "ok" ? test.detail : `failed · ${test.detail}`}
+                    </span>
+                  ) : (
+                    <span className={cn("text-[13px]", row.api_key_set ? "text-muted-foreground" : "text-critical")}>
+                      {row.api_key_set ? "API key set" : "API key missing"}
+                    </span>
+                  )}
+                  <div className="text-xs text-subtle-foreground">updated {fmtDate(row.updated_at)}</div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={test?.status === "testing"}
+                    onClick={() => void testIntegration(row.source, row.name)}
+                  >
+                    {test?.status === "testing" ? "Testing…" : "Test connection"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    aria-expanded={open}
+                    aria-controls={`integration-edit-${key}`}
+                    onClick={() => setEditing(open ? null : key)}
+                  >
+                    {open ? "Close" : "Edit"}
+                  </Button>
+                </div>
+                {test && test.status !== "testing" ? (
+                  <p className={cn("col-span-full text-[13px] md:hidden", test.status === "ok" ? "text-ok" : "text-critical")}>
+                    {test.status === "ok" ? test.detail : `failed · ${test.detail}`}
+                  </p>
+                ) : null}
               </div>
-              <div className="grid w-full gap-1.5">
-                <Label htmlFor={`integration-key-${key}`} className="text-xs text-muted-foreground">
-                  New API key (optional)
-                </Label>
-                <Input
-                  id={`integration-key-${key}`}
-                  type="password"
-                  autoComplete="off"
-                  value={draft.api_key}
-                  onChange={(event) => setDraft(key, { api_key: event.target.value })}
-                />
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id={`integration-enabled-${key}`}
-                  checked={draft.enabled}
-                  onCheckedChange={(checked) => setDraft(key, { enabled: checked === true })}
-                />
-                <Label htmlFor={`integration-enabled-${key}`} className="text-sm text-muted-foreground">
-                  enabled
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id={`integration-webhook-${key}`}
-                  checked={draft.webhook_enabled}
-                  onCheckedChange={(checked) => setDraft(key, { webhook_enabled: checked === true })}
-                />
-                <Label htmlFor={`integration-webhook-${key}`} className="text-sm text-muted-foreground">
-                  webhook enabled
-                </Label>
-              </div>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void saveIntegration(row.source, row.name)}>
-                Save
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={integrationTests[key]?.status === "testing"}
-                onClick={() => void testIntegration(row.source, row.name)}
-              >
-                {integrationTests[key]?.status === "testing" ? "Testing…" : "Test connection"}
-              </Button>
-              {integrationTests[key] && integrationTests[key].status !== "testing" ? (
-                <span
-                  className={`text-xs ${integrationTests[key].status === "ok" ? "text-ok" : "text-critical"}`}
-                  title={integrationTests[key].detail}
-                >
-                  {integrationTests[key].status === "ok"
-                    ? `✓ ${integrationTests[key].detail}`
-                    : `✗ ${integrationTests[key].detail}`}
-                </span>
+              {open ? (
+                <div id={`integration-edit-${key}`} className="animate-rise pb-5">
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <div className="grid w-full gap-1.5">
+                      <Label htmlFor={`integration-url-${key}`} className="text-xs text-muted-foreground">
+                        Base URL
+                      </Label>
+                      <Input
+                        id={`integration-url-${key}`}
+                        value={draft.base_url}
+                        onChange={(event) => setDraft(key, { base_url: event.target.value })}
+                      />
+                    </div>
+                    <div className="grid w-full gap-1.5">
+                      <Label htmlFor={`integration-key-${key}`} className="text-xs text-muted-foreground">
+                        New API key (optional)
+                      </Label>
+                      <Input
+                        id={`integration-key-${key}`}
+                        type="password"
+                        autoComplete="off"
+                        value={draft.api_key}
+                        onChange={(event) => setDraft(key, { api_key: event.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <div className="flex min-h-11 items-center gap-2">
+                      <Checkbox
+                        id={`integration-enabled-${key}`}
+                        checked={draft.enabled}
+                        onCheckedChange={(checked) => setDraft(key, { enabled: checked === true })}
+                      />
+                      <Label htmlFor={`integration-enabled-${key}`} className="text-sm font-normal text-muted-foreground">
+                        enabled
+                      </Label>
+                    </div>
+                    <div className="flex min-h-11 items-center gap-2">
+                      <Checkbox
+                        id={`integration-webhook-${key}`}
+                        checked={draft.webhook_enabled}
+                        onCheckedChange={(checked) => setDraft(key, { webhook_enabled: checked === true })}
+                      />
+                      <Label htmlFor={`integration-webhook-${key}`} className="text-sm font-normal text-muted-foreground">
+                        webhook enabled
+                      </Label>
+                    </div>
+                    <Button type="button" className="min-h-11" onClick={() => void saveIntegration(row.source, row.name)}>
+                      Save
+                    </Button>
+                  </div>
+                </div>
               ) : null}
-            </div>
-          </div>
-        );
-      })}
+            </li>
+          );
+        })}
+      </ul>
     </SectionCard>
   );
 }

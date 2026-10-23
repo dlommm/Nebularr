@@ -46,6 +46,11 @@ export const queryKeys = {
   reportingDashboards: ["reporting-dashboards"] as const,
   automations: ["automations"] as const,
   automationTemplates: ["automation-templates"] as const,
+  runTimeline: ["run-timeline"] as const,
+  recentImports: ["recent-imports"] as const,
+  libraryTotals: ["library-totals"] as const,
+  artWall: ["art-wall"] as const,
+  artworkConfig: ["artwork-config"] as const,
 
   // Parameterized keys: call with no args for the bare prefix (invalidation),
   // or with the same params used to build the query for the full cache key.

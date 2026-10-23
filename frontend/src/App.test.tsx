@@ -36,10 +36,10 @@ vi.mock("./api", async () => {
 // Toggled per-test so RouteErrorBoundary has something to catch; declared via
 // vi.hoisted since vi.mock factories are hoisted above normal module code.
 const dashboardMock = vi.hoisted(() => ({ shouldThrow: false }));
-vi.mock("./pages/DashboardPage", () => ({
-  DashboardPage: () => {
-    if (dashboardMock.shouldThrow) throw new Error("dashboard exploded");
-    return <div>dashboard-ok</div>;
+vi.mock("./pages/ReportingPage", () => ({
+  ReportingPage: () => {
+    if (dashboardMock.shouldThrow) throw new Error("reports exploded");
+    return <div>reports-ok</div>;
   },
 }));
 
@@ -82,10 +82,10 @@ describe("App", () => {
     dashboardMock.shouldThrow = false;
   });
 
-  it("renders nebularr shell with home in nav", async () => {
+  it("renders nebularr shell with overview in nav", async () => {
     renderApp();
     expect(await screen.findByText("Nebularr")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /home/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /^overview$/i }).length).toBeGreaterThan(0);
   });
 
   it("RequireSetup shows QueryErrorNotice with a working retry when setup status fails to load", async () => {
@@ -158,7 +158,7 @@ describe("App", () => {
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       dashboardMock.shouldThrow = true;
 
-      renderAppAt("/dashboard");
+      renderAppAt("/reporting");
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent(/something went wrong/i);
 
@@ -166,7 +166,7 @@ describe("App", () => {
       // error state would persist across the navigation below even though
       // the destination route's component never throws.
       dashboardMock.shouldThrow = false;
-      await userEvent.click(screen.getAllByRole("link", { name: /^home$/i })[0]);
+      await userEvent.click(screen.getAllByRole("link", { name: /^overview$/i })[0]);
 
       expect(await screen.findByRole("heading", { name: "Nebularr" })).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();

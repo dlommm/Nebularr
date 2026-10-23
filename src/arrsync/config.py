@@ -127,6 +127,7 @@ class Settings(BaseSettings):
     mydublist_confidence_tier: str = "normal"
     coverage_tagging_enabled: bool = False
     coverage_tag_sync_cron: str = "30 4 * * *"
+    artwork_prefetch_cron: str = "20 */6 * * *"
     arr_coverage_full_tag_label: str = "fully-english"
     arr_coverage_partial_tag_label: str = "partial-english"
     automation_command_min_interval_seconds: float = 2.0

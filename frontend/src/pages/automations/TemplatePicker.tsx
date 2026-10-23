@@ -26,7 +26,7 @@ export function TemplatePicker({
           key={template.key}
           type="button"
           onClick={() => onUse(template)}
-          className="rounded-xl border border-border bg-muted/40 p-3 text-left transition-colors hover:border-ring hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-ring"
+          className="rounded-md border border-border bg-transparent p-3 text-left transition-colors hover:border-ring hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-ring"
         >
           <span className="block text-sm font-medium">{template.title}</span>
           <span className="mt-1 block text-xs text-muted-foreground">{template.description}</span>

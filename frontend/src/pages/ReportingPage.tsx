@@ -14,9 +14,12 @@ import { ReportingDistributionPanel } from "./reporting/ReportingDistributionPan
 import { ReportingTablePanel } from "./reporting/ReportingTablePanel";
 import { ReportingTimeseriesPanel } from "./reporting/ReportingTimeseriesPanel";
 import { resetPanelOffset, tokenizeFilter } from "./reporting/reportingShared";
+import { Figure, Figures, PageHead } from "@/components/ns/Page";
+import { actionLinkClass } from "@/lib/ns";
+import { cn } from "@/lib/utils";
 
 export function ReportingPage(): JSX.Element {
-  usePageTitle("Reporting");
+  usePageTitle("Reports");
   const [reportingDashboardKey, setReportingDashboardKey] = useLocalStorageState<string>(
     "nebularr.reporting.dashboard",
     "overview",
@@ -148,23 +151,16 @@ export function ReportingPage(): JSX.Element {
           i += 1;
         }
         nodes.push(
-          <div className="col-span-12" key={`report-stats-${batch[0]?.id ?? i}`}>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              {batch.map((p) => (
-                <div
-                  className="rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-card)]"
-                  key={p.id}
-                >
-                  <div className="truncate text-xs text-muted-foreground" title={p.title}>
-                    {p.title}
-                  </div>
-                  <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">
-                    {typeof p.value === "number" ? p.value.toLocaleString() : (p.value ?? "—")}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>,
+          <Figures className="col-span-12" key={`report-stats-${batch[0]?.id ?? i}`}>
+            {batch.map((p, idx) => (
+              <Figure
+                key={p.id}
+                value={typeof p.value === "number" ? p.value.toLocaleString() : (p.value ?? "—")}
+                label={p.title}
+                style={{ animationDelay: `${idx * 60}ms` }}
+              />
+            ))}
+          </Figures>,
         );
       } else {
         const panelStateKey = `${reportingDashboardKey}:${panel.id}`;
@@ -215,172 +211,176 @@ export function ReportingPage(): JSX.Element {
     return nodes;
   };
 
+  const clearFilters = (): void => {
+    setReportingGlobalFilter("");
+    setReportingDashboardFilters({
+      ...reportingDashboardFilters,
+      [reportingDashboardKey]: "",
+    });
+    setReportingPanelFilters((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${reportingDashboardKey}:`))),
+    );
+    setReportingColumnFilters((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${reportingDashboardKey}:`))),
+    );
+    setReportingIgnoreSeasonZero(false);
+  };
+
+  const fieldLabelClass = "grid gap-1 text-[11px] text-subtle-foreground";
+
   return (
-    <div className="grid grid-cols-12 gap-4">
-      <div className="col-span-12 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
-        {reportingDashboards.isError ? (
-          <div className="mb-3">
-            <QueryErrorNotice
-              label="reporting dashboards"
-              retry={() => void reportingDashboards.refetch()}
-              error={reportingDashboards.error}
-            />
-          </div>
-        ) : (
-          <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="Reporting dashboards">
-            {(reportingDashboards.data ?? []).map((dash) => (
+    <div className="pb-16">
+      <PageHead title="Reports" lead="Straight from the warehouse. Every panel can be exported as CSV." />
+
+      {reportingDashboards.isError ? (
+        <QueryErrorNotice
+          label="reporting dashboards"
+          retry={() => void reportingDashboards.refetch()}
+          error={reportingDashboards.error}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-x-7 border-b border-border" role="tablist" aria-label="Reporting dashboards">
+          {(reportingDashboards.data ?? []).map((dash) => {
+            const active = reportingDashboardKey === dash.key;
+            return (
               <button
                 type="button"
                 key={dash.key}
                 role="tab"
-                aria-selected={reportingDashboardKey === dash.key}
-                className={
-                  reportingDashboardKey === dash.key
-                    ? "rounded-md bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
-                    : "rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-                }
+                aria-selected={active}
+                className={cn(
+                  "-mb-px border-b-2 py-3.5 text-[15px] transition-colors",
+                  active ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
                 onClick={() => setReportingDashboardKey(dash.key)}
               >
                 {dash.title}
               </button>
-            ))}
-          </div>
-        )}
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
-            <span className="text-xs text-muted-foreground">Global filter</span>
-            <Input
-              className="h-9"
-              placeholder="Apply to every panel…"
-              value={reportingGlobalFilter}
-              onChange={(event) => setReportingGlobalFilter(event.target.value)}
-            />
-          </label>
-          <label className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
-            <span className="text-xs text-muted-foreground">This dashboard</span>
-            <Input
-              className="h-9"
-              placeholder="Narrow current report…"
-              value={reportingDashboardFilter}
-              onChange={(event) =>
-                setReportingDashboardFilters({
-                  ...reportingDashboardFilters,
-                  [reportingDashboardKey]: event.target.value,
-                })
-              }
-            />
-          </label>
-          <label className="grid min-w-44 gap-1.5 sm:max-w-52">
-            <span className="text-xs text-muted-foreground">Instance</span>
-            <Input
-              className="h-9"
-              placeholder="Optional warehouse instance"
-              value={reportingInstance}
-              onChange={(event) => setReportingInstance(event.target.value)}
-            />
-          </label>
-          <div className="grid gap-1.5">
-            <span className="text-xs text-muted-foreground">API row limit</span>
-            <div className="flex items-center gap-1">
-              <Button
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-4 py-5">
+        <label className={cn(fieldLabelClass, "min-w-44 flex-1 sm:max-w-xs")}>
+          Global filter
+          <Input
+            className="h-11"
+            placeholder="Apply to every panel…"
+            value={reportingGlobalFilter}
+            onChange={(event) => setReportingGlobalFilter(event.target.value)}
+          />
+        </label>
+        <label className={cn(fieldLabelClass, "min-w-44 flex-1 sm:max-w-xs")}>
+          This dashboard
+          <Input
+            className="h-11"
+            placeholder="Narrow current report…"
+            value={reportingDashboardFilter}
+            onChange={(event) =>
+              setReportingDashboardFilters({
+                ...reportingDashboardFilters,
+                [reportingDashboardKey]: event.target.value,
+              })
+            }
+          />
+        </label>
+        <label className={cn(fieldLabelClass, "min-w-44 sm:max-w-52")}>
+          Instance
+          <Input
+            className="h-11"
+            placeholder="All instances"
+            value={reportingInstance}
+            onChange={(event) => setReportingInstance(event.target.value)}
+          />
+        </label>
+        <div className={fieldLabelClass}>
+          <span id="reporting-limit">API row limit</span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-sm border border-border" role="group" aria-labelledby="reporting-limit">
+              <button
                 type="button"
-                variant="secondary"
-                size="sm"
+                aria-label="Fewer rows"
+                className="size-11 text-base text-foreground hover:bg-muted"
                 onClick={() => setReportingLimit(Math.max(100, (reportingLimitUnlimited ? 1000 : reportingLimit) - 100))}
               >
                 −
-              </Button>
+              </button>
               <span className="min-w-12 text-center text-sm tabular-nums text-foreground">
                 {reportingLimitUnlimited ? "∞" : reportingLimit}
               </span>
-              <Button
+              <button
                 type="button"
-                variant="secondary"
-                size="sm"
+                aria-label="More rows"
+                className="size-11 text-base text-foreground hover:bg-muted"
                 onClick={() => setReportingLimit(reportingLimitUnlimited ? 1000 : reportingLimit + 100)}
               >
                 +
-              </Button>
-              <Button
-                type="button"
-                variant={reportingLimitUnlimited ? "default" : "secondary"}
-                size="sm"
-                onClick={() => setReportingLimit(0)}
-              >
-                Max
-              </Button>
+              </button>
             </div>
-          </div>
-          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              className="accent-primary"
-              checked={reportingIgnoreSeasonZero}
-              onChange={(event) => setReportingIgnoreSeasonZero(event.target.checked)}
-            />
-            <span>Ignore Season 0</span>
-          </label>
-          <div className="ml-auto flex items-center gap-2">
-            <SavedViews storageKey="nebularr.savedViews.reporting" />
-            <Button type="button" size="sm" onClick={() => void reportingDashboard.refetch()}>
-              Refresh
-            </Button>
-            <Button
+            <button
               type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setReportingGlobalFilter("");
-                setReportingDashboardFilters({
-                  ...reportingDashboardFilters,
-                  [reportingDashboardKey]: "",
-                });
-                setReportingPanelFilters((prev) =>
-                  Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${reportingDashboardKey}:`))),
-                );
-                setReportingColumnFilters((prev) =>
-                  Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${reportingDashboardKey}:`))),
-                );
-                setReportingIgnoreSeasonZero(false);
-              }}
+              aria-pressed={reportingLimitUnlimited}
+              className={cn(
+                "min-h-11 border-b px-1 text-sm",
+                reportingLimitUnlimited ? "border-signal text-signal" : "border-input text-foreground hover:border-foreground",
+              )}
+              onClick={() => setReportingLimit(0)}
             >
-              Clear filters
-            </Button>
+              Max
+            </button>
           </div>
+        </div>
+        <label className="flex min-h-11 items-center gap-2.5 text-sm text-foreground">
+          <input
+            type="checkbox"
+            className="size-[18px] accent-signal"
+            checked={reportingIgnoreSeasonZero}
+            onChange={(event) => setReportingIgnoreSeasonZero(event.target.checked)}
+          />
+          <span>Ignore season 0 (specials)</span>
+        </label>
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <SavedViews storageKey="nebularr.savedViews.reporting" />
+          <button type="button" className={actionLinkClass} onClick={clearFilters}>
+            Clear filters
+          </button>
+          <Button type="button" variant="outline" className="min-h-11" onClick={() => void reportingDashboard.refetch()}>
+            Refresh
+          </Button>
         </div>
       </div>
 
       {reportingDashboard.isError ? (
-        <div className="col-span-12">
-          <QueryErrorNotice
-            label="reporting dashboard"
-            retry={() => void reportingDashboard.refetch()}
-            error={reportingDashboard.error}
-          />
-        </div>
+        <QueryErrorNotice
+          label="reporting dashboard"
+          retry={() => void reportingDashboard.refetch()}
+          error={reportingDashboard.error}
+        />
       ) : null}
 
       {reportingDashboard.data ? (
-        <div className="col-span-12 flex flex-wrap items-end justify-between gap-2 px-1">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">{reportingDashboard.data.title}</h2>
-            <p className="text-sm text-muted-foreground">{reportingDashboard.data.description}</p>
-          </div>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 pt-4 pb-5">
+          <p className="max-w-2xl text-[15px] text-muted-foreground">
+            <span className="text-foreground">{reportingDashboard.data.title}.</span> {reportingDashboard.data.description}
+          </p>
           {reportingDashboard.data.generated_at ? (
-            <time className="text-xs text-muted-foreground" dateTime={reportingDashboard.data.generated_at}>
-              Generated {fmtDate(reportingDashboard.data.generated_at)}
+            <time className="font-mono text-xs text-subtle-foreground" dateTime={reportingDashboard.data.generated_at}>
+              generated {fmtDate(reportingDashboard.data.generated_at)}
             </time>
           ) : null}
         </div>
       ) : null}
 
-      {renderReportingPanelNodes()}
+      <div className={cn("grid grid-cols-12 gap-x-14 gap-y-14", reportingDashboard.isPlaceholderData && "opacity-60 transition-opacity")}>
+        {renderReportingPanelNodes()}
+      </div>
 
       {reportingDashboard.isLoading ? (
-        <div className="col-span-12 flex items-center gap-2 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
-          <span className="size-2 animate-pulse rounded-full bg-primary" />
-          <span>Loading dashboard…</span>
-        </div>
+        <p className="flex items-center gap-2 border-t border-border py-5 text-sm text-muted-foreground">
+          <span className="size-2 animate-pulse rounded-full bg-signal" />
+          Loading dashboard…
+        </p>
       ) : null}
     </div>
   );

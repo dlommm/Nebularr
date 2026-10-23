@@ -37,6 +37,7 @@ from arrsync.mal.ingest_service import MalIngestService
 from arrsync.mal.matcher_service import MalMatcherService
 from arrsync.mal.tag_sync_service import MalTagSyncService
 from arrsync.services.automation_service import AutomationService
+from arrsync.services.artwork_service import ArtworkService
 from arrsync.services.coverage_tag_service import CoverageTagSyncService
 from arrsync.services.scheduler import SyncScheduler
 from arrsync.services.sync_service import SyncService
@@ -61,6 +62,8 @@ class AppState:
     mal_tag_sync_service: MalTagSyncService | None = None
     coverage_tag_service: CoverageTagSyncService | None = None
     automation_service: AutomationService | None = None
+    artwork_service: ArtworkService | None = None
+    artwork_warmup_task: asyncio.Task[None] | None = field(default=None, repr=False)
     capability_task: asyncio.Task[None] | None = None
     health_alert_task: asyncio.Task[None] | None = None
     notification_task: asyncio.Task[None] | None = None
@@ -121,6 +124,13 @@ async def _cron_coverage_tag_sync() -> None:
     await coverage_tag_service.run(reason="cron")
 
 
+artwork_service = ArtworkService(settings, session_factory_holder, stop_event=stop_event)
+
+
+async def _cron_artwork_prefetch() -> None:
+    await artwork_service.prefetch(reason="cron")
+
+
 async def _cron_automation(automation_id: int) -> None:
     await automation_service.run(automation_id, reason="cron")
 
@@ -133,6 +143,7 @@ scheduler = SyncScheduler(
     mal_matcher_coro=_cron_mal_matcher,
     mal_tag_sync_coro=_cron_mal_tag_sync,
     coverage_tag_sync_coro=_cron_coverage_tag_sync,
+    artwork_prefetch_coro=_cron_artwork_prefetch,
     automation_run_coro=_cron_automation,
 )
 
@@ -151,6 +162,7 @@ app_state = AppState(
     mal_tag_sync_service=mal_tag_sync_service,
     coverage_tag_service=coverage_tag_service,
     automation_service=automation_service,
+    artwork_service=artwork_service,
 )
 
 @asynccontextmanager
@@ -314,7 +326,7 @@ async def _shutdown() -> None:
     # before cancelling whatever is still stuck.
     background_jobs = [
         task
-        for task in (*app_state.manual_sync_tasks, app_state.mal_backlog_task)
+        for task in (*app_state.manual_sync_tasks, app_state.mal_backlog_task, app_state.artwork_warmup_task)
         if task is not None and not task.done()
     ]
     if background_jobs:
@@ -326,5 +338,6 @@ async def _shutdown() -> None:
     await sync_service.aclose()
     await sonarr_client.aclose()
     await radarr_client.aclose()
+    await artwork_service.aclose()
     dispose_bound_engine(app_state)
     log.info("shutdown complete")

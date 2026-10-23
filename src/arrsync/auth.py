@@ -26,7 +26,9 @@ from arrsync.services.auth_store import AuthConfig, read_auth_config
 log = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "nebularr_session"
-AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/status"}
+AUTH_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/status", "/api/art/wall"}
+# The sign-in page's poster wall: serves cached files only (routers/artwork.py).
+AUTH_EXEMPT_PREFIXES = ("/api/art/wall/",)
 AUTH_PROTECTED_DOC_PATHS = {"/docs", "/redoc", "/openapi.json"}
 
 _SCRYPT_N = 2**15
@@ -231,7 +233,7 @@ def is_auth_protected_path(path: str) -> bool:
     """Only the JSON API and API docs are gated; SPA shell pages and static assets
     stay public (the SPA redirects to /login on the first 401), and /hooks/* has
     its own shared-secret check."""
-    if path in AUTH_EXEMPT_PATHS:
+    if path in AUTH_EXEMPT_PATHS or path.startswith(AUTH_EXEMPT_PREFIXES):
         return False
     if path in AUTH_PROTECTED_DOC_PATHS:
         return True
