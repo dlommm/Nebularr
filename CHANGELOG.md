@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.10.0] - 2026-10-23
 
 A new Web UI, "Now Showing": your library's own artwork, condensed display type, and
 colour that only ever means status. Migrations **0016** (artwork schedule) and
@@ -36,6 +36,26 @@ colour that only ever means status. Migrations **0016** (artwork schedule) and
 - Library: poster rows; a show expands to its fanart, an episode-by-quality grid and
   an episode panel; movies are a poster grid.
 - Dark theme is the redesigned default; light theme is the matching "Daylight".
+- Sync & Queue: a "running now" panel, sync lanes, queue figures and recent runs on
+  the overview; run-by-hand controls as one list of actions.
+- Reports: dashboards as tabs, stat panels as big figures, distributions as a stacked
+  quality band.
+- Rules: the rule list and its editor side by side instead of a slide-over sheet, with
+  a Dry run / Live / Off tag on every rule. Going live and deleting still ask first.
+- Anime: MyAnimeList shown as a fetch → match → tag pipeline, each stage with its
+  count, last run and its own run button.
+- Setup: readiness count in the header; Sonarr/Radarr instances and schedules as
+  compact rows that open their form in place; logs with clock timestamps. The
+  first-run wizard has the same look.
+
+### Security
+
+- Base image moved to `python:3.14-slim` with Python 3.14.9 (fixes CVE-2026-19445,
+  CVE-2026-19553 in 3.14.6).
+- Frontend lockfile refreshed for HIGH/CRITICAL npm advisories; the `shadcn` package
+  is no longer a dependency (its one stylesheet is vendored), removing the unfixed
+  `braces` advisory.
+- SQLAlchemy capped below 2.1 until that minor is verified.
 
 ## [2.9.3] - 2026-09-21
 

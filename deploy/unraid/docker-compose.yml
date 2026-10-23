@@ -76,7 +76,7 @@ services:
       - nebularr
 
   app:
-    image: ${NEBULARR_IMAGE:-dendlomm/nebularr:2.9.3}
+    image: ${NEBULARR_IMAGE:-dendlomm/nebularr:2.10.0}
     container_name: nebularr
     user: "1001:1001"
     read_only: true
