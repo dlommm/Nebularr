@@ -44,7 +44,7 @@ function ReportingTimeseriesPanelImpl({ panel }: ReportingTimeseriesPanelProps):
         </div>
       ) : (
         <div className="mt-4 h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 640, height: 288 }}>
             <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis dataKey="ts" stroke="var(--subtle-foreground)" fontSize={11} fontFamily="var(--font-mono)" tickLine={false} axisLine={false} />

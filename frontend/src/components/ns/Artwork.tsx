@@ -35,11 +35,18 @@ function Shape({ shape, color, variant }: { shape: TitleCardShape; color: string
     and its title — also what shows while the real poster loads. */
 export function TitleCard({ title, year, className }: { title: string; year?: number | string | null; className?: string }): JSX.Element {
   const style = titleCardStyle(title);
+  // Size the title so its longest word fits the card width: condensed caps run
+  // about 0.55em per letter, and the text box is 84% of the card.
+  const longestWord = Math.max(4, ...title.split(/\s+/).map((word) => word.length));
+  const fitCqi = Math.min(14, Math.floor((84 / (longestWord * 0.55)) * 10) / 10);
   return (
     <div className={cn("@container relative overflow-hidden", className)} style={{ background: style.bg, color: style.fg }}>
       <Shape shape={style.shape} color={style.fg} variant="poster" />
       {year ? <span className="absolute top-[6%] left-[8%] font-mono text-[10px] opacity-80">{year}</span> : null}
-      <span className="cond absolute inset-x-[8%] bottom-[6%] line-clamp-4 text-[clamp(9px,14cqi,30px)] leading-[0.86] font-[760]">
+      <span
+        className="cond absolute inset-x-[8%] bottom-[6%] line-clamp-4 leading-[0.86] font-[760] break-words"
+        style={{ fontSize: `clamp(7px, ${fitCqi}cqi, 30px)` }}
+      >
         {title}
       </span>
     </div>

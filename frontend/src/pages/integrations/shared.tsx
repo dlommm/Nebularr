@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import { sectionAnchor } from "./sections";
 
 export const SELECT_CLASS = "min-h-10 rounded-sm border border-border bg-muted px-2.5 text-sm text-foreground";
@@ -26,3 +27,34 @@ export function SectionCard({
     </section>
   );
 }
+
+/** One line of state at the top of a section: coloured dot and plain words,
+    in place of boxed badges. */
+export function SectionState({
+  items,
+}: {
+  items: { label: string; tone?: "ok" | "warn" | "critical" | "muted" }[];
+}): JSX.Element {
+  return (
+    <p className="flex flex-wrap gap-x-5 gap-y-1 text-[13px]">
+      {items.map(({ label, tone = "muted" }) => (
+        <span
+          key={label}
+          className={cn(
+            "inline-flex items-center gap-2 before:size-2 before:shrink-0 before:rounded-full before:bg-current",
+            tone === "ok" && "text-ok",
+            tone === "warn" && "text-warn",
+            tone === "critical" && "text-critical",
+            tone === "muted" && "text-muted-foreground",
+          )}
+        >
+          {label}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+export const CHECK_ROW_CLASS = "flex min-h-11 items-center gap-2.5";
+export const CHECK_LABEL_CLASS = "text-sm font-normal";
+export const FIELD_LABEL_CLASS = "text-xs text-muted-foreground";

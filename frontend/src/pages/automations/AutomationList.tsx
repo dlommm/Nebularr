@@ -140,7 +140,7 @@ export function ModeTag({ row }: { row: Pick<AutomationRow, "enabled" | "dry_run
   return (
     <span
       className={cn(
-        "shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-semibold tracking-[0.04em] uppercase",
+        "shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-semibold tracking-[0.04em] whitespace-nowrap uppercase [word-spacing:0.25em]",
         mode === "dry" && "border border-signal/45 text-signal",
         mode === "live" && "bg-ok text-background",
         mode === "off" && "border border-border text-subtle-foreground",

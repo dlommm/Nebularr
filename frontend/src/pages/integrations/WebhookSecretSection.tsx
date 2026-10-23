@@ -5,11 +5,10 @@ import { api } from "../../api";
 import { useActionError } from "../../hooks/useActionError";
 import { queryKeys } from "../../lib/queryKeys";
 import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SectionCard } from "./shared";
+import { SectionCard, SectionState } from "./shared";
 
 export function WebhookSecretSection({
   webhookConfig,
@@ -40,10 +39,14 @@ export function WebhookSecretSection({
       {webhookConfig.isError ? (
         <QueryErrorNotice label="webhook settings" retry={() => void webhookConfig.refetch()} error={webhookConfig.error} />
       ) : null}
+      <SectionState
+        items={[
+          webhookConfig.data?.secret_set
+            ? { label: "Secret set", tone: "ok" }
+            : { label: "No secret — webhooks are accepted without one", tone: "warn" },
+        ]}
+      />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <Badge variant={webhookConfig.data?.secret_set ? "outline" : "destructive"} className="self-start sm:self-center">
-          {webhookConfig.data?.secret_set ? "secret set" : "secret missing"}
-        </Badge>
         <div className="grid w-full gap-1.5">
           <Label htmlFor="webhook-secret" className="text-xs text-muted-foreground">
             Set new webhook shared secret
@@ -56,7 +59,7 @@ export function WebhookSecretSection({
             onChange={(event) => setWebhookSecretInput(event.target.value)}
           />
         </div>
-        <Button type="button" variant="secondary" className="shrink-0" onClick={() => void saveWebhookSecret()}>
+        <Button type="button" className="min-h-11 shrink-0" onClick={() => void saveWebhookSecret()}>
           Save secret
         </Button>
       </div>

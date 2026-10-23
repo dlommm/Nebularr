@@ -98,7 +98,7 @@ export function SchedulesPage(): JSX.Element {
               <li key={row.mode} className="border-t border-border">
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-1 py-3.5 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,1fr)_auto]">
                   <div className="min-w-0">
-                    <div className="truncate text-[15px]">{SCHEDULE_MODE_LABELS[row.mode] ?? row.mode}</div>
+                    <div className="text-[15px] break-words md:truncate">{SCHEDULE_MODE_LABELS[row.mode] ?? row.mode}</div>
                     <div className="font-mono text-[11px] text-subtle-foreground">{row.mode}</div>
                   </div>
                   <div className="hidden min-w-0 text-[13px] text-muted-foreground md:block">{describeCron(row.cron)}</div>
