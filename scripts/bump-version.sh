@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Bump the project version everywhere it is hardcoded. Usage: ./scripts/bump-version.sh 2.1.0
 set -euo pipefail
+
+# "<top-level version> <packages[\"\"].version>" of an npm lockfile.
+lock_root_versions() {
+  python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d.get("version"), d.get("packages", {}).get("", {}).get("version"))' "$1"
+}
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
@@ -50,9 +55,11 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 (cd frontend && npm install --package-lock-only --silent)
-lock_hits="$(grep -cE "\"version\": \"${new_version}\"" frontend/package-lock.json || true)"
-if [[ "$lock_hits" != "2" ]]; then
-  echo "FAIL: frontend/package-lock.json has ${lock_hits} of 2 version strings at ${new_version}" >&2
+# Read the two root fields rather than counting matches: dependencies that
+# happen to share the version (3.0.0 is common) would inflate a grep count.
+lock_versions="$(lock_root_versions frontend/package-lock.json)"
+if [[ "$lock_versions" != "${new_version} ${new_version}" ]]; then
+  echo "FAIL: frontend/package-lock.json root versions are '${lock_versions}', expected ${new_version}" >&2
   exit 1
 fi
 echo "updated frontend/package-lock.json"

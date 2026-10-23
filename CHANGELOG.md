@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [3.0.0] - 2026-10-23
+
+**A new Web UI.** 3.0 is the "Now Showing" redesign: every screen rebuilt around your
+own library's artwork, condensed display type, big figures on hairlines and colour
+that only ever means status. It first shipped in 2.10.0; 3.0 finishes it with a full
+bug pass and marks the break from the old interface.
+
+Nothing to migrate by hand: database migrations run on start-up, settings and API
+tokens carry over, and the HTTP API is unchanged. What moves is where things live in
+the UI (see *Changed*).
+
+### Changed
+
+- Navigation is **Overview · Library · Sync · Reports · Rules · Anime · Setup**.
+  Home and Dashboard are now **Overview** (`/dashboard` redirects), Automations are
+  **Rules**, MyAnimeList is **Anime**, and Integrations, Artwork, Schedules and Logs
+  live under **Setup**.
+- Setup sections show their state as one plain line (for example "Sign-in required",
+  "Secret set") instead of badges; alert settings are grouped as URLs, threshold and
+  timeout, then what to alert on; email fields stay disabled until email alerts are on.
+
+### Fixed
+
+- In the light theme the header over fanart was dark text on dark art; it now always
+  reads light-on-dark there. The sticky header no longer lets scrolled text show
+  through.
+- On phones, the Sync and Reports tabs wrapped onto two rows (they now scroll in
+  one), and the webhook jobs table pushed the whole page sideways.
+- Long single words on poster title cards were cut off; the title now sizes to fit.
+- The rule mode tag read "DRYRUN".
+- The storage chart logged a size warning on first render.
+- `scripts/bump-version.sh` and `scripts/check-version-sync.sh` miscounted the
+  lockfile version whenever a dependency shared it; both now read the root fields.
+
 ## [2.10.0] - 2026-10-23
 
 A new Web UI, "Now Showing": your library's own artwork, condensed display type, and

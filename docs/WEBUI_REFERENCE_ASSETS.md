@@ -16,6 +16,8 @@ Stored in `docs/reference/webui-pages/` (dark theme, 1720×1080, healthy scenari
 - Sign-in and first run: `login.png`, `setup.png`
 - `not-found.png`
 
+A light-theme Overview is in `light/home.png` (`WEBUI_CAPTURE_THEME=light WEBUI_CAPTURE_ONLY=home WEBUI_CAPTURE_OUTPUT_DIR=../docs/reference/webui-pages/light`).
+
 Phone shots (390×844, viewport only) are in `phone/`: `home.png`, `library-episodes.png`, `sync-overview.png`:
 
 ```bash

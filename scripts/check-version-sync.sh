@@ -19,25 +19,16 @@ check() {
   fi
 }
 
-# Stricter variant: the version must appear the expected number of times and the
-# previous version must not appear at all. frontend/package-lock.json records the
-# version twice (top level, and the "" entry under packages), and the bump script
-# has silently left it behind before — it drifted from 2.8.0 across three releases
-# because nothing here checked it.
-check_exact() {
-  local label="$1" file="$2" pattern="$3" want="$4"
-  local got
-  got="$(grep -cE "$pattern" "$file" || true)"
-  if [[ "$got" == "$want" ]]; then
-    echo "ok:   ${label} (${got}x)"
-  else
-    echo "FAIL: ${label} (${file}) matched ${got}x, expected ${want}x for ${version}" >&2
-    fail=1
-  fi
-}
-
 check "frontend/package.json"        frontend/package.json        "\"version\": \"${version}\""
-check_exact "frontend/package-lock.json" frontend/package-lock.json "\"version\": \"${version}\"" 2
+# The lockfile's own version lives in two root fields; read them directly, since a
+# grep count also matches dependencies that happen to share the version.
+lock_versions="$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d.get("version"), d.get("packages", {}).get("", {}).get("version"))' frontend/package-lock.json)"
+if [[ "$lock_versions" == "${version} ${version}" ]]; then
+  echo "ok:   frontend/package-lock.json (root + packages[\"\"])"
+else
+  echo "FAIL: frontend/package-lock.json root versions are '${lock_versions}', expected ${version}" >&2
+  fail=1
+fi
 check "Dockerfile APP_VERSION arg"   Dockerfile                   "ARG APP_VERSION=${version}"
 check "docker-compose.yml default"   docker-compose.yml           "APP_VERSION:-${version}"
 check ".env.example"                 .env.example                 "APP_VERSION=${version}"
