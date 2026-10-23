@@ -239,7 +239,7 @@ export function ReportingPage(): JSX.Element {
           error={reportingDashboards.error}
         />
       ) : (
-        <div className="flex flex-wrap gap-x-7 border-b border-border" role="tablist" aria-label="Reporting dashboards">
+        <div className="flex gap-x-7 overflow-x-auto border-b border-border [scrollbar-width:none]" role="tablist" aria-label="Reporting dashboards">
           {(reportingDashboards.data ?? []).map((dash) => {
             const active = reportingDashboardKey === dash.key;
             return (
@@ -249,7 +249,7 @@ export function ReportingPage(): JSX.Element {
                 role="tab"
                 aria-selected={active}
                 className={cn(
-                  "-mb-px border-b-2 py-3.5 text-[15px] transition-colors",
+                  "shrink-0 border-b-2 py-3.5 text-[15px] whitespace-nowrap transition-colors",
                   active ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
                 )}
                 onClick={() => setReportingDashboardKey(dash.key)}

@@ -2,6 +2,21 @@
 
 ![Nebularr banner](docs/readme/nebularr-banner.png)
 
+[![Release](https://img.shields.io/github/v/release/dlommm/Nebularr?label=release)](https://github.com/dlommm/Nebularr/releases/latest)
+[![Docker image](https://img.shields.io/docker/v/dendlomm/nebularr?label=docker&sort=semver)](https://hub.docker.com/r/dendlomm/nebularr)
+[![CI](https://github.com/dlommm/Nebularr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlommm/Nebularr/actions/workflows/ci.yml)
+
+> [!IMPORTANT]
+> **Nebularr 3.0 is a major UI overhaul.** Every screen has been redesigned around
+> your own library: posters and fanart from your Sonarr and Radarr, a live Overview,
+> season quality grids, 24-hour sync lanes and a reworked Setup. Upgrading is a pull
+> and a restart: migrations run automatically, your settings carry over and the API
+> is unchanged. Some pages have moved; see [What's new in 3.0](#whats-new-in-30).
+
+<p align="center">
+  <img src="docs/reference/webui-pages/home.png" alt="The Nebularr 3.0 Overview: the latest import as full-bleed fanart, a status sentence, recent arrivals and sync lanes" width="900">
+</p>
+
 > **AI-assisted development** — The code, docs, and tooling in this repository were written primarily with AI coding assistants, with human direction and review.
 
 Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into PostgreSQL for analytics and the built-in Web UI.
@@ -9,6 +24,40 @@ Nebularr is a Docker-first service that ingests Sonarr/Radarr API metadata into 
 **Security:** built-in login (session cookie + optional bearer API token), secrets encrypted at rest with an auto-provisioned key, egress policy for outbound URLs, hardened non-root container. Details, threat model, and vulnerability reporting: **[SECURITY.md](./SECURITY.md)**.
 
 **Supply chain:** releases are cut by the tag-driven **`release.yml`** workflow (multi-arch buildx push with **SBOM + provenance (mode=max)**, so **[Docker Scout](https://scout.docker.com/)** attestation policies pass); `./scripts/docker-release-build.sh --push` is the manual fallback. Image base **`python:3.14-slim`** is digest-pinned; distro CVE rows without patches must wait on Debian/Python image updates. Changes per release: **[CHANGELOG.md](./CHANGELOG.md)**.
+
+## What's new in 3.0
+
+- **Your library, front and centre.** Posters and fanart come from your own Sonarr and
+  Radarr. Nebularr fetches them server-side with the stored API key and caches them,
+  so your browser never talks to the Arrs. TheTVDB/TMDB fallback stays off unless you
+  enable it under **Setup → Artwork**.
+- **Overview.** The latest import as a full-bleed hero, a one-sentence health summary,
+  recent arrivals, a 24-hour sync lane per source and the things waiting on you.
+- **Library.** Poster rows; open a show for a season grid with one cell per episode,
+  coloured by quality, with missing episodes outlined.
+- **Sync, Reports, Rules and Anime.** Rebuilt around big figures and hairline rows:
+  a "running now" panel, quality bands, the rule editor beside its list, and the
+  MyAnimeList fetch → match → tag pipeline.
+- **Works on phones.** A bottom tab bar, single-row tabs and layouts that fit at 390 px.
+- **Dark by default, with a matching light theme.**
+
+### Upgrading from 2.x
+
+1. Pull the new image (`dendlomm/nebularr:3.0.0` or `:latest`) and recreate the
+   container. With Compose: `docker compose pull && docker compose up -d`.
+2. That's it. Migrations `0016` (artwork schedule) and `0017` (two indexes) run on
+   start-up, and the artwork cache warms in the background on the runtime volume.
+
+### Where things moved
+
+| In 2.x | In 3.0 |
+|--------|--------|
+| Home, Dashboard (`/dashboard`) | **Overview** (`/`; the old path redirects) |
+| Automations | **Rules** |
+| MyAnimeList | **Anime** |
+| Integrations, Schedules, Logs | **Setup →** Integrations, Schedules, Logs |
+| (new) | **Setup → Artwork** |
+| Sync & Queue → Manual | **Sync → Run by hand** |
 
 ## What it does
 
@@ -278,6 +327,10 @@ arrivals, a 24-hour sync lane per source (tick per run, ring for a failure, empt
 when a source goes quiet), library totals, and anything waiting on you.
 
 ![Overview](docs/reference/webui-pages/home.png)
+
+The light theme ("Daylight") uses the same layouts:
+
+![Overview in the light theme](docs/reference/webui-pages/light/home.png)
 
 <p>
   <img src="docs/reference/webui-pages/phone/home.png" alt="Overview on a phone" width="260">

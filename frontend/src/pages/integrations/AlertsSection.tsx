@@ -6,12 +6,11 @@ import { useActionError } from "../../hooks/useActionError";
 import { queryKeys } from "../../lib/queryKeys";
 import type { AlertWebhookConfig } from "../../types";
 import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SectionCard, SELECT_CLASS, TEXTAREA_CLASS } from "./shared";
+import { CHECK_LABEL_CLASS, CHECK_ROW_CLASS, FIELD_LABEL_CLASS, SectionCard, SectionState, SELECT_CLASS, TEXTAREA_CLASS } from "./shared";
 
 export function AlertsSection({
   alertWebhookConfig,
@@ -154,13 +153,17 @@ export function AlertsSection({
           error={alertWebhookConfig.error}
         />
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="outline">
-          {alertWebhookConfig.data?.urls_configured
-            ? `${alertWebhookConfig.data.url_count} webhook URL${alertWebhookConfig.data.url_count === 1 ? "" : "s"} configured`
-            : "no webhook URLs configured"}
-        </Badge>
-      </div>
+      <SectionState
+        items={[
+          alertWebhookConfig.data?.urls_configured
+            ? {
+                label: `${alertWebhookConfig.data.url_count} webhook URL${alertWebhookConfig.data.url_count === 1 ? "" : "s"} configured`,
+                tone: "ok",
+              }
+            : { label: "No webhook URLs configured" },
+          alertWebhookConfig.data?.email?.enabled ? { label: "Email on", tone: "ok" } : { label: "Email off" },
+        ]}
+      />
       <textarea
         rows={4}
         aria-label="Alert webhook URLs"
@@ -174,25 +177,25 @@ export function AlertsSection({
           }))
         }
       />
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="flex items-center gap-2 pb-2">
-          <Checkbox
-            id="alert-clear-urls"
-            checked={alertWebhookDraft.clearUrls}
-            onCheckedChange={(checked) =>
-              setAlertWebhookDraft((prev) => ({
-                ...prev,
-                clearUrls: checked === true,
-              }))
-            }
-          />
-          <Label htmlFor="alert-clear-urls" className="text-sm text-muted-foreground">
-            clear stored webhook URLs
-          </Label>
-        </div>
+      <div className={CHECK_ROW_CLASS}>
+        <Checkbox
+          id="alert-clear-urls"
+          checked={alertWebhookDraft.clearUrls}
+          onCheckedChange={(checked) =>
+            setAlertWebhookDraft((prev) => ({
+              ...prev,
+              clearUrls: checked === true,
+            }))
+          }
+        />
+        <Label htmlFor="alert-clear-urls" className={CHECK_LABEL_CLASS}>
+          Clear the stored webhook URLs on save
+        </Label>
+      </div>
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-4">
         <div className="grid gap-1.5">
-          <Label htmlFor="alert-min-state" className="text-xs text-muted-foreground">
-            minimum state
+          <Label htmlFor="alert-min-state" className={FIELD_LABEL_CLASS}>
+            Alert from
           </Label>
           <select
             id="alert-min-state"
@@ -205,20 +208,20 @@ export function AlertsSection({
               }))
             }
           >
-            <option value="warning">warning</option>
-            <option value="critical">critical</option>
+            <option value="warning">Warning and above</option>
+            <option value="critical">Critical only</option>
           </select>
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="alert-timeout" className="text-xs text-muted-foreground">
-            timeout (seconds)
+          <Label htmlFor="alert-timeout" className={FIELD_LABEL_CLASS}>
+            Timeout (seconds)
           </Label>
           <Input
             id="alert-timeout"
             type="number"
             min={1}
             step={1}
-            className="w-28"
+            className="h-10 w-28"
             value={alertWebhookDraft.timeoutSeconds}
             onChange={(event) =>
               setAlertWebhookDraft((prev) => ({
@@ -228,63 +231,65 @@ export function AlertsSection({
             }
           />
         </div>
-        <div className="flex items-center gap-2 pb-2">
-          <Checkbox
-            id="alert-notify-recovery"
-            checked={alertWebhookDraft.notifyRecovery}
-            onCheckedChange={(checked) =>
-              setAlertWebhookDraft((prev) => ({
-                ...prev,
-                notifyRecovery: checked === true,
-              }))
-            }
-          />
-          <Label htmlFor="alert-notify-recovery" className="text-sm text-muted-foreground">
-            notify on recovery to ok
-          </Label>
-        </div>
       </div>
-      <div className="flex flex-wrap items-center gap-4">
-        <span className="text-xs text-muted-foreground">Send notifications for</span>
-        {(
-          [
-            ["health", "health changes"],
-            ["sync_failure", "sync failures"],
-            ["dead_letter", "dead-letter jobs"],
-          ] as const
-        ).map(([key, label]) => (
-          <div className="flex items-center gap-2" key={key}>
+      <fieldset>
+        <legend className="mb-1 text-xs text-muted-foreground">Send alerts for</legend>
+        <div className="grid gap-x-8 sm:grid-cols-2">
+          {(
+            [
+              ["health", "Health changes"],
+              ["sync_failure", "Sync failures"],
+              ["dead_letter", "Dead-letter jobs"],
+            ] as const
+          ).map(([key, label]) => (
+            <div className={CHECK_ROW_CLASS} key={key}>
+              <Checkbox
+                id={`alert-event-${key}`}
+                checked={alertWebhookDraft.events[key]}
+                onCheckedChange={(checked) =>
+                  setAlertWebhookDraft((prev) => ({
+                    ...prev,
+                    events: { ...prev.events, [key]: checked === true },
+                  }))
+                }
+              />
+              <Label htmlFor={`alert-event-${key}`} className={CHECK_LABEL_CLASS}>
+                {label}
+              </Label>
+            </div>
+          ))}
+          <div className={CHECK_ROW_CLASS}>
             <Checkbox
-              id={`alert-event-${key}`}
-              checked={alertWebhookDraft.events[key]}
+              id="alert-notify-recovery"
+              checked={alertWebhookDraft.notifyRecovery}
               onCheckedChange={(checked) =>
                 setAlertWebhookDraft((prev) => ({
                   ...prev,
-                  events: { ...prev.events, [key]: checked === true },
+                  notifyRecovery: checked === true,
                 }))
               }
             />
-            <Label htmlFor={`alert-event-${key}`} className="text-sm text-muted-foreground">
-              {label}
+            <Label htmlFor="alert-notify-recovery" className={CHECK_LABEL_CLASS}>
+              Recovery back to OK
             </Label>
           </div>
-        ))}
-      </div>
+        </div>
+      </fieldset>
       <p className="text-xs text-muted-foreground">
-        Discord, Slack, and ntfy URLs get native formatting automatically (use <code className="rounded bg-muted px-1">ntfy://host/topic</code>{" "}
+        Discord, Slack, and ntfy URLs get native formatting automatically (use <code className="font-mono">ntfy://host/topic</code>{" "}
         for self-hosted ntfy); other URLs receive a generic JSON payload.
       </p>
       <div className="space-y-3 border-t border-border pt-5">
-        <div className="flex items-center gap-2">
+        <div className={CHECK_ROW_CLASS}>
           <Checkbox
             id="alert-email-enabled"
             checked={alertEmailDraft.enabled}
             onCheckedChange={(checked) => setAlertEmailDraft((prev) => ({ ...prev, enabled: checked === true }))}
           />
           <Label htmlFor="alert-email-enabled" className="text-sm font-medium">
-            Email (SMTP)
+            Also send alerts by email (SMTP)
           </Label>
-          {alertWebhookConfig.data?.email?.password_set ? <Badge variant="outline">password stored</Badge> : null}
+          {alertWebhookConfig.data?.email?.password_set ? <span className="text-xs text-subtle-foreground">password stored</span> : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="grid gap-1.5">
@@ -293,6 +298,7 @@ export function AlertsSection({
             </Label>
             <Input
               id="alert-email-host"
+              disabled={!alertEmailDraft.enabled}
               placeholder="smtp.example.com"
               value={alertEmailDraft.host}
               onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, host: event.target.value }))}
@@ -304,6 +310,7 @@ export function AlertsSection({
             </Label>
             <Input
               id="alert-email-port"
+              disabled={!alertEmailDraft.enabled}
               type="number"
               min={1}
               max={65535}
@@ -322,6 +329,7 @@ export function AlertsSection({
             </Label>
             <Input
               id="alert-email-username"
+              disabled={!alertEmailDraft.enabled}
               autoComplete="off"
               value={alertEmailDraft.username}
               onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, username: event.target.value }))}
@@ -333,6 +341,7 @@ export function AlertsSection({
             </Label>
             <Input
               id="alert-email-password"
+              disabled={!alertEmailDraft.enabled}
               type="password"
               autoComplete="new-password"
               value={alertEmailDraft.password}
@@ -345,6 +354,7 @@ export function AlertsSection({
             </Label>
             <Input
               id="alert-email-from"
+              disabled={!alertEmailDraft.enabled}
               placeholder="nebularr@example.com"
               value={alertEmailDraft.fromAddress}
               onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, fromAddress: event.target.value }))}
@@ -356,19 +366,21 @@ export function AlertsSection({
             </Label>
             <Input
               id="alert-email-to"
+              disabled={!alertEmailDraft.enabled}
               placeholder="you@example.com"
               value={alertEmailDraft.toAddressesText}
               onChange={(event) => setAlertEmailDraft((prev) => ({ ...prev, toAddressesText: event.target.value }))}
             />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={CHECK_ROW_CLASS}>
           <Checkbox
             id="alert-email-starttls"
+            disabled={!alertEmailDraft.enabled}
             checked={alertEmailDraft.starttls}
             onCheckedChange={(checked) => setAlertEmailDraft((prev) => ({ ...prev, starttls: checked === true }))}
           />
-          <Label htmlFor="alert-email-starttls" className="text-sm text-muted-foreground">
+          <Label htmlFor="alert-email-starttls" className={CHECK_LABEL_CLASS}>
             STARTTLS (ignored on port 465)
           </Label>
         </div>
@@ -377,11 +389,11 @@ export function AlertsSection({
           rest when an encryption key is configured.
         </p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" size="sm" onClick={() => void saveAlertWebhooks()}>
-          Save alert webhooks
+      <div className="flex flex-wrap gap-2.5">
+        <Button type="button" className="min-h-11" onClick={() => void saveAlertWebhooks()}>
+          Save alerts
         </Button>
-        <Button type="button" variant="outline" size="sm" disabled={alertTesting} onClick={() => void runAlertTest()}>
+        <Button type="button" variant="outline" className="min-h-11" disabled={alertTesting} onClick={() => void runAlertTest()}>
           {alertTesting ? "Testing…" : "Test all channels"}
         </Button>
       </div>

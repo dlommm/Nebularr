@@ -6,10 +6,25 @@ import { useReadinessSteps } from "../hooks/useReadinessSteps";
 import { INTEGRATION_SECTIONS, sectionAnchor } from "../pages/integrations/sections";
 
 const SECTIONS = [
-  { to: PATHS.integrations, label: "Integrations", hint: "Connections, sign-in, alerts" },
-  { to: PATHS.artwork, label: "Artwork", hint: "Posters and fanart, cache" },
-  { to: PATHS.schedules, label: "Schedules", hint: "When jobs run, retention" },
-  { to: PATHS.logs, label: "Logs", hint: "Live application log" },
+  {
+    to: PATHS.integrations,
+    label: "Integrations",
+    hint: "Connections, sign-in, alerts",
+    lead: "How Nebularr reaches Sonarr, Radarr and MyAnimeList, who can sign in, and where alerts go.",
+  },
+  {
+    to: PATHS.artwork,
+    label: "Artwork",
+    hint: "Posters and fanart, cache",
+    lead: "Where posters and fanart come from and how much of them Nebularr keeps on disk.",
+  },
+  {
+    to: PATHS.schedules,
+    label: "Schedules",
+    hint: "When jobs run, retention",
+    lead: "When each job runs, and how long run history is kept.",
+  },
+  { to: PATHS.logs, label: "Logs", hint: "Live application log", lead: "The live application log from this instance." },
 ];
 
 /** The Setup section: one page head and a side menu around the four
@@ -22,7 +37,7 @@ export function SetupShell(): JSX.Element {
     <div className="pb-16">
       <PageHead
         title="Setup"
-        lead={`${pathTitle(location.pathname)} — how Nebularr connects, what it keeps, and when it runs.`}
+        lead={SECTIONS.find((section) => section.to === location.pathname)?.lead ?? pathTitle(location.pathname)}
         aside={
           loading ? null : (
             <p className="text-base text-muted-foreground">

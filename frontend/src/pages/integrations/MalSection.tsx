@@ -6,13 +6,12 @@ import { useActionError } from "../../hooks/useActionError";
 import { queryKeys } from "../../lib/queryKeys";
 import type { MalConfigResponse } from "../../types";
 import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SectionCard, SELECT_CLASS } from "./shared";
+import { CHECK_LABEL_CLASS, CHECK_ROW_CLASS, FIELD_LABEL_CLASS, SectionCard, SectionState, SELECT_CLASS } from "./shared";
 
 export function MalSection({ malConfig }: { malConfig: UseQueryResult<MalConfigResponse> }): JSX.Element {
   const queryClient = useQueryClient();
@@ -108,15 +107,15 @@ export function MalSection({ malConfig }: { malConfig: UseQueryResult<MalConfigR
       {malConfig.isError ? (
         <QueryErrorNotice label="MAL settings" retry={() => void malConfig.refetch()} error={malConfig.error} />
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="outline">
-          {malConfig.data?.client_id_configured
-            ? "client ID stored in database"
+      <SectionState
+        items={[
+          malConfig.data?.client_id_configured
+            ? { label: "Client ID stored in the database", tone: "ok" }
             : malConfig.data?.env_fallback_configured
-              ? "using MAL_CLIENT_ID from environment"
-              : "client ID not configured"}
-        </Badge>
-      </div>
+              ? { label: "Using MAL_CLIENT_ID from the environment", tone: "ok" }
+              : { label: "No client ID configured", tone: "warn" },
+        ]}
+      />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="grid w-full gap-1.5">
           <Label htmlFor="mal-client-id" className="text-xs text-muted-foreground">
@@ -130,18 +129,18 @@ export function MalSection({ malConfig }: { malConfig: UseQueryResult<MalConfigR
             onChange={(event) => setMalClientIdInput(event.target.value)}
           />
         </div>
-        <Button type="button" variant="secondary" className="shrink-0" onClick={() => void saveMalConfig()}>
+        <Button type="button" className="min-h-11 shrink-0" onClick={() => void saveMalConfig()}>
           Save
         </Button>
       </div>
-      <div className="flex items-center gap-2">
+      <div className={CHECK_ROW_CLASS}>
         <Checkbox
           id="mal-clear-client-id"
           checked={malClearClientId}
           onCheckedChange={(value) => setMalClearClientId(value === true)}
         />
-        <Label htmlFor="mal-clear-client-id" className="text-sm text-muted-foreground">
-          remove stored client ID (fall back to environment only)
+        <Label htmlFor="mal-clear-client-id" className={CHECK_LABEL_CLASS}>
+          Remove the stored client ID (fall back to the environment)
         </Label>
       </div>
       {malConfig.isLoading || !malConfig.data ? (
@@ -151,44 +150,44 @@ export function MalSection({ malConfig }: { malConfig: UseQueryResult<MalConfigR
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <div className="grid gap-x-8 sm:grid-cols-2">
             {(
               [
-                ["mal-ingest", "enable MAL ingest scheduler", malIngestEnabled, setMalIngestEnabled],
-                ["mal-matcher", "enable MAL matcher scheduler", malMatcherEnabled, setMalMatcherEnabled],
-                ["mal-tagging", "enable MAL tag sync scheduler", malTaggingEnabled, setMalTaggingEnabled],
+                ["mal-ingest", "Run the MAL ingest on its schedule", malIngestEnabled, setMalIngestEnabled],
+                ["mal-matcher", "Run the matcher on its schedule", malMatcherEnabled, setMalMatcherEnabled],
+                ["mal-tagging", "Run tag sync on its schedule", malTaggingEnabled, setMalTaggingEnabled],
                 [
                   "mal-title-year",
-                  "allow title+year fallback matching (when ID linking is unavailable)",
+                  "Match by title and year when no IDs link",
                   malAllowTitleYearMatch,
                   setMalAllowTitleYearMatch,
                 ],
-                ["mal-source-mal-dubs", "use MAL-Dubs as a dub-list source", malSourceMalDubsEnabled, setMalSourceMalDubsEnabled],
+                ["mal-source-mal-dubs", "Use MAL-Dubs as a dub-list source", malSourceMalDubsEnabled, setMalSourceMalDubsEnabled],
                 [
                   "mal-source-mydublist",
-                  "use MyDubList as a dub-list source (CC BY 4.0)",
+                  "Use MyDubList as a dub-list source (CC BY 4.0)",
                   malSourceMydublistEnabled,
                   setMalSourceMydublistEnabled,
                 ],
                 [
                   "mal-coverage-tagging",
-                  "enable coverage tag sync scheduler (fully-english / partial-english from your files)",
+                  "Run coverage tag sync on its schedule (fully-english / partial-english from your files)",
                   malCoverageTaggingEnabled,
                   setMalCoverageTaggingEnabled,
                 ],
               ] as const
             ).map(([id, label, checked, setter]) => (
-              <div className="flex items-center gap-2" key={id}>
+              <div className={CHECK_ROW_CLASS} key={id}>
                 <Checkbox id={id} checked={checked} onCheckedChange={(value) => setter(value === true)} />
-                <Label htmlFor={id} className="text-sm text-muted-foreground">
+                <Label htmlFor={id} className={CHECK_LABEL_CLASS}>
                   {label}
                 </Label>
               </div>
             ))}
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Label htmlFor="mal-mydublist-tier" className="text-xs text-muted-foreground">
-              MyDubList confidence tier (how many of its sources must agree a dub exists)
+          <div className="grid max-w-md gap-1.5">
+            <Label htmlFor="mal-mydublist-tier" className={FIELD_LABEL_CLASS}>
+              MyDubList confidence (how many of its sources must agree a dub exists)
             </Label>
             <select
               id="mal-mydublist-tier"

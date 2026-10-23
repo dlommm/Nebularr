@@ -6,11 +6,10 @@ import { useActionError } from "../../hooks/useActionError";
 import { queryKeys } from "../../lib/queryKeys";
 import type { LoggingConfigResponse } from "../../types";
 import { QueryErrorNotice } from "@/components/nebula/QueryErrorNotice";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { SectionCard, SELECT_CLASS } from "./shared";
+import { CHECK_LABEL_CLASS, CHECK_ROW_CLASS, SectionCard, SectionState, SELECT_CLASS } from "./shared";
 
 export function LoggingSection({ loggingConfig }: { loggingConfig: UseQueryResult<LoggingConfigResponse> }): JSX.Element {
   const queryClient = useQueryClient();
@@ -43,9 +42,9 @@ export function LoggingSection({ loggingConfig }: { loggingConfig: UseQueryResul
       {loggingConfig.isError ? (
         <QueryErrorNotice label="logging settings" retry={() => void loggingConfig.refetch()} error={loggingConfig.error} />
       ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline">effective: {loggingConfig.data?.effective_level ?? "…"}</Badge>
-        <span className="text-xs text-muted-foreground">
+      <SectionState items={[{ label: `Logging at ${loggingConfig.data?.effective_level ?? "…"}`, tone: "ok" }]} />
+      <div>
+        <span className="text-[13px] text-muted-foreground">
           {loggingConfig.data?.stored_level
             ? "Level stored in database (overrides LOG_LEVEL at startup and when changed here)."
             : `No database override; using process LOG_LEVEL (${loggingConfig.data?.environment_default ?? "…"}) until you save a level below.`}
@@ -65,17 +64,17 @@ export function LoggingSection({ loggingConfig }: { loggingConfig: UseQueryResul
             </option>
           ))}
         </select>
-        <Button type="button" variant="secondary" size="sm" onClick={() => void saveLoggingConfig()}>
+        <Button type="button" className="min-h-11" onClick={() => void saveLoggingConfig()}>
           Apply log level
         </Button>
-        <div className="flex items-center gap-2">
+        <div className={CHECK_ROW_CLASS}>
           <Checkbox
             id="logging-env-default"
             checked={loggingUseEnvDefault}
             onCheckedChange={(checked) => setLoggingUseEnvDefault(checked === true)}
           />
-          <Label htmlFor="logging-env-default" className="text-sm text-muted-foreground">
-            on save, clear database override and use LOG_LEVEL from the environment
+          <Label htmlFor="logging-env-default" className={CHECK_LABEL_CLASS}>
+            On save, drop the override and use LOG_LEVEL from the environment
           </Label>
         </div>
       </div>

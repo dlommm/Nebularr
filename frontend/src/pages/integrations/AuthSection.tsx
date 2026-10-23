@@ -6,11 +6,10 @@ import { api } from "../../api";
 import { useActionError } from "../../hooks/useActionError";
 import { queryKeys } from "../../lib/queryKeys";
 import type { AuthStatusResponse } from "../../types";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SectionCard } from "./shared";
+import { SectionCard, SectionState } from "./shared";
 
 export function AuthSection({ authStatus }: { authStatus: UseQueryResult<AuthStatusResponse> }): JSX.Element {
   const queryClient = useQueryClient();
@@ -87,13 +86,13 @@ export function AuthSection({ authStatus }: { authStatus: UseQueryResult<AuthSta
       title="Authentication"
       description="Protects every API endpoint with a login. API automation can use a bearer token instead."
     >
-      <div className="flex flex-wrap gap-2">
-        <Badge variant={authStatus.data?.enabled ? "default" : "destructive"}>
-          {authStatus.data?.enabled ? "authentication enabled" : "authentication disabled"}
-        </Badge>
-        <Badge variant="outline">{authStatus.data?.password_set ? "password set" : "no password set"}</Badge>
-        <Badge variant="outline">{authStatus.data?.api_token_set ? "API token issued" : "no API token"}</Badge>
-      </div>
+      <SectionState
+        items={[
+          authStatus.data?.enabled ? { label: "Sign-in required", tone: "ok" } : { label: "Sign-in off — anyone on the network can use the API", tone: "critical" },
+          { label: authStatus.data?.password_set ? "Password set" : "No password set" },
+          { label: authStatus.data?.api_token_set ? "API token issued" : "No API token" },
+        ]}
+      />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="grid w-full gap-1.5">
           <Label htmlFor="auth-password" className="text-xs text-muted-foreground">
@@ -119,21 +118,21 @@ export function AuthSection({ authStatus }: { authStatus: UseQueryResult<AuthSta
             onChange={(event) => setAuthPasswordConfirm(event.target.value)}
           />
         </div>
-        <Button type="button" className="shrink-0" onClick={() => void savePassword()}>
+        <Button type="button" className="min-h-11 shrink-0" onClick={() => void savePassword()}>
           {authStatus.data?.password_set ? "Change password & enable" : "Set password & enable"}
         </Button>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" size="sm" onClick={() => void rotateApiToken()}>
+      <div className="flex flex-wrap gap-2.5">
+        <Button type="button" variant="outline" className="min-h-11" onClick={() => void rotateApiToken()}>
           {authStatus.data?.api_token_set ? "Rotate API token" : "Generate API token"}
         </Button>
         {authStatus.data?.api_token_set ? (
-          <Button type="button" variant="secondary" size="sm" onClick={() => void revokeApiToken()}>
+          <Button type="button" variant="outline" className="min-h-11" onClick={() => void revokeApiToken()}>
             Revoke API token
           </Button>
         ) : null}
         {authStatus.data?.enabled ? (
-          <Button type="button" variant="destructive" size="sm" onClick={() => void setAuthEnabled(false)}>
+          <Button type="button" variant="destructive" className="min-h-11 sm:ml-auto" onClick={() => void setAuthEnabled(false)}>
             Disable authentication
           </Button>
         ) : null}

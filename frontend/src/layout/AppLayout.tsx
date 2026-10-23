@@ -228,7 +228,11 @@ export function AppLayout(): JSX.Element {
         <header
           className={cn(
             "z-30 w-full",
-            fullBleed ? "absolute inset-x-0 top-0" : "sticky top-0 border-b border-border glass-panel",
+            // Over fanart the header always reads light-on-dark (whatever the
+            // theme or the art's brightness): dark tokens plus a soft top shade.
+            fullBleed
+              ? "dark absolute inset-x-0 top-0 bg-linear-to-b from-black/55 to-transparent text-foreground"
+              : "sticky top-0 border-b border-border glass-panel-strong",
           )}
         >
           <div className="mx-auto flex w-full max-w-[1360px] flex-wrap items-center gap-x-8 gap-y-1 px-4 py-2.5 sm:px-10">

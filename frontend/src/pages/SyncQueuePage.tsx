@@ -428,9 +428,9 @@ export function SyncQueuePage(): JSX.Element {
                       <th className={tableHeadCellClass}>State</th>
                       <th className={cn(tableHeadCellClass, "text-right")}>Attempts</th>
                       <th className={tableHeadCellClass}>Error</th>
-                      <th className={tableHeadCellClass}>
-                        <span className="sr-only">Actions</span>
-                      </th>
+                      {/* Named by aria-label rather than an sr-only span: an absolutely
+                          positioned child here escapes the scroll wrapper on phones. */}
+                      <th className={tableHeadCellClass} aria-label="Actions" />
                     </tr>
                   </thead>
                   <tbody>
