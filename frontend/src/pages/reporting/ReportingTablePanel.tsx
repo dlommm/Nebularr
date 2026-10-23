@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ReportingPanel } from "../../types";
+import { SectionHead } from "@/components/ns/Page";
 import { MultiSelectFilter } from "../../components/nebula/MultiSelectFilter";
 import { clampPageOffset } from "../syncQueueShared";
 import {
@@ -110,89 +111,80 @@ function ReportingTablePanelImpl({
   const capped = unlimited && total > MAX_UNLIMITED_ROWS;
 
   return (
-    <div className="col-span-12 min-w-0 rounded-md border border-border bg-card p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground">{panel.title}</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            className="h-8 w-52"
-            placeholder="Filter this table…"
-            value={panelFilter}
-            onChange={(event) => onPanelFilterChange(panelStateKey, event.target.value)}
-          />
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>Page size</span>
-            <select
-              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
-              value={pageSize}
-              onChange={(event) => onPageSizeChange(Number(event.target.value))}
-            >
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={25}>25</option>
-              <option value={40}>40</option>
-              <option value={50}>50</option>
-              <option value={75}>75</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-              <option value={0}>All (first {MAX_UNLIMITED_ROWS})</option>
-            </select>
-          </label>
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {total === 0 ? "0 rows" : `${offset + 1}–${end} of ${total}`} · {rows.length} raw
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={offset <= 0 || unlimited}
-              onClick={() => onOffsetChange(panelStateKey, Math.max(0, offset - effectivePageSize))}
-            >
-              Prev
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={unlimited || offset + effectivePageSize >= total}
-              onClick={() => onOffsetChange(panelStateKey, offset + effectivePageSize)}
-            >
-              Next
-            </Button>
-          </div>
+    <section className="col-span-12 min-w-0" aria-label={panel.title}>
+      <SectionHead title={panel.title} aside={<span className="tabular-nums">{total === 0 ? "0 rows" : `${offset + 1}–${end} of ${total}`} · {rows.length} raw</span>} />
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pb-3 text-[13px] text-muted-foreground">
+        <Input
+          className="h-9 w-52"
+          placeholder="Filter this table…"
+          aria-label={`Filter ${panel.title}`}
+          value={panelFilter}
+          onChange={(event) => onPanelFilterChange(panelStateKey, event.target.value)}
+        />
+        <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+          <span>Page size</span>
+          <select
+            className="min-h-9 rounded-sm border border-border bg-muted px-2 text-sm text-foreground"
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={25}>25</option>
+            <option value={40}>40</option>
+            <option value={50}>50</option>
+            <option value={75}>75</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={0}>All (first {MAX_UNLIMITED_ROWS})</option>
+          </select>
+        </label>
+        <div className="flex items-center gap-1">
           <Button
             type="button"
-            variant="secondary"
+            variant="outline"
             size="sm"
-            title="Download the rows exactly as filtered in this table"
-            disabled={filteredRows.length === 0}
-            onClick={() => downloadCsv(`${panelStateKey.replace(/[^a-z0-9-]+/gi, "_")}-view.csv`, filteredRows)}
+            disabled={offset <= 0 || unlimited}
+            onClick={() => onOffsetChange(panelStateKey, Math.max(0, offset - effectivePageSize))}
           >
-            Export view
+            Prev
           </Button>
           <Button
             type="button"
-            variant="secondary"
+            variant="outline"
             size="sm"
-            title="Download the complete dataset for this panel (server-side, unfiltered)"
-            onClick={() => {
-              window.location.href = exportUrl;
-            }}
+            disabled={unlimited || offset + effectivePageSize >= total}
+            onClick={() => onOffsetChange(panelStateKey, offset + effectivePageSize)}
           >
-            Export CSV (full)
+            Next
           </Button>
         </div>
+        <button
+          type="button"
+          title="Download the rows exactly as filtered in this table"
+          disabled={filteredRows.length === 0}
+          className="border-b border-input py-2 text-foreground hover:border-foreground disabled:opacity-50"
+          onClick={() => downloadCsv(`${panelStateKey.replace(/[^a-z0-9-]+/gi, "_")}-view.csv`, filteredRows)}
+        >
+          Export view
+        </button>
+        <a
+          href={exportUrl}
+          title="Download the complete dataset for this panel (server-side, unfiltered)"
+          className="border-b border-input py-2 text-foreground hover:border-foreground"
+        >
+          Export CSV (full)
+        </a>
       </div>
       {capped ? (
-        <div className="mb-2 rounded-md border border-border bg-transparent px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="mb-2 border-y border-border py-2 text-xs text-muted-foreground">
           Showing the first {MAX_UNLIMITED_ROWS.toLocaleString()} of {total.toLocaleString()} rows — use “Export CSV
           (full)” for the complete dataset.
         </div>
       ) : null}
-      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
+      <div className="max-h-[70vh] overflow-auto border-t border-rule-strong">
         <Table>
-          <TableHeader className="sticky top-0 z-10 bg-card">
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               {columns.map((column) => (
                 <TableHead key={`${panel.id}-${column}`}>
@@ -236,7 +228,7 @@ function ReportingTablePanelImpl({
           </TableBody>
         </Table>
       </div>
-    </div>
+    </section>
   );
 }
 

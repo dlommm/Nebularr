@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import type { IntegrityAuditResult } from "../types";
+import type { IntegrityAuditResult, RunRow } from "../types";
 import { PATHS } from "../routes/paths";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { fmtDate, fmtDuration } from "../hooks";
@@ -11,10 +11,8 @@ import { pollInterval, useServerEventsStatus } from "../hooks/useServerEvents";
 import { useSyncActions } from "../hooks/useSyncActions";
 import { queryKeys } from "../lib/queryKeys";
 import { clampPageOffset } from "./syncQueueShared";
-import { StatusPill } from "../components/ui";
-import { GlassCard, CardContent, CardHeader, CardTitle } from "../components/nebula/GlassCard";
+import { StatusBadge } from "../components/nebula/StatusBadge";
 import { useConfirmDialog } from "../components/nebula/ConfirmDialog";
-import { ProgressBar } from "../components/nebula/ProgressBar";
 import { QueryErrorNotice } from "../components/nebula/QueryErrorNotice";
 import { WorkStatusPanel } from "../components/nebula/WorkStatusPanel";
 import { Button } from "@/components/ui/button";
@@ -23,9 +21,11 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { Activity, Inbox, ListOrdered, Wrench, Zap } from "lucide-react";
-import { PageHead, SectionHead } from "@/components/ns/Page";
+import { actionLinkClass, tableCellClass, tableHeadCellClass, tableHeadRowClass, tableRowClass } from "@/lib/ns";
+import { clock, dayOrClock, relTime } from "@/lib/time";
+import { ActionRow, Figure, Figures, PageHead, SectionHead } from "@/components/ns/Page";
 import { SyncLanes } from "@/components/ns/SyncLanes";
+
 const TAB_VALUES = ["overview", "runs", "webhooks", "manual"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
@@ -161,256 +161,210 @@ export function SyncQueuePage(): JSX.Element {
     return syncProgress.data?.running ? 8 : 0;
   }, [syncProgress.data]);
 
+  const queueCount = (state: string): number => webhookQueue.data?.find((row) => row.status === state)?.count ?? 0;
+  const deadLetters = queueCount("dead_letter");
+  const runRows = runs.data ?? [];
+  const lastRun = runRows.find((run) => run.status !== "running");
+  const progress = syncProgress.data;
+  const stuckCount = (rows: unknown[] | undefined): string => (rows ? String(rows.length) : stuckState.isLoading ? "…" : "0");
+
+  const renderRunTable = (rows: RunRow[], withErrors: boolean): JSX.Element => (
+    <div className={cn("overflow-x-auto", runs.isPlaceholderData && "opacity-60 transition-opacity")}>
+      <table className="w-full min-w-[720px] text-sm">
+        <thead>
+          <tr className={tableHeadRowClass}>
+            <th className={tableHeadCellClass}>Started</th>
+            <th className={tableHeadCellClass}>Source</th>
+            <th className={tableHeadCellClass}>Mode</th>
+            <th className={tableHeadCellClass}>Instance</th>
+            <th className={tableHeadCellClass}>Outcome</th>
+            <th className={cn(tableHeadCellClass, "text-right")}>Duration</th>
+            <th className={cn(tableHeadCellClass, "text-right")}>Rows</th>
+            {withErrors ? <th className={tableHeadCellClass}>Error</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((run, idx) => (
+            <tr key={`${run.source}-${run.started_at}-${idx}`} className={tableRowClass}>
+              <td className={cn(tableCellClass, "font-mono text-xs whitespace-nowrap text-subtle-foreground")} title={fmtDate(run.started_at)}>
+                {dayOrClock(run.started_at)}
+              </td>
+              <td className={tableCellClass}>{sourceLabel(run.source)}</td>
+              <td className={cn(tableCellClass, "text-muted-foreground")}>{run.mode}</td>
+              <td className={cn(tableCellClass, "text-muted-foreground")}>{run.instance_name}</td>
+              <td className={tableCellClass}>
+                <StatusBadge status={run.status} />
+              </td>
+              <td className={cn(tableCellClass, "text-right whitespace-nowrap tabular-nums")}>{runDuration(run)}</td>
+              <td className={cn(tableCellClass, "text-right tabular-nums text-muted-foreground")}>
+                {run.rows_written?.toLocaleString() ?? "—"}
+              </td>
+              {withErrors ? (
+                <td className={cn(tableCellClass, "max-w-[280px] truncate text-xs text-critical")} title={run.error_message ?? undefined}>
+                  {run.error_message ?? ""}
+                </td>
+              ) : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const runsBody = (rows: RunRow[], withErrors: boolean): JSX.Element =>
+    runs.isError ? (
+      <QueryErrorNotice label="run history" retry={() => void runs.refetch()} error={runs.error} />
+    ) : runs.isLoading ? (
+      <div className="space-y-2 pt-2">
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+      </div>
+    ) : rows.length === 0 ? (
+      <p className="border-t border-border py-6 text-sm text-muted-foreground">No sync runs yet.</p>
+    ) : (
+      renderRunTable(rows, withErrors)
+    );
+
+  const queueFigures = (
+    <Figures>
+      <Figure value={queueCount("queued")} label="queued" />
+      <Figure value={queueCount("retrying")} label="retrying" tone={queueCount("retrying") > 0 ? "warn" : undefined} />
+      <Figure value={deadLetters} label="dead letters" tone={deadLetters > 0 ? "critical" : "ok"} />
+      <Figure value={queueCount("done").toLocaleString()} label="applied" />
+    </Figures>
+  );
+
   return (
     <div className="pb-16">
       <PageHead title="Sync & Queue" lead="Every warehouse run, every webhook from Sonarr and Radarr, and the controls to run them by hand." />
-      {timeline.data ? (
-        <section aria-labelledby="sync-lanes" className="mb-12">
-          <SectionHead id="sync-lanes" title="The last 24 hours" aside="short tick = incremental · tall = full · ring = failed" />
-          <SyncLanes timeline={timeline.data} />
-        </section>
-      ) : null}
-    <div className="space-y-6">
-      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <GlassCard className="min-w-0" size="sm">
-          <CardHeader className="pb-1">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Zap className="size-4 text-muted-foreground/70" strokeWidth={1.75} aria-hidden />
-              Active syncs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tabular-nums">{status.data?.active_sync_count ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">running right now</p>
-          </CardContent>
-        </GlassCard>
-        <GlassCard className="min-w-0" size="sm">
-          <CardHeader className="pb-1">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Inbox className="size-4 text-muted-foreground/70" strokeWidth={1.75} aria-hidden />
-              Webhook queue
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tabular-nums">{status.data?.webhook_queue_open ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">queued + retrying</p>
-          </CardContent>
-        </GlassCard>
-        <GlassCard className="min-w-0" size="sm">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Sonarr lag</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tabular-nums">
-              {status.data ? `${Math.round((status.data.sync_lag_seconds.sonarr ?? 0) * 10) / 10}s` : "—"}
-            </p>
-          </CardContent>
-        </GlassCard>
-        <GlassCard className="min-w-0" size="sm">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Radarr lag</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tabular-nums">
-              {status.data ? `${Math.round((status.data.sync_lag_seconds.radarr ?? 0) * 10) / 10}s` : "—"}
-            </p>
-          </CardContent>
-        </GlassCard>
-        <GlassCard className="min-w-0" size="sm">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-sm font-medium text-muted-foreground">MAL processing</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tabular-nums">
-              {status.data?.mal_sync?.fetched_success_count ?? 0}/{status.data?.mal_sync?.dubbed_total ?? 0}
-            </p>
-            <p className="text-xs text-muted-foreground">completed / total dubbed</p>
-            <p className="mt-1 text-xs text-muted-foreground">pending: {status.data?.mal_sync?.pending_fetch_count ?? 0}</p>
-          </CardContent>
-        </GlassCard>
-      </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="grid h-auto w-full min-w-0 min-h-9 max-w-full grid-cols-2 gap-0.5 sm:max-w-2xl sm:grid-cols-4">
-          <TabsTrigger value="overview" className="min-w-0 gap-1.5">
-            <Activity className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">Overview</span>
-          </TabsTrigger>
-          <TabsTrigger value="runs" className="min-w-0 gap-1.5">
-            <ListOrdered className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">Runs</span>
-          </TabsTrigger>
-          <TabsTrigger value="webhooks" className="min-w-0 gap-1.5">
-            <Inbox className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">Webhooks</span>
-          </TabsTrigger>
-          <TabsTrigger value="manual" className="min-w-0 gap-1.5">
-            <Wrench className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">Manual</span>
-          </TabsTrigger>
+      <Tabs value={tab} onValueChange={setTab} className="w-full gap-0">
+        <TabsList aria-label="Sync views" className="w-full">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="runs">Run history</TabsTrigger>
+          <TabsTrigger value="webhooks">Webhook queue</TabsTrigger>
+          <TabsTrigger value="manual">Run by hand</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-4 space-y-4">
-          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-            <GlassCard className="min-w-0">
-              <CardHeader>
-                <CardTitle className="text-base">Sync progress</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {syncProgress.data?.running ? (
-                  <>
-                    <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                      <span>
-                        {syncProgress.data.source}/{syncProgress.data.mode} · {syncProgress.data.trigger ?? "—"}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {syncProgress.data.stage}
-                        {syncProgress.data.stage_note ? ` (${syncProgress.data.stage_note})` : ""}
-                      </span>
-                    </div>
-                    <ProgressBar value={progressPct} label="Estimated completion" />
-                    <p className="text-xs text-muted-foreground">
-                      Elapsed {fmtDuration(syncProgress.data.elapsed_seconds ?? 0)} · rows {syncProgress.data.records_processed ?? 0}
-                      {syncProgress.data.eta_seconds != null ? ` · ETA ${fmtDuration(syncProgress.data.eta_seconds)}` : ""}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No sync is currently running.</p>
-                )}
-                <div className="rounded-lg border border-border bg-transparent px-3 py-2 text-xs text-muted-foreground">
-                  MAL fetched: <strong>{status.data?.mal_sync?.fetched_success_count ?? 0}</strong> /{" "}
-                  <strong>{status.data?.mal_sync?.dubbed_total ?? 0}</strong> · pending{" "}
-                  <strong>{status.data?.mal_sync?.pending_fetch_count ?? 0}</strong>
-                </div>
-                <div className="space-y-2 pt-1">
-                  <p className="text-[11px] font-medium text-muted-foreground">Incremental</p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => runIncrementalSync("sonarr")}>
-                      Sonarr incremental
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={() => runIncrementalSync("radarr")}>
-                      Radarr incremental
-                    </Button>
+        <TabsContent value="overview">
+          <section aria-labelledby="sync-now" className="pt-8">
+            <h2 id="sync-now" className="sr-only">
+              Running now
+            </h2>
+            <div className="panel grid grid-cols-1 items-center gap-6 px-4 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-7 sm:py-6">
+              {progress?.running ? (
+                <div className="min-w-0">
+                  <p className="text-[13px] text-subtle-foreground">Holding the sync lock</p>
+                  <p className="mt-1.5 text-[22px] leading-snug">
+                    {sourceLabel(progress.source)} {progress.mode}{" "}
+                    <span className="text-muted-foreground">
+                      · {progress.trigger ?? "unknown trigger"} · {progress.stage}
+                      {progress.stage_note ? ` (${progress.stage_note})` : ""}
+                    </span>
+                  </p>
+                  <div
+                    role="progressbar"
+                    aria-label="Estimated completion"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(progressPct)}
+                    className="relative mt-3.5 h-[3px] overflow-hidden rounded-full bg-border"
+                  >
+                    <span className="absolute inset-y-0 left-0 overflow-hidden bg-signal transition-[width] duration-700" style={{ width: `${progressPct}%` }}>
+                      <span className="absolute inset-0 animate-shimmer bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.5),transparent)] bg-[length:160px_100%]" />
+                    </span>
                   </div>
-                  <p className="text-[11px] font-medium text-muted-foreground">Full</p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => runFullSync("sonarr")}>
-                      Sonarr full
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => runFullSync("radarr")}>
-                      Radarr full
-                    </Button>
-                  </div>
+                  <p className="mt-2.5 font-mono text-xs text-subtle-foreground">
+                    started {clock(progress.started_at)} · {fmtDuration(progress.elapsed_seconds ?? 0)} ·{" "}
+                    {(progress.records_processed ?? 0).toLocaleString()} rows
+                    {progress.eta_seconds != null ? ` · about ${fmtDuration(progress.eta_seconds)} left` : ""}
+                    {progress.estimated_total_seconds ? ` · typical run ${fmtDuration(progress.estimated_total_seconds)}` : ""}
+                  </p>
                 </div>
-              </CardContent>
-            </GlassCard>
-            <GlassCard className="min-w-0">
-              <CardHeader>
-                <CardTitle className="text-base">Queue snapshot</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2 text-sm">
-                  {(webhookQueue.data ?? []).map((row) => (
-                    <li key={row.status} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-transparent px-3 py-2">
-                      <span className="text-muted-foreground">{row.status}</span>
-                      <span className="font-mono tabular-nums font-medium">{row.count}</span>
-                    </li>
-                  ))}
-                </ul>
-                {!webhookQueue.data?.length ? <p className="text-sm text-muted-foreground">No queue rows yet.</p> : null}
-              </CardContent>
-            </GlassCard>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="runs" className="mt-4">
-          <GlassCard className="min-w-0">
-            <CardHeader>
-              <CardTitle className="text-base">Run history</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0 sm:px-0">
-              {runs.isError ? (
-                <div className="p-4">
-                  <QueryErrorNotice label="run history" retry={() => void runs.refetch()} error={runs.error} />
-                </div>
-              ) : runs.isLoading ? (
-                <div className="space-y-2 p-4">
-                  <Skeleton className="h-8 w-full" />
-                  <Skeleton className="h-8 w-full" />
-                  <Skeleton className="h-8 w-full" />
-                </div>
-              ) : (runs.data ?? []).length === 0 ? (
-                <p className="px-4 py-6 text-sm text-muted-foreground">No sync runs yet.</p>
               ) : (
-                <div className={cn("overflow-x-auto rounded-b-xl", runs.isPlaceholderData && "opacity-60 transition-opacity")}>
-                  <table className="w-full min-w-[640px] text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                        <th className="p-3 font-medium">Source</th>
-                        <th className="p-3 font-medium">Mode</th>
-                        <th className="p-3 font-medium">Status</th>
-                        <th className="p-3 font-medium">Started</th>
-                        <th className="p-3 font-medium">Finished</th>
-                        <th className="p-3 font-medium">Rows</th>
-                        <th className="p-3 font-medium">Error</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(runs.data ?? []).map((run, idx) => (
-                        <tr key={`${run.source}-${run.started_at}-${idx}`} className="border-b border-border/60 last:border-0 hover:bg-muted/50">
-                          <td className="p-3">{run.source}</td>
-                          <td className="p-3 font-mono text-xs">{run.mode}</td>
-                          <td className="p-3">
-                            <StatusPill status={run.status} />
-                          </td>
-                          <td className="p-3 text-xs text-muted-foreground">{fmtDate(run.started_at)}</td>
-                          <td className="p-3 text-xs text-muted-foreground">{fmtDate(run.finished_at)}</td>
-                          <td className="p-3 font-mono tabular-nums">{run.rows_written ?? "—"}</td>
-                          <td className="p-3 text-xs text-critical">{run.error_message ?? "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="min-w-0">
+                  <p className="text-[13px] text-subtle-foreground">Nothing is holding the sync lock</p>
+                  <p className="mt-1.5 text-[22px] leading-snug">
+                    Idle
+                    {lastRun ? (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · last run {sourceLabel(lastRun.source)} {lastRun.mode}, {relTime(lastRun.finished_at ?? lastRun.started_at)}
+                      </span>
+                    ) : null}
+                  </p>
+                  {workStatus.data?.active ? (
+                    <p className="mt-2.5 text-[13px] text-muted-foreground">
+                      {workStatus.data.items?.length ?? 0} other job(s) running — see Live status below.
+                    </p>
+                  ) : null}
                 </div>
               )}
-            </CardContent>
-          </GlassCard>
+              <Button variant="outline" className="min-h-11 w-fit" onClick={() => setTab("runs")}>
+                View runs
+              </Button>
+            </div>
+            {status.data ? (
+              <p className="mt-3 font-mono text-xs text-subtle-foreground">
+                {status.data.active_sync_count} active · lag Sonarr {lagSeconds(status.data.sync_lag_seconds.sonarr)} · Radarr{" "}
+                {lagSeconds(status.data.sync_lag_seconds.radarr)} · MAL fetched {status.data.mal_sync?.fetched_success_count ?? 0} of{" "}
+                {status.data.mal_sync?.dubbed_total ?? 0}, {status.data.mal_sync?.pending_fetch_count ?? 0} pending
+              </p>
+            ) : null}
+          </section>
+
+          {timeline.data ? (
+            <section aria-labelledby="sync-lanes" className="pt-12">
+              <SectionHead id="sync-lanes" title="The last 24 hours" aside="short tick = incremental · tall = full · ring = failed" />
+              <SyncLanes timeline={timeline.data} />
+            </section>
+          ) : null}
+
+          <section aria-labelledby="sync-queue" className="pt-12">
+            <SectionHead id="sync-queue" title="Webhook queue" aside="Events from Sonarr and Radarr waiting to be applied" />
+            {queueFigures}
+          </section>
+
+          <section aria-labelledby="sync-recent" className="pt-12">
+            <SectionHead
+              id="sync-recent"
+              title="Recent runs"
+              aside={
+                <button type="button" className="border-b border-input py-2 text-sm text-foreground hover:border-foreground" onClick={() => setTab("runs")}>
+                  Full history
+                </button>
+              }
+            />
+            {runsBody(runRows.slice(0, 8), false)}
+          </section>
+
+          <WorkStatusPanel
+            className="pt-12"
+            title="Live status"
+            description="Warehouse syncs, MAL jobs and setup import. Progress uses historical run times when available."
+          />
         </TabsContent>
 
-        <TabsContent value="webhooks" className="mt-4">
-          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
-            <GlassCard className="min-w-0 lg:col-span-1" size="sm">
-              <CardHeader>
-                <CardTitle className="text-base">Queue summary</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  {(webhookQueue.data ?? []).map((row) => (
-                    <div className="flex items-center justify-between text-sm" key={row.status}>
-                      <span>{row.status}</span>
-                      <strong className="tabular-nums">{row.count}</strong>
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-2 border-t border-border pt-3">
-                  <p className="text-xs text-muted-foreground">
-                    Re-queue every dead-letter job for a source in one go.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => replayDeadLetter("sonarr")}>
-                      Replay Sonarr dead letter
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={() => replayDeadLetter("radarr")}>
-                      Replay Radarr dead letter
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </GlassCard>
-            <GlassCard className="min-w-0 lg:col-span-2">
-              <CardHeader className="flex-row items-center justify-between gap-2">
-                <CardTitle className="text-base">Webhook jobs</CardTitle>
-                <div className="flex flex-wrap items-center gap-2">
+        <TabsContent value="runs" className="pt-8">
+          <SectionHead title="Run history" aside={`${runRows.length} most recent runs`} />
+          {runsBody(runRows, true)}
+        </TabsContent>
+
+        <TabsContent value="webhooks">
+          <section aria-labelledby="wh-summary" className="pt-8">
+            <h2 id="wh-summary" className="sr-only">
+              Queue summary
+            </h2>
+            {queueFigures}
+          </section>
+
+          <section aria-labelledby="wh-jobs" className="pt-12">
+            <SectionHead
+              id="wh-jobs"
+              title="Webhook jobs"
+              aside={
+                <div className="flex flex-wrap items-center gap-3">
                   {webhookJobsStatus === "retrying" || webhookJobsStatus === "dead_letter" ? (
                     <Button
                       size="sm"
@@ -439,11 +393,11 @@ export function SyncQueuePage(): JSX.Element {
                       Requeue all
                     </Button>
                   ) : null}
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
                     Status
                     <select
                       aria-label="Filter webhook jobs by status"
-                      className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      className="min-h-10 rounded-sm border border-border bg-muted px-2.5 text-[13px] text-foreground"
                       value={webhookJobsStatus}
                       onChange={(event) => {
                         setWebhookJobsStatus(event.target.value as WebhookJobStatus);
@@ -458,227 +412,148 @@ export function SyncQueuePage(): JSX.Element {
                     </select>
                   </label>
                 </div>
-              </CardHeader>
-              <CardContent className="p-0 sm:px-0">
-                {webhookJobs.isError ? (
-                  <div className="p-4">
-                    <QueryErrorNotice label="webhook jobs" retry={() => void webhookJobs.refetch()} error={webhookJobs.error} />
-                  </div>
-                ) : (
-                  <div className={cn("overflow-x-auto", webhookJobs.isPlaceholderData && "opacity-60 transition-opacity")}>
-                    <table className="w-full min-w-[760px] text-sm">
-                      <thead>
-                        <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                          <th className="p-3 font-medium">ID</th>
-                          <th className="p-3 font-medium">Source</th>
-                          <th className="p-3 font-medium">Type</th>
-                          <th className="p-3 font-medium">Status</th>
-                          <th className="p-3 font-medium">Attempts</th>
-                          <th className="p-3 font-medium">Received</th>
-                          <th className="p-3 font-medium">Error</th>
-                          <th className="p-3 font-medium">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {webhookJobRows.map((row) => (
-                          <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/50">
-                            <td className="p-3 font-mono text-xs">{row.id}</td>
-                            <td className="p-3">{row.source}</td>
-                            <td className="p-3 text-xs text-muted-foreground">{row.event_type ?? "—"}</td>
-                            <td className="p-3">
-                              <StatusPill status={row.status} />
-                            </td>
-                            <td className="p-3 font-mono tabular-nums">{row.attempts}</td>
-                            <td className="p-3 text-xs text-muted-foreground">{fmtDate(row.received_at)}</td>
-                            <td className="max-w-[240px] truncate p-3 text-xs text-critical" title={row.error_message ?? undefined}>
-                              {row.error_message ?? "—"}
-                            </td>
-                            <td className="p-3">
-                              {row.status === "dead_letter" || row.status === "retrying" ? (
-                                <Button size="sm" variant="outline" onClick={() => requeueWebhookJob(row.id)}>
-                                  Requeue
-                                </Button>
-                              ) : null}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!webhookJobs.isLoading && webhookJobRows.length === 0 ? (
-                      <p className="px-3 py-4 text-sm text-muted-foreground">
-                        {webhookJobsStatus === "all" ? "No webhook jobs yet." : "No webhook jobs with this status."}
-                      </p>
-                    ) : null}
-                  </div>
-                )}
-                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
-                  <span>
-                    {webhookJobsTotal === 0
-                      ? "0 jobs"
-                      : `${webhookJobsOffset + 1}–${webhookJobsOffset + webhookJobRows.length} of ${webhookJobsTotal}`}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={webhookJobsOffset <= 0}
-                    onClick={() => setWebhookJobsOffset(Math.max(0, webhookJobsOffset - WEBHOOK_JOBS_PAGE_SIZE))}
-                  >
-                    Prev
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={webhookJobsOffset + webhookJobRows.length >= webhookJobsTotal}
-                    onClick={() => setWebhookJobsOffset(webhookJobsOffset + WEBHOOK_JOBS_PAGE_SIZE)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </CardContent>
-            </GlassCard>
-          </div>
+              }
+            />
+            {webhookJobs.isError ? (
+              <QueryErrorNotice label="webhook jobs" retry={() => void webhookJobs.refetch()} error={webhookJobs.error} />
+            ) : (
+              <div className={cn("overflow-x-auto", webhookJobs.isPlaceholderData && "opacity-60 transition-opacity")}>
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead>
+                    <tr className={tableHeadRowClass}>
+                      <th className={tableHeadCellClass}>ID</th>
+                      <th className={tableHeadCellClass}>Received</th>
+                      <th className={tableHeadCellClass}>Source</th>
+                      <th className={tableHeadCellClass}>Event</th>
+                      <th className={tableHeadCellClass}>State</th>
+                      <th className={cn(tableHeadCellClass, "text-right")}>Attempts</th>
+                      <th className={tableHeadCellClass}>Error</th>
+                      <th className={tableHeadCellClass}>
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {webhookJobRows.map((row) => (
+                      <tr key={row.id} className={tableRowClass}>
+                        <td className={cn(tableCellClass, "font-mono text-xs text-subtle-foreground")}>{row.id}</td>
+                        <td className={cn(tableCellClass, "font-mono text-xs whitespace-nowrap text-subtle-foreground")} title={fmtDate(row.received_at)}>
+                          {dayOrClock(row.received_at)}
+                        </td>
+                        <td className={tableCellClass}>{sourceLabel(row.source)}</td>
+                        <td className={cn(tableCellClass, "text-muted-foreground")}>{row.event_type ?? "—"}</td>
+                        <td className={tableCellClass}>
+                          <StatusBadge status={row.status} />
+                        </td>
+                        <td className={cn(tableCellClass, "text-right tabular-nums")}>{row.attempts}</td>
+                        <td className={cn(tableCellClass, "max-w-[240px] truncate text-xs text-critical")} title={row.error_message ?? undefined}>
+                          {row.error_message ?? ""}
+                        </td>
+                        <td className="py-1 text-right">
+                          {row.status === "dead_letter" || row.status === "retrying" ? (
+                            <button type="button" className={actionLinkClass} onClick={() => requeueWebhookJob(row.id)}>
+                              Requeue
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!webhookJobs.isLoading && webhookJobRows.length === 0 ? (
+                  <p className="py-6 text-sm text-muted-foreground">
+                    {webhookJobsStatus === "all" ? "No webhook jobs yet." : "No webhook jobs with this status."}
+                  </p>
+                ) : null}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-4 text-[13px] text-muted-foreground">
+              <span>
+                {webhookJobsTotal === 0
+                  ? "0 jobs"
+                  : `${webhookJobsOffset + 1}–${webhookJobsOffset + webhookJobRows.length} of ${webhookJobsTotal}`}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={webhookJobsOffset <= 0}
+                onClick={() => setWebhookJobsOffset(Math.max(0, webhookJobsOffset - WEBHOOK_JOBS_PAGE_SIZE))}
+              >
+                Prev
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={webhookJobsOffset + webhookJobRows.length >= webhookJobsTotal}
+                onClick={() => setWebhookJobsOffset(webhookJobsOffset + WEBHOOK_JOBS_PAGE_SIZE)}
+              >
+                Next
+              </Button>
+            </div>
+          </section>
         </TabsContent>
 
-        <TabsContent value="manual" className="mt-4 space-y-4">
-          <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
-            <GlassCard className="min-w-0">
-              <CardHeader>
-                <CardTitle className="text-base">On-demand sync</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Incremental (history &amp; deltas)</p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => runIncrementalSync("sonarr")}>
-                      Sonarr incremental
-                    </Button>
-                    <Button variant="secondary" onClick={() => runIncrementalSync("radarr")}>
-                      Radarr incremental
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Full (entire library from Arr — slow)</p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => runFullSync("sonarr")}>
-                      Sonarr full
-                    </Button>
-                    <Button variant="outline" onClick={() => runFullSync("radarr")}>
-                      Radarr full
-                    </Button>
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {workStatus.data?.active
-                    ? `${workStatus.data.items?.length ?? 0} job(s) active (warehouse, MAL, and/or setup). See the status panel below.`
-                    : syncProgress.data?.running
-                      ? `Running: ${syncProgress.data.source}/${syncProgress.data.mode} (${syncProgress.data.trigger ?? "unknown"}) — ${fmtDuration(syncProgress.data.elapsed_seconds)}`
-                      : "Idle — no sync or MAL pipeline in progress."}
-                </p>
-              </CardContent>
-            </GlassCard>
-            <GlassCard className="min-w-0">
-              <CardHeader>
-                <CardTitle className="text-base">Queue processing policy</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  How the webhook queue is drained. Blank fields keep the current value; defaults are 80 / 5 / 30 / 900.
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  {(
-                    [
-                      ["batch_size", "Batch size"],
-                      ["max_attempts", "Max attempts"],
-                      ["backoff_base_seconds", "Backoff base (s)"],
-                      ["backoff_cap_seconds", "Backoff cap (s)"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="flex flex-col gap-1 text-xs text-muted-foreground">
-                      {label}
-                      <input
-                        type="number"
-                        aria-label={label}
-                        className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
-                        placeholder={String(queueConfig.data?.[key] ?? "")}
-                        value={queueDraft[key]}
-                        onChange={(event) => setQueueDraft((prev) => ({ ...prev, [key]: event.target.value }))}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <Button
-                  size="sm"
-                  disabled={!Object.values(queueDraft).some((v) => v.trim() !== "")}
-                  onClick={() => {
-                    const updates: Record<string, number> = {};
-                    for (const [key, value] of Object.entries(queueDraft)) {
-                      if (value.trim() !== "" && Number.isFinite(Number(value))) updates[key] = Number(value);
-                    }
-                    void runAction(() => api.saveQueueConfig(updates), "save queue policy", {
-                      successMessage: "Queue policy saved",
-                      invalidate: [[...queryKeys.queueConfig]],
-                    }).then((ok) => {
-                      // Only clear the draft on success — a failed save must
-                      // leave the user's typed values in place to retry.
-                      if (ok) setQueueDraft({ batch_size: "", max_attempts: "", backoff_base_seconds: "", backoff_cap_seconds: "" });
-                    });
-                  }}
+        <TabsContent value="manual">
+          <section aria-labelledby="manual-run" className="pt-8">
+            <h2 id="manual-run" className="sr-only">
+              Run by hand
+            </h2>
+            <div className="grid grid-cols-1 gap-10 lg:grid-cols-3">
+              <div>
+                <h3 className="mb-2.5 text-[15px] font-medium">On-demand sync</h3>
+                <ActionRow hint="history & deltas" onClick={() => runIncrementalSync("sonarr")}>
+                  Sonarr — incremental
+                </ActionRow>
+                <ActionRow hint="whole library, slow" onClick={() => runFullSync("sonarr")}>
+                  Sonarr — full
+                </ActionRow>
+                <ActionRow hint="history & deltas" onClick={() => runIncrementalSync("radarr")}>
+                  Radarr — incremental
+                </ActionRow>
+                <ActionRow hint="whole library, slow" onClick={() => runFullSync("radarr")}>
+                  Radarr — full
+                </ActionRow>
+              </div>
+              <div>
+                <h3 className="mb-2.5 text-[15px] font-medium">Maintenance</h3>
+                <ActionRow hint="read-only" onClick={() => runIntegrityAudit(setIntegrityResults)}>
+                  Integrity audit
+                </ActionRow>
+                <ActionRow hint={deadLetters > 0 ? `${deadLetters} waiting in all` : "none waiting"} onClick={() => replayDeadLetter("sonarr")}>
+                  Replay Sonarr dead letters
+                </ActionRow>
+                <ActionRow hint={deadLetters > 0 ? `${deadLetters} waiting in all` : "none waiting"} onClick={() => replayDeadLetter("radarr")}>
+                  Replay Radarr dead letters
+                </ActionRow>
+              </div>
+              <div>
+                <h3 className="mb-2.5 text-[15px] font-medium text-critical">Can’t be undone</h3>
+                <ActionRow
+                  danger
+                  hint="asks to confirm"
+                  onClick={() =>
+                    requestConfirm({
+                      title: "Reset MAL data only?",
+                      description:
+                        "Clears dub list history, MAL anime rows, warehouse links, external IDs, manual MAL links, ingest checkpoints, tag apply state, and MAL job history. Sonarr/Radarr warehouse and app settings (including your MAL client ID) are not changed.",
+                      confirmLabel: "Reset MAL data",
+                      destructive: true,
+                      typedPhrase: "RESET_MAL",
+                      onConfirm: () =>
+                        void runAction(() => api.resetMalData(), "reset MAL data", {
+                          successMessage: "MAL data reset",
+                          invalidate: [[...queryKeys.malOverview], [...queryKeys.malJobRuns()], [...queryKeys.malConfig]],
+                        }),
+                    })
+                  }
                 >
-                  Save queue policy
-                </Button>
-              </CardContent>
-            </GlassCard>
-            <GlassCard className="min-w-0">
-              <CardHeader>
-                <CardTitle className="text-base">System</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => replayDeadLetter("sonarr")}>
-                    Replay Sonarr dead letter
-                  </Button>
-                  <Button variant="secondary" onClick={() => replayDeadLetter("radarr")}>
-                    Replay Radarr dead letter
-                  </Button>
-                </div>
-                <div className="space-y-2 border-t border-border pt-3">
-                  <p className="text-xs text-muted-foreground">
-                    Compare warehouse counts against the live Sonarr/Radarr APIs. Drift means a sync was missed —
-                    run a full sync to repair. History lives in Reporting → Sync Operations.
-                  </p>
-                  <Button variant="secondary" className="w-fit" onClick={() => runIntegrityAudit(setIntegrityResults)}>
-                    Run integrity audit
-                  </Button>
-                  {integrityResults ? (
-                    <ul className="space-y-1 text-xs">
-                      {integrityResults.map((result) => (
-                        <li key={`${result.source}-${result.instance_name}`} className="rounded border border-border bg-transparent px-2 py-1">
-                          <span className="font-medium">
-                            {result.source}/{result.instance_name}:
-                          </span>{" "}
-                          {result.status === "failed" ? (
-                            <span className="text-critical">{result.error}</span>
-                          ) : result.drift_detected ? (
-                            <span className="text-warn">
-                              drift — items {(result.drift?.item_count ?? 0) >= 0 ? "+" : ""}
-                              {result.drift?.item_count ?? 0}, files{" "}
-                              {(result.drift?.file_count ?? 0) >= 0 ? "+" : ""}
-                              {result.drift?.file_count ?? 0} (Arr minus warehouse)
-                            </span>
-                          ) : (
-                            <span className="text-ok">in sync (items {result.arr_counts?.item_count ?? 0}, files {result.arr_counts?.file_count ?? 0})</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-                <Button
-                  variant="destructive"
-                  className="w-fit"
+                  Reset MyAnimeList data
+                </ActionRow>
+                <ActionRow
+                  danger
+                  hint="asks to confirm"
                   onClick={() =>
                     requestConfirm({
                       title: "Reset all data?",
@@ -708,134 +583,174 @@ export function SyncQueuePage(): JSX.Element {
                     })
                   }
                 >
-                  Reset data
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-fit border-warn/40 text-warn hover:bg-warn/10"
-                  onClick={() =>
-                    requestConfirm({
-                      title: "Reset MAL data only?",
-                      description:
-                        "Clears dub list history, MAL anime rows, warehouse links, external IDs, manual MAL links, ingest checkpoints, tag apply state, and MAL job history. Sonarr/Radarr warehouse and app settings (including your MAL client ID) are not changed.",
-                      confirmLabel: "Reset MAL data",
-                      destructive: true,
-                      typedPhrase: "RESET_MAL",
-                      onConfirm: () =>
-                        void runAction(() => api.resetMalData(), "reset MAL data", {
-                          successMessage: "MAL data reset",
-                          invalidate: [[...queryKeys.malOverview], [...queryKeys.malJobRuns()], [...queryKeys.malConfig]],
-                        }),
-                    })
+                  Reset all warehouse data
+                </ActionRow>
+              </div>
+            </div>
+            <p className="mt-6 text-[13px] text-muted-foreground">
+              {workStatus.data?.active
+                ? `${workStatus.data.items?.length ?? 0} job(s) active (warehouse, MAL, and/or setup).`
+                : progress?.running
+                  ? `Running: ${progress.source}/${progress.mode} (${progress.trigger ?? "unknown"}) — ${fmtDuration(progress.elapsed_seconds)}`
+                  : "Idle — no sync or MAL pipeline in progress."}{" "}
+              MyAnimeList ingest, matching and tagging run from the{" "}
+              <Link to={PATHS.mal} className="border-b border-input text-foreground hover:border-foreground">
+                Anime page
+              </Link>
+              .
+            </p>
+          </section>
+
+          {integrityResults ? (
+            <section aria-labelledby="manual-audit" className="pt-12">
+              <SectionHead id="manual-audit" title="Integrity audit" aside="Arr minus warehouse · history lives in Reports → Sync health" />
+              <ul>
+                {integrityResults.map((result) => (
+                  <li
+                    key={`${result.source}-${result.instance_name}`}
+                    className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-border py-3.5 text-sm last:border-b"
+                  >
+                    <span>
+                      {sourceLabel(result.source)} <span className="text-subtle-foreground">{result.instance_name}</span>
+                    </span>
+                    {result.status === "failed" ? (
+                      <span className="text-critical">{result.error}</span>
+                    ) : result.drift_detected ? (
+                      <span className="text-warn">
+                        drift — items {signed(result.drift?.item_count)}, files {signed(result.drift?.file_count)}. Run a full sync to repair.
+                      </span>
+                    ) : (
+                      <span className="text-ok">
+                        in sync · {result.arr_counts?.item_count ?? 0} items, {result.arr_counts?.file_count ?? 0} files
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <div className="grid grid-cols-1 gap-x-14 gap-y-12 pt-12 lg:grid-cols-2">
+            <section aria-labelledby="manual-policy" className="min-w-0">
+              <SectionHead id="manual-policy" title="Queue policy" />
+              <p className="text-[13px] text-muted-foreground">
+                How the webhook queue is drained. Blank fields keep the current value; defaults are 80 / 5 / 30 / 900.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                {(
+                  [
+                    ["batch_size", "Batch size"],
+                    ["max_attempts", "Max attempts"],
+                    ["backoff_base_seconds", "Backoff base (s)"],
+                    ["backoff_cap_seconds", "Backoff cap (s)"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="flex flex-col gap-1 text-[11px] text-subtle-foreground">
+                    {label}
+                    <input
+                      type="number"
+                      aria-label={label}
+                      className="min-h-11 rounded-sm border border-border bg-muted px-3 text-sm text-foreground"
+                      placeholder={String(queueConfig.data?.[key] ?? "")}
+                      value={queueDraft[key]}
+                      onChange={(event) => setQueueDraft((prev) => ({ ...prev, [key]: event.target.value }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <Button
+                className="mt-5 min-h-11"
+                disabled={!Object.values(queueDraft).some((v) => v.trim() !== "")}
+                onClick={() => {
+                  const updates: Record<string, number> = {};
+                  for (const [key, value] of Object.entries(queueDraft)) {
+                    if (value.trim() !== "" && Number.isFinite(Number(value))) updates[key] = Number(value);
                   }
-                >
-                  Reset MAL Data
-                </Button>
-                <div className="space-y-2 border-t border-border pt-3">
-                  <p className="text-xs text-muted-foreground">
-                    Long tasks (MAL ingest, Sonarr/Radarr syncs, and similar) run <strong className="text-foreground/90">inside the app
-                    process</strong>. A crash or kill can leave coordination rows in Postgres (locks) or
-                    &quot;running&quot; job rows. Use the controls below to clear that <strong className="text-foreground/90">DB
-                    state</strong> so new work can start. Failing live warehouse runs is off by default—only use it if you are
-                    sure nothing is really running.
-                  </p>
-                  {stuckState.isError ? (
-                    <p className="text-xs text-critical">Could not load stuck state.</p>
-                  ) : null}
-                  <ul className="list-inside list-disc text-xs text-muted-foreground">
-                    <li>
-                      Job lock rows: {stuckState.data?.job_locks?.length ?? (stuckState.isLoading ? "…" : 0)}
+                  void runAction(() => api.saveQueueConfig(updates), "save queue policy", {
+                    successMessage: "Queue policy saved",
+                    invalidate: [[...queryKeys.queueConfig]],
+                  }).then((ok) => {
+                    // Only clear the draft on success — a failed save must
+                    // leave the user's typed values in place to retry.
+                    if (ok) setQueueDraft({ batch_size: "", max_attempts: "", backoff_base_seconds: "", backoff_cap_seconds: "" });
+                  });
+                }}
+              >
+                Save queue policy
+              </Button>
+            </section>
+
+            <section aria-labelledby="manual-stuck" className="min-w-0">
+              <SectionHead id="manual-stuck" title="Stuck state" />
+              <p className="text-[13px] leading-relaxed text-muted-foreground">
+                Long tasks run inside the app process. A crash or kill can leave lock rows or &quot;running&quot; job rows in Postgres;
+                clear them here so new work can start. Failing live warehouse runs is off by default — only use it if you are sure
+                nothing is really running.
+              </p>
+              {stuckState.isError ? <p className="mt-3 text-[13px] text-critical">Could not load stuck state.</p> : null}
+              <dl className="mt-4 grid grid-cols-2 gap-px border-y border-border bg-border sm:grid-cols-4 [&>div]:bg-background [&>div]:py-3 [&>div]:pr-3">
+                <div>
+                  <dt className="text-[11px] text-subtle-foreground">Job locks</dt>
+                  <dd className="cond mt-1 text-[32px] leading-none font-[640]">{stuckCount(stuckState.data?.job_locks)}</dd>
+                </div>
+                <div className="sm:pl-3">
+                  <dt className="text-[11px] text-subtle-foreground">MAL jobs running</dt>
+                  <dd className="cond mt-1 text-[32px] leading-none font-[640]">{stuckCount(stuckState.data?.mal_job_runs_running)}</dd>
+                </div>
+                <div className="sm:pl-3">
+                  <dt className="text-[11px] text-subtle-foreground">sync_run running</dt>
+                  <dd className="cond mt-1 text-[32px] leading-none font-[640]">{stuckCount(stuckState.data?.warehouse_sync_runs_running)}</dd>
+                </div>
+                <div className="sm:pl-3">
+                  <dt className="text-[11px] text-subtle-foreground">job summaries running</dt>
+                  <dd className="cond mt-1 text-[32px] leading-none font-[640]">{stuckCount(stuckState.data?.job_run_summary_running)}</dd>
+                </div>
+              </dl>
+              {stuckState.data?.job_locks?.length ? (
+                <ul className="well mt-3 max-h-24 overflow-y-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                  {stuckState.data.job_locks.map((l) => (
+                    <li key={l.lock_name} className="truncate">
+                      {l.lock_name}
                     </li>
-                    <li>Running MAL job rows: {stuckState.data?.mal_job_runs_running?.length ?? (stuckState.isLoading ? "…" : 0)}</li>
-                    <li>
-                      Running warehouse <code className="rounded bg-muted px-0.5">sync_run</code> rows:{" "}
-                      {stuckState.data?.warehouse_sync_runs_running?.length ?? (stuckState.isLoading ? "…" : 0)}
-                    </li>
-                    <li>
-                      Running Sonarr/Radarr <code className="rounded bg-muted px-0.5">job_run_summary</code> rows:{" "}
-                      {stuckState.data?.job_run_summary_running?.length ?? (stuckState.isLoading ? "…" : 0)}
-                    </li>
-                  </ul>
-                  {stuckState.data?.job_locks?.length ? (
-                    <ul className="max-h-24 overflow-y-auto rounded border border-border bg-transparent px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                      {stuckState.data.job_locks.map((l) => (
-                        <li key={l.lock_name} className="truncate">
-                          {l.lock_name}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="stuck-all-locks"
-                        checked={stuckClearAllLocks}
-                        onCheckedChange={(c) => {
-                          setStuckClearAllLocks(c === true);
-                        }}
-                      />
-                      <Label htmlFor="stuck-all-locks" className="text-xs text-muted-foreground">
-                        Remove <strong className="text-foreground/90">all</strong> rows in <code className="rounded bg-muted px-0.5">app.job_lock</code> (ignores
-                        granular lock options below)
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="stuck-mal-lock"
-                        disabled={stuckClearAllLocks}
-                        checked={stuckClearMalLock}
-                        onCheckedChange={(c) => setStuckClearMalLock(c === true)}
-                      />
-                      <Label htmlFor="stuck-mal-lock" className="text-xs text-muted-foreground">
-                        Remove <code className="rounded bg-muted px-0.5">mal:ingest</code> lock
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="stuck-mal-jobs"
-                        checked={stuckClearMalJobs}
-                        onCheckedChange={(c) => setStuckClearMalJobs(c === true)}
-                      />
-                      <Label htmlFor="stuck-mal-jobs" className="text-xs text-muted-foreground">
-                        Mark running MAL job rows as failed
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="stuck-wh-locks"
-                        disabled={stuckClearAllLocks}
-                        checked={stuckClearWhLocks}
-                        onCheckedChange={(c) => setStuckClearWhLocks(c === true)}
-                      />
-                      <Label htmlFor="stuck-wh-locks" className="text-xs text-muted-foreground">
-                        Clear Sonarr/Radarr sync job lock rows only (does not change warehouse data)
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="stuck-wh-fail"
-                        checked={stuckFailWhSync}
-                        onCheckedChange={(c) => setStuckFailWhSync(c === true)}
-                      />
-                      <Label htmlFor="stuck-wh-fail" className="text-xs text-warn">
-                        Mark &quot;running&quot; warehouse sync runs and Sonarr/Radarr job summary rows as failed (dangerous if a
-                        sync is still running)
-                      </Label>
-                    </div>
+                  ))}
+                </ul>
+              ) : null}
+              <div className="mt-4 space-y-1">
+                {(
+                  [
+                    ["stuck-all-locks", stuckClearAllLocks, setStuckClearAllLocks, false, <>Remove <strong className="text-foreground">all</strong> rows in <code className="font-mono text-xs">app.job_lock</code> (ignores the two lock options below)</>],
+                    ["stuck-mal-lock", stuckClearMalLock, setStuckClearMalLock, stuckClearAllLocks, <>Remove the <code className="font-mono text-xs">mal:ingest</code> lock</>],
+                    ["stuck-mal-jobs", stuckClearMalJobs, setStuckClearMalJobs, false, <>Mark running MAL job rows as failed</>],
+                    ["stuck-wh-locks", stuckClearWhLocks, setStuckClearWhLocks, stuckClearAllLocks, <>Clear Sonarr/Radarr sync lock rows only (warehouse data unchanged)</>],
+                  ] as const
+                ).map(([id, checked, setChecked, disabled, label]) => (
+                  <div key={id} className="flex min-h-11 items-center gap-3">
+                    <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={(c) => setChecked(c === true)} />
+                    <Label htmlFor={id} className="text-[13px] font-normal text-muted-foreground">
+                      {label}
+                    </Label>
                   </div>
-                  <Button
-                    variant="secondary"
-                    className="w-fit"
-                    onClick={() =>
-                      requestConfirm({
-                        title: "Clear stuck state?",
-                        description:
-                          "Applies the options selected above: this may delete job lock rows and mark running MAL or warehouse job rows as failed. Only use this when you are sure no work is actually running.",
-                        confirmLabel: "Clear stuck state",
-                        destructive: true,
-                        typedPhrase: "CLEAR_STUCK",
-                        onConfirm: () => {
-                          void runAction(async () => {
+                ))}
+                <div className="flex min-h-11 items-center gap-3">
+                  <Checkbox id="stuck-wh-fail" checked={stuckFailWhSync} onCheckedChange={(c) => setStuckFailWhSync(c === true)} />
+                  <Label htmlFor="stuck-wh-fail" className="text-[13px] font-normal text-warn">
+                    Mark &quot;running&quot; warehouse sync runs and job summaries as failed (dangerous if a sync is still running)
+                  </Label>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="mt-4 min-h-11"
+                onClick={() =>
+                  requestConfirm({
+                    title: "Clear stuck state?",
+                    description:
+                      "Applies the options selected above: this may delete job lock rows and mark running MAL or warehouse job rows as failed. Only use this when you are sure no work is actually running.",
+                    confirmLabel: "Clear stuck state",
+                    destructive: true,
+                    typedPhrase: "CLEAR_STUCK",
+                    onConfirm: () => {
+                      void runAction(async () => {
                         const r = await api.clearStuck(
                           stuckClearAllLocks
                             ? {
@@ -857,42 +772,41 @@ export function SyncQueuePage(): JSX.Element {
                         void queryClient.invalidateQueries({ queryKey: queryKeys.syncProgress });
                         void queryClient.invalidateQueries({ queryKey: queryKeys.runs });
                         return r;
-                          }, "clear stuck state");
-                        },
-                      })
-                    }
-                  >
-                    Clear stuck state (DB)
-                  </Button>
-                </div>
-              </CardContent>
-            </GlassCard>
+                      }, "clear stuck state");
+                    },
+                  })
+                }
+              >
+                Clear stuck state
+              </Button>
+            </section>
           </div>
-          <GlassCard>
-            <CardHeader>
-              <CardTitle className="text-base">MyAnimeList pipelines</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Ingest, matching, tag sync, job history, and unmatched dubbed anime now live on the{" "}
-                <Link to={PATHS.mal} className="text-signal hover:underline">
-                  MyAnimeList page
-                </Link>
-                .
-              </p>
-            </CardContent>
-          </GlassCard>
         </TabsContent>
       </Tabs>
 
-      <WorkStatusPanel
-        title="Live status &amp; ETA"
-        description="All in-flight work: Sonarr/Radarr warehouse syncs (any trigger), MAL ingest/matcher/tag, and setup-wizard library import. Progress uses historical run times when available; MAL ingest shows batch position while running."
-        dense
-      />
       {confirmDialog}
       {syncActionsConfirmDialog}
     </div>
-    </div>
   );
+}
+
+function sourceLabel(source: string | undefined): string {
+  if (!source) return "—";
+  if (source === "mal") return "MyAnimeList";
+  return source.charAt(0).toUpperCase() + source.slice(1);
+}
+
+function runDuration(run: RunRow): string {
+  if (!run.finished_at) return run.status === "running" ? "running" : "—";
+  const seconds = (new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()) / 1000;
+  return Number.isFinite(seconds) && seconds >= 0 ? fmtDuration(seconds) : "—";
+}
+
+function signed(n: number | null | undefined): string {
+  const v = n ?? 0;
+  return v > 0 ? `+${v}` : String(v);
+}
+
+function lagSeconds(seconds: number | undefined): string {
+  return `${Math.round((seconds ?? 0) * 10) / 10} s`;
 }

@@ -20,3 +20,9 @@ export function fmtBigBytes(bytes: number | null | undefined): string {
   if (gb >= 1) return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
   return `${Math.round(bytes / 1e6)} MB`;
 }
+
+/** Hairline table parts shared by the run, job and report tables. */
+export const tableHeadRowClass = "border-b border-rule-strong text-left text-xs text-subtle-foreground";
+export const tableHeadCellClass = "py-2.5 pr-4 font-medium";
+export const tableRowClass = "border-b border-border transition-colors hover:bg-muted";
+export const tableCellClass = "py-3 pr-4";

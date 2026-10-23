@@ -94,7 +94,7 @@ const captures = [
   { name: "sync-runs", path: "/sync?tab=runs", waitFor: "text=Run history" },
   { name: "sync-webhooks", path: "/sync?tab=webhooks", waitFor: "text=Webhook jobs" },
   { name: "sync-manual", path: "/sync?tab=manual", waitFor: "text=On-demand sync" },
-  { name: "automations", path: "/automations", waitFor: "#main-content [data-slot=card]" },
+  { name: "automations", path: "/automations", waitFor: "text=Pick a rule" },
   {
     name: "automations-editor",
     needsData: true,
@@ -102,7 +102,7 @@ const captures = [
     waitFor: "text=Resolution floor — 1080p",
     act: async (page) => {
       await page.getByRole("button", { name: "Resolution floor — 1080p" }).first().click();
-      await page.waitForSelector('[aria-label="Automation"]');
+      await page.waitForSelector("text=Save changes");
       await page.waitForTimeout(700);
     },
   },
@@ -114,7 +114,7 @@ const captures = [
     act: async (page) => {
       await page.getByRole("button", { name: /more actions for anime english-dub enforcer/i }).click();
       await page.getByRole("menuitem", { name: /run history/i }).click();
-      await page.waitForSelector('[aria-label="Automation"]');
+      await page.waitForSelector("text=Edit rule");
       await page.getByRole("button", { name: /^detail$/i }).first().click();
       await page.waitForTimeout(500);
     },

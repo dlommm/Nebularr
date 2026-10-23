@@ -111,3 +111,27 @@ export function StatusDot({ state, className }: { state: HealthState | string | 
 export function Row({ children, className }: { children: ReactNode; className?: string }): JSX.Element {
   return <div className={cn("border-t border-border py-4 transition-colors hover:bg-muted/60", className)}>{children}</div>;
 }
+
+/** Full-width hairline action: label on the left, a short hint on the right. */
+export function ActionRow({
+  children,
+  hint,
+  danger,
+  className,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { hint?: ReactNode; danger?: boolean }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex min-h-[52px] w-full items-center justify-between gap-4 border-t border-border px-4 text-left text-sm transition-[background-color,padding] last:border-b hover:bg-muted hover:pl-5 disabled:pointer-events-none disabled:opacity-50",
+        danger ? "text-critical hover:bg-critical/10" : "text-foreground",
+        className,
+      )}
+      {...props}
+    >
+      <span>{children}</span>
+      {hint ? <span className="shrink-0 text-xs text-subtle-foreground">{hint}</span> : null}
+    </button>
+  );
+}
