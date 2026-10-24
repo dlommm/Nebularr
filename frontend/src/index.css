@@ -321,21 +321,70 @@
 /* Glass chrome kept for overlays (dialogs, sticky bars over artwork). */
 @utility glass-panel {
   background: color-mix(in srgb, var(--background) 82%, transparent);
-  backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
 }
 
 @utility glass-panel-strong {
   background: color-mix(in srgb, var(--background) 92%, transparent);
-  backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+/* Top bar over fanart: blur plus a light tint that fades out below the bar,
+   settling into glass once the page scrolls. --art-scrim (0.5–1.5, default 1)
+   is the user's strength setting and scales both the blur and the tint. */
+@utility art-scrim {
+  isolation: isolate;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 -44px;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      rgb(10 12 14 / calc(0.55 * var(--art-scrim, 1))),
+      rgb(10 12 14 / calc(0.22 * var(--art-scrim, 1))) 65%,
+      transparent
+    );
+    -webkit-backdrop-filter: blur(calc(16px * var(--art-scrim, 1))) saturate(1.15);
+    backdrop-filter: blur(calc(16px * var(--art-scrim, 1))) saturate(1.15);
+    mask-image: linear-gradient(to bottom, #000 50%, transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000 50%, transparent);
+    transition:
+      background 0.35s ease,
+      bottom 0.35s ease,
+      mask-image 0.35s ease;
+  }
+  &[data-scrolled]::before {
+    bottom: 0;
+    background: color-mix(in srgb, var(--background) min(96%, 74% * var(--art-scrim, 1)), transparent);
+    mask-image: none;
+    -webkit-mask-image: none;
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 8%, transparent);
+  }
+  & > * {
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  }
+  &[data-scrolled] > * {
+    text-shadow: none;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .glass-panel,
   .glass-panel-strong {
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--background);
+  }
+  .art-scrim::before {
+    inset: 0;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    mask-image: none;
+    -webkit-mask-image: none;
     background: var(--background);
   }
 }

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
@@ -7,6 +7,7 @@ import { api } from "../api";
 import { useActionError } from "../hooks/useActionError";
 import { ServerEventsContext, pollInterval, useServerEvents } from "../hooks/useServerEvents";
 import { useLocalStorageState } from "../hooks";
+import { useHeaderScrim } from "../hooks/useHeaderScrim";
 import { queryKeys } from "../lib/queryKeys";
 import { LegacyViewRedirect } from "./LegacyViewRedirect";
 import { buildLibrarySearchParams } from "../pages/libraryUrlState";
@@ -104,6 +105,17 @@ export function AppLayout(): JSX.Element {
   const healthz = useQuery({ queryKey: queryKeys.healthz, queryFn: api.healthz, staleTime: 300_000 });
   const showLogout = authStatus.data?.enabled === true && authStatus.data.authenticated;
   const fullBleed = FULL_BLEED_PATHS.has(location.pathname);
+  const [scrimStrength] = useHeaderScrim();
+  const [scrolled, setScrolled] = useState(false);
+
+  // Over fanart the bar settles into glass once the hero starts to scroll.
+  useEffect(() => {
+    if (!fullBleed) return;
+    const onScroll = (): void => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [fullBleed]);
 
   const onLogout = async (): Promise<void> => {
     try {
@@ -226,12 +238,15 @@ export function AppLayout(): JSX.Element {
         <LegacyViewRedirect />
 
         <header
+          data-scrolled={fullBleed && scrolled ? "" : undefined}
+          style={fullBleed ? ({ "--art-scrim": scrimStrength } as CSSProperties) : undefined}
           className={cn(
             "z-30 w-full",
             // Over fanart the header always reads light-on-dark (whatever the
-            // theme or the art's brightness): dark tokens plus a soft top shade.
+            // theme or the art's brightness): dark tokens over a blurred,
+            // lightly tinted band of the art.
             fullBleed
-              ? "dark absolute inset-x-0 top-0 bg-linear-to-b from-black/55 to-transparent text-foreground"
+              ? "dark fixed inset-x-0 top-0 art-scrim text-foreground"
               : "sticky top-0 border-b border-border glass-panel-strong",
           )}
         >

@@ -1,6 +1,8 @@
+import { useState, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { HEADER_SCRIM_DEFAULT, HEADER_SCRIM_MAX, HEADER_SCRIM_MIN, useHeaderScrim } from "../hooks/useHeaderScrim";
 import { fmtSize } from "../hooks";
 import { useActionError } from "../hooks/useActionError";
 import { queryKeys } from "../lib/queryKeys";
@@ -249,7 +251,82 @@ export function ArtworkPage(): JSX.Element {
           </Button>
         </div>
       </section>
+      <HeaderScrimSetting />
       {confirmDialog}
     </div>
+  );
+}
+
+// A deliberately bright, busy stand-in for fanart: the case that washes the bar out.
+const SCRIM_PREVIEW_ART =
+  "radial-gradient(ellipse 30% 40% at 18% 30%, #fff 0 55%, transparent 70%)," +
+  "radial-gradient(ellipse 26% 34% at 62% 22%, #fdfdfd 0 50%, transparent 72%)," +
+  "radial-gradient(circle at 86% 26%, #fff6d8 0 9%, transparent 10%)," +
+  "linear-gradient(to bottom, #a6d4f2, #dcf0fb 60%, #f6e7c8)";
+
+function HeaderScrimSetting(): JSX.Element {
+  const [strength, setStrength] = useHeaderScrim();
+  const [previewScrolled, setPreviewScrolled] = useState(false);
+  const percent = Math.round(strength * 100);
+
+  return (
+    <section aria-labelledby="scrim-h">
+      <SectionHead id="scrim-h" title="Top bar over artwork" />
+      <p className="max-w-2xl text-[15px] text-muted-foreground">
+        On Overview the menu sits on the artwork. Nebularr blurs and darkens a band of the art behind it so the menu stays
+        readable on bright or busy images. Raise this if the menu still washes out; lower it to show more of the art.
+        Saved in this browser.
+      </p>
+
+      <div
+        className="relative mt-5 h-36 max-w-3xl overflow-hidden rounded-md border border-border"
+        style={{ background: SCRIM_PREVIEW_ART }}
+        aria-hidden
+      >
+        <div
+          data-scrolled={previewScrolled ? "" : undefined}
+          style={{ "--art-scrim": strength } as CSSProperties}
+          className="dark art-scrim relative flex items-center gap-6 px-5 py-3 text-sm text-foreground"
+        >
+          <span className="cond text-[22px] leading-none font-[800]">Nebularr</span>
+          <span className="border-b-2 border-foreground py-1">Overview</span>
+          <span className="hidden text-foreground/75 sm:inline">Library</span>
+          <span className="hidden text-foreground/75 sm:inline">Sync</span>
+          <span className="hidden text-foreground/75 md:inline">Reports</span>
+          <span className="hidden text-foreground/75 md:inline">Rules</span>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-end gap-x-6 gap-y-4">
+        <label className="flex flex-col gap-1.5 text-xs text-subtle-foreground">
+          <span>
+            Strength <span className="font-mono text-foreground tabular-nums">{percent}%</span>
+            {strength === HEADER_SCRIM_DEFAULT ? " (default)" : null}
+          </span>
+          <input
+            id="nebularr-header-scrim"
+            type="range"
+            min={HEADER_SCRIM_MIN}
+            max={HEADER_SCRIM_MAX}
+            step={0.05}
+            value={strength}
+            onChange={(e) => setStrength(Number(e.target.value))}
+            className="h-10 w-64 accent-[var(--signal)]"
+          />
+        </label>
+        <label className="inline-flex min-h-10 cursor-pointer items-center gap-2.5 text-[14px]">
+          <input
+            type="checkbox"
+            checked={previewScrolled}
+            onChange={(e) => setPreviewScrolled(e.target.checked)}
+            className="size-4 accent-[var(--signal)]"
+          />
+          Preview after scrolling
+        </label>
+        <Button type="button" variant="ghost" disabled={strength === HEADER_SCRIM_DEFAULT} onClick={() => setStrength(HEADER_SCRIM_DEFAULT)}>
+          Reset to default
+        </Button>
+      </div>
+    </section>
   );
 }
