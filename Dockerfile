@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir pip==26.1 setuptools==82.0.1 wheel==0.47.0 \
 
 FROM python:3.14-slim@sha256:0514bc76712d64f8bb48adcb95b1ab0d88c69fee95d62fe4c18ee948bee9b1e1 AS runtime
 
-ARG APP_VERSION=3.0.0
+ARG APP_VERSION=3.1.0
 ARG GIT_SHA=release
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

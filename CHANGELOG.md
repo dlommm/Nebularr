@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [3.1.0] - 2026-10-24
+
+### Added
+
+- **Setup → Artwork → Top bar over artwork**: a strength slider (50–150%, default
+  100%) for how much the Overview menu shades the fanart behind it, with a live
+  preview. Saved per browser, like display density.
+
+### Changed
+
+- On Overview the top bar now blurs and lightly darkens a band of the artwork behind
+  it, so the menu stays readable on bright or busy fanart, and it stays pinned while
+  you scroll, turning to frosted glass once the hero moves.
+
+### Fixed
+
+- Frosted-glass bars and dialogs blurred only in Safari: the build dropped the
+  standard `backdrop-filter` declaration. They now blur in every browser.
+
 ## [3.0.0] - 2026-10-23
 
 **A new Web UI.** 3.0 is the "Now Showing" redesign: every screen rebuilt around your
